@@ -2216,6 +2216,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 				return
 			}
 		}
+		if message := provider.ClaudeTeamRouteError(p); message != "" {
+			call.Status, call.Error = http.StatusServiceUnavailable, message
+			writeError(w, from, http.StatusServiceUnavailable, message)
+			turnedAway()
+			return
+		}
 		call.Status, call.Error = 404, "no member ready"
 		writeError(w, from, 404, fmt.Sprintf("none of %s's models is ready", call.Model))
 		turnedAway()

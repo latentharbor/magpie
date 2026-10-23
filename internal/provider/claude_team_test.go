@@ -237,6 +237,83 @@ func TestClaudeTeamFailurePreservesRoutesAndConcurrentChangeStopsWrites(t *testi
 	}
 }
 
+func TestClaudeTeamRestartOfflineKeepsOnlyOwnedRoutes(t *testing.T) {
+	for _, mode := range []string{"snapshot", "legacy", "pending", "not-owned", "disabled"} {
+		t.Run(mode, func(t *testing.T) {
+			tm, f, c := teamFixture(t)
+			if mode == "legacy" || mode == "not-owned" {
+				tm.disk.Seats = nil
+			}
+			if mode == "pending" {
+				tm.disk.Pending = &claudeTeamPending{OrganizationID: teamOrg, From: teamID(2), To: teamID(3), Baseline: premiumSet(f.seats)}
+			}
+			if mode == "not-owned" {
+				tm.disk.Original = nil
+			}
+			if mode == "disabled" {
+				c.Enabled = false
+			}
+			if err := tm.persist(); err != nil {
+				t.Fatal(err)
+			}
+			next := newClaudeTeamController()
+			claudeTeam = next
+			next.cfg = c
+			if err := next.loadState(c); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := next.identities(c); err != nil {
+				t.Fatal(err)
+			}
+			f.readErr = errors.New("fixture Cloudflare challenge")
+			before, _ := os.ReadFile(loginsPath())
+			if err := next.reconcile(context.Background(), ""); mode != "disabled" && err == nil {
+				t.Fatal("admin outage hidden")
+			}
+			if mode == "disabled" {
+				if len(next.seats) != 0 || len(next.legacyRoutes) != 0 || len(f.writes) != 0 {
+					t.Fatal("disabled controller restored cached routes or changed cloud assignments")
+				}
+				return // disabled control restores original switches, not cached routes
+			}
+			after, _ := os.ReadFile(loginsPath())
+			if string(before) != string(after) || len(f.writes) != 0 {
+				t.Fatal("outage wrote login switches or cloud assignments")
+			}
+			for _, n := range []int{2, 3, 4} {
+				p := Provider{ID: claudeTeamPrefix + teamOrg, Account: &Account{Agent: "claude", User: fmt.Sprintf("u%d@example.com · Team", n)}}
+				want := (mode == "snapshot" || mode == "legacy") && n != 3
+				if p.TeamRouteOn() != want {
+					t.Fatalf("%s member %d: route=%v want=%v", mode, n, p.TeamRouteOn(), want)
+				}
+			}
+			if mode == "legacy" && len(next.seats) != 0 {
+				t.Fatal("legacy switches fabricated verified cloud assignments")
+			}
+		})
+	}
+}
+
+func TestClaudeTeamHTTPChallengeIsNotExpiredCredential(t *testing.T) {
+	for _, challenge := range []bool{false, true} {
+		t.Run(fmt.Sprint(challenge), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if challenge {
+					w.Header().Set("cf-mitigated", "challenge")
+				}
+				w.WriteHeader(http.StatusForbidden)
+				fmt.Fprint(w, "private-response-body fixture-private-key")
+			}))
+			defer server.Close()
+			client := &claudeTeamHTTP{org: teamOrg, key: "fixture-private-key", base: server.URL, client: server.Client()}
+			_, err := client.Members(context.Background())
+			if err == nil || strings.Contains(err.Error(), "private-") || strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "Cloudflare") != challenge {
+				t.Fatalf("challenge misclassified or secret leaked: %v", err)
+			}
+		})
+	}
+}
+
 func TestClaudeTeamCachedWindowsAndNoHoursLongWait(t *testing.T) {
 	tm, _, c := teamFixture(t)
 	now := time.Now()

@@ -28,7 +28,7 @@ The number of selected Premium members determines the active seat count;
 activation does not purchase or allocate seats.
 
 `claude-team-state.json` (0600) keeps observed allowance windows, original
-login switches, recent operations and an unfinished-transfer journal. A
+login switches, last confirmed pool seat assignments, recent operations and an unfinished-transfer journal. A
 corrupt/unreadable journal stops automatic writes and is never overwritten
 as an empty state. Removing a member or disabling control restores its
 original switches, not its credentials or previous cloud seat assignment.
@@ -47,6 +47,13 @@ configured threshold trigger reconciliation; model-specific windows remain
 visible but do not revoke a seat serving other models. `OnRenewed` and a
 five-minute timer also trigger reconciliation. Healthy requests never cause
 an administrator read. A failed administrator read preserves known switches.
+Confirmed assignments are persisted and restored on restart without requiring
+an administrator round trip. An unfinished transfer blocks cached admissions
+until reconciliation. Legacy journals without assignments retain only enabled,
+controller-owned saved logins for inference, never fabricating verified Premium
+tiers. Disabled, parked, paused, revoked, removed and foreign-organization logins
+are not restored as inference candidates. A successful complete member read
+replaces this compatibility state with authoritative assignments.
 
 Each successful member snapshot enables only Premium accounts in the pool.
 A controller-owned `teamOff` bit prevents discovery, the agent's current
@@ -138,10 +145,18 @@ The administrator transport is native Go: verified web member-list endpoint
 `seat_tier: unassigned | team_tier_1`. The web-client User-Agent is required
 by the verified endpoint: a real sessionKey-only GET returned 403 with Go's
 default User-Agent and succeeded with that header; no clearance cookie or
-Desktop transport was needed. Redirects are refused, response bodies
+Desktop transport was needed at that time; a web-client User-Agent does not
+guarantee admission. Responses carrying `cf-mitigated: challenge` are reported
+as Cloudflare browser verification, not as expired OAuth or a missing model.
+Completing verification in a browser does not guarantee a separate HTTP
+transport is cleared; replacing the sessionKey alone may not resolve it.
+Redirects are refused, response bodies
 and credentials are never included in errors. Web-session expiry or a web
 verification challenge is an operator-visible error, not a reason to disable
-healthy inference.
+healthy inference. An empty Team route returns 503 with its control-plane
+failure, not a model-not-found 404; known exhausted pools still return 429
+with their earliest reset. Cached routes never authorize a cloud seat mutation:
+every transfer still requires fresh complete member verification.
 
 ## Verification and deployment
 

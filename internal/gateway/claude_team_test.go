@@ -243,6 +243,42 @@ func TestClaudeTeamNativeAdminOutageDoesNotGateRequests(t *testing.T) {
 	}
 }
 
+func TestClaudeTeamNoEligibleRouteIsServiceUnavailable(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(strconv.FormatBool(stream), func(t *testing.T) {
+			nativeTeamFixture(t)
+			file := filepath.Join(filepath.Dir(provider.Path()), "logins.json")
+			b, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ls []map[string]any
+			if err := json.Unmarshal(b, &ls); err != nil {
+				t.Fatal(err)
+			}
+			for _, l := range ls {
+				if l["agent"] == "claude" {
+					l["on"], l["teamOff"] = false, true
+				}
+			}
+			if err := os.WriteFile(file, mustJSON(ls), 0600); err != nil {
+				t.Fatal(err)
+			}
+			s := New()
+			t.Cleanup(s.subscription.abortAll)
+			ref := "claude-team-" + nativeTeamOrg + "/claude-sonnet-5"
+			model := ref
+			req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(fmt.Sprintf(`{"model":%q,"stream":%v,"max_tokens":1,"messages":[{"role":"user","content":"probe"}]}`, model, stream)))
+			req.Header.Set("x-api-key", TokenFor("claude-desktop"))
+			rec := httptest.NewRecorder()
+			s.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "Claude Team has no eligible inference account") || strings.Contains(rec.Body.String(), "models is ready") {
+				t.Fatalf("missing model misdiagnosis: %d %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 // Hold an actual admitted request open so rotation must drain it. The
 // second HTTP request arrives with no enabled account, hears a comment
 // before the seat is freed, then receives its answer in that same stream.

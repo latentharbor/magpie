@@ -383,7 +383,7 @@ func (p Provider) TeamRouteOn() bool {
 	t := claudeTeamForUser(p.Account.User)
 	t.mu.Lock()
 	id := t.users[strings.ToLower(p.Account.User)]
-	assigned := t.cfg.Enabled && slices.Contains(t.cfg.Members, id) && t.seats[id] == "team_tier_1" && !t.closed[id]
+	assigned := t.cfg.Enabled && slices.Contains(t.cfg.Members, id) && (t.seats[id] == "team_tier_1" || t.legacyRoutes[id]) && !t.closed[id]
 	t.mu.Unlock()
 	if !assigned {
 		return false
@@ -394,6 +394,28 @@ func (p Provider) TeamRouteOn() bool {
 		}
 	}
 	return false
+}
+
+// ClaudeTeamRouteError explains an unavailable control plane without making
+// it a preflight check for healthy inference. Its messages never contain tokens.
+func ClaudeTeamRouteError(p Provider) string {
+	org := ClaudeTeamOf(p)
+	if org == "" {
+		return ""
+	}
+	t, err := claudeTeamForOrg(org, false)
+	if err != nil {
+		return "Claude Team subscription state is unavailable"
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.err != "" {
+		return "Claude Team has no eligible inference account: " + t.err
+	}
+	if t.disk.Pending != nil {
+		return "Claude Team seat transfer is awaiting reconciliation; no unverified account was enabled"
+	}
+	return "Claude Team has no eligible inference account; waiting for confirmed seat assignments"
 }
 
 // Team providers enumerate only their own assigned accounts. Claude Code's

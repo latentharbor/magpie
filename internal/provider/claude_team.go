@@ -70,6 +70,7 @@ type claudeTeamPending struct {
 }
 type claudeTeamDisk struct {
 	OrganizationID string                     `json:"organizationId"`
+	Seats          map[string]string          `json:"seats,omitempty"`
 	Limits         map[string][]ClaudeLimit   `json:"limits"`
 	Observed       map[string]time.Time       `json:"observed,omitempty"`
 	Original       map[string]claudeTeamFlags `json:"original"`
@@ -84,6 +85,7 @@ type claudeTeamController struct {
 	cfg                          ClaudeTeamConfig
 	disk                         claudeTeamDisk
 	seats                        map[string]string
+	legacyRoutes                 map[string]bool // last controller-owned switches, not verified cloud seats
 	active                       map[string]int
 	closed                       map[string]bool
 	users                        map[string]string
@@ -246,6 +248,31 @@ func (t *claudeTeamController) loadState(c ClaudeTeamConfig) error {
 	}
 	t.loaded = true
 	t.path = t.configPath()
+	// An uncertain transfer must be reconciled before any cached assignment
+	// can admit a request. Never infer that a released seat is still assigned.
+	if t.disk.Pending == nil && c.Enabled {
+		for id, tier := range t.disk.Seats {
+			if slices.Contains(c.Members, id) && (tier == "team_tier_1" || tier == "unassigned") {
+				t.seats[id] = tier
+			}
+		}
+	}
+	t.mu.Unlock()
+	// Older journals have no seat snapshot. Preserve only the switches this
+	// controller already owned, with a matching saved identity. These are
+	// inference candidates, never claimed as freshly verified Premium seats.
+	ids, idErr := teamIdentities(c)
+	t.mu.Lock()
+	if idErr == nil && c.Enabled && t.disk.Pending == nil && t.disk.Seats == nil {
+		t.legacyRoutes = map[string]bool{}
+		for _, id := range c.Members {
+			l := ids[id]
+			_, owned := t.disk.Original[id]
+			if owned && l.On && !l.TeamOff && !l.Paused && l.Lapsed == "" {
+				t.legacyRoutes[id] = true
+			}
+		}
+	}
 	t.mu.Unlock()
 	return nil
 }
@@ -262,6 +289,7 @@ func (t *claudeTeamController) selectPath() error {
 	t.cfg = ClaudeTeamConfig{}
 	t.disk = claudeTeamDisk{Limits: map[string][]ClaudeLimit{}, Original: map[string]claudeTeamFlags{}}
 	t.seats, t.users, t.closed = map[string]string{}, map[string]string{}, map[string]bool{}
+	t.legacyRoutes = nil
 	t.loaded, t.requested, t.rotating, t.manual, t.err = false, false, false, "", ""
 	return nil
 }
@@ -511,13 +539,19 @@ func (t *claudeTeamController) synchronize(c ClaudeTeamConfig, seats []claudeTea
 	}
 	states := map[string]bool{}
 	t.mu.Lock()
+	t.disk.Seats = map[string]string{}
+	t.legacyRoutes = nil
 	for _, s := range seats {
 		t.seats[s.AccountID] = s.SeatTier
 		if slices.Contains(c.Members, s.AccountID) {
+			t.disk.Seats[s.AccountID] = s.SeatTier
 			states[s.AccountID] = s.SeatTier == "team_tier_1"
 		}
 	}
 	t.mu.Unlock()
+	if err := t.persist(); err != nil {
+		return err
+	}
 	return t.route(c, states)
 }
 
