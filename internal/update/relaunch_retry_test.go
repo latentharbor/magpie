@@ -29,7 +29,9 @@ if [ $n -le ` + strconv.Itoa(fails) + ` ]; then
   echo "_LSOpenURLsWithCompletionHandler() failed for the application $app with error -600." >&2
   exit 1
 fi
-echo "$@" > "$d/opened"
+# echo consumes open's -n as its own option in Linux /bin/sh.
+# Record every argument as data on every shell.
+printf '%s\n' "$*" > "$d/opened"
 `
 	if err := os.WriteFile(filepath.Join(dir, "open"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
