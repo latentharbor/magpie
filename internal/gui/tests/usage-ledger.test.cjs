@@ -52,7 +52,7 @@ function page(q) {
   };
 }
 
-function server(lang, theme, asked) {
+function server(lang, theme, asked, live = false) {
   return async (route) => {
     const req = route.request(), url = new URL(req.url());
     const json = (data) => route.fulfill({ json: data });
@@ -60,6 +60,7 @@ function server(lang, theme, asked) {
     if (url.pathname === "/wails/runtime.js") return route.fulfill({ contentType: "text/javascript", body: "export const Window = {};" });
     if (url.pathname === "/api/gateway/trace") {
       await new Promise((r) => setTimeout(r, 100));
+      if (live) return json({ mine: true, seq: 1, routes: [{ id: 123, time: ROWS[0].t, agent: "codex", model: "gpt-6-sol", provider: "relay", order: [], tries: [], done: true, status: 200 }], totals: { requests: 1, rerouted: 0, errors: 0 }, now: new Date().toISOString() });
       return json({ mine: false, seq: 0, routes: [], totals: { requests: 0, rerouted: 0, errors: 0 }, now: new Date().toISOString() });
     }
     if (url.pathname === "/api/gateway/history") return json({ days: [], routes: [], cut: false });
@@ -137,12 +138,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     const shots = process.env.ARTIFACT_DIR;
     if (shots) await fs.mkdir(shots, { recursive: true });
 
-    const open = async (lang, theme, asked, width = 1180, height = 640) => {
+    const open = async (lang, theme, asked, width = 1180, height = 640, live = false) => {
       const errors = [];
       const page = await (await browser.newContext({ viewport: { width, height }, reducedMotion: "reduce" })).newPage();
       page.setDefaultTimeout(5000);
       page.on("pageerror", (e) => errors.push(e.message));
-      await page.route("**/*", server(lang, theme, asked));
+      await page.route("**/*", server(lang, theme, asked, live));
       await page.goto("http://magpie.test/");
       await page.locator('nav [data-view="usage"], [data-view="usage"]').first().click();
       await page.locator(":is(#usageTab .opt, .nav-s):visible").nth(1).click();
@@ -410,12 +411,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       });
       await t.test(lang + ": newest live route needs no return-to-live button", async () => {
         const asked = [];
-        const { page, errors } = await open(lang, "light", asked);
-        await page.route("**/api/gateway/trace?*", async route => {
-          await page.waitForTimeout(100);
-          await route.fulfill({json:{mine:true, seq:1, routes:[{id:123,time:ROWS[0].t,agent:"codex",model:"gpt-6-sol",provider:"relay",order:[],tries:[],done:true,status:200}],totals:{requests:1,rerouted:0,errors:0},now:new Date().toISOString()}}).catch(()=>{});
-        });
-        await page.waitForTimeout(5500);
+        // Supply the live trace from the initial read. After an initial
+        // mine:false reply polling sleeps while Routing is out of sight;
+        // waiting a fixed duration on Usage cannot populate the live list.
+        const { page, errors } = await open(lang, "light", asked, 1180, 640, true);
+        await page.locator('[data-view="routing"]:visible').first().click();
+        await page.locator(".rt-log-head").getByText(lang === "en" ? "How the last request was routed" : "最近一个请求是怎么路由的", { exact: true }).waitFor({ state: "attached" });
+        await page.locator('[data-view="usage"]:visible').first().click();
         const link = page.locator(".led tbody tr").first().getByTitle(lang === "en" ? "View routing" : "查看路由");
         await wheelTo(page, link);
         await link.click();
