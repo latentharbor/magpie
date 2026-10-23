@@ -120,12 +120,21 @@ Workflow permissions, branch protection, Actions availability and signing-key
 configuration still need repository-owner setup. A failed merge or build
 requires maintainer attention; it is never silently published.
 
+With repository Issues enabled, synchronization failures open or update one
+bot-owned maintenance issue. Successful synchronization closes it; a recurrence
+reopens it. A separate completed-release workflow reports release failures the
+same way. Notices contain only a generic description and the public Actions run
+link, never logs or configuration. Cancelled and skipped release runs do not
+report recovery. GitHub notification delivery still depends on the owner's
+repository watching and notification preferences.
+
 ## Verification
 
 Targeted local checks:
 
 ```sh
 python3 -m unittest discover -s build -p 'fork*_test.py'
+node --test build/fork_notice.test.cjs
 go test -race ./internal/update -run '^Test(Distribution|Fork)' -count=20
 go test -race ./internal/update -count=1
 ```

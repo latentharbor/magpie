@@ -12,6 +12,7 @@ concurrency:
 permissions:
   contents: write
   actions: write
+  issues: write
 
 jobs:
   sync:
@@ -45,3 +46,11 @@ jobs:
           # GITHUB_TOKEN pushes do not trigger push workflows. Dispatch is explicit
           # and Test's successful workflow_run event then starts Distribution release.
           gh workflow run test.yml --repo "$GITHUB_REPOSITORY" --ref main
+      - name: Record synchronization failure or recovery
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await require(`${process.env.GITHUB_WORKSPACE}/build/fork_notice.cjs`)(
+              github, context, 'upstream', '${{ job.status }}' !== 'success'
+            );

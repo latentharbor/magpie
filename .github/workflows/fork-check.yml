@@ -16,4 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check release metadata and workflow guards
-        run: python3 -m unittest discover -s build -p 'fork*_test.py'
+        run: |
+          python3 -m unittest discover -s build -p 'fork*_test.py'
+          node --test build/fork_notice.test.cjs
