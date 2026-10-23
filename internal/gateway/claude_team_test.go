@@ -54,6 +54,7 @@ type nativeTeamTransport struct {
 	premium       string
 	reads, writes int
 	offline       bool
+	stop          func()
 }
 
 func (f *nativeTeamTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -137,9 +138,9 @@ func nativeTeamFixture(t *testing.T) *nativeTeamTransport {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { defer close(done); provider.KeepClaudeTeam(ctx) }()
+	f.stop = sync.OnceFunc(func() { cancel(); <-done })
 	t.Cleanup(func() {
-		cancel()
-		<-done
+		f.stop()
 		c.Enabled = false
 		// A disabled subscription deliberately still owns its pool. Empty the
 		// fixture's pool too, so later ordinary Claude tests do not inherit it.
@@ -258,7 +259,11 @@ func TestClaudeTeamNativeAdminOutageDoesNotGateRequests(t *testing.T) {
 func TestClaudeTeamNoEligibleRouteIsServiceUnavailable(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(strconv.FormatBool(stream), func(t *testing.T) {
-			nativeTeamFixture(t)
+			f := nativeTeamFixture(t)
+			// This fixture removes every route by hand. Stop the background
+			// owner first: a real reconciliation correctly restores Premium's
+			// switch and would race the deliberately unavailable state.
+			f.stop()
 			file := filepath.Join(filepath.Dir(provider.Path()), "logins.json")
 			b, err := os.ReadFile(file)
 			if err != nil {
