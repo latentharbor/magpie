@@ -92,7 +92,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     if (shots) await fs.mkdir(shots, { recursive: true });
     const open = async (lang, { width, theme = "light", variant = "" }) => {
       const errors = [], asked = [];
-      const context = await browser.newContext({ viewport: { width, height: 820 }, reducedMotion: "reduce" });
+      // The expected English dates use US month/day order. Do not inherit
+      // the host's en-GB region, which the app correctly preserves.
+      const context = await browser.newContext({ locale: "en-US", viewport: { width, height: 820 }, reducedMotion: "reduce" });
       const p = await context.newPage();
       p.setDefaultTimeout(5000);
       p.on("pageerror", (e) => errors.push(e.message));

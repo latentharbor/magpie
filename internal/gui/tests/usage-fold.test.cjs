@@ -14,6 +14,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const ago = (m) => new Date(Date.now() - m * 60e3).toISOString();
@@ -135,6 +136,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.waitForTimeout(300);
       };
       await wheelTo(two.locator(".quota-acct-fold"));
+      await reach(page, two.locator(".quota-acct-fold"));
       const twoAt = await two.evaluate((e) => e.getBoundingClientRect().top);
       const scrolled = await view.evaluate((v) => v.scrollTop);
       assert.equal(await two.locator(".quota-acct-fold").getAttribute("aria-expanded"), "false");

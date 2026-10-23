@@ -66,6 +66,9 @@ async function settled(page) {
     const read = () => JSON.stringify({
       list: Math.round(document.querySelector("#subscriptionUsage").getBoundingClientRect().height),
       cards: [...document.querySelectorAll("#subscriptionUsage > .subscription-card")].map((c) => [c.dataset.key, Math.round(c.getBoundingClientRect().height)]),
+      // A packed card can absorb the first frames of its curve growing
+      // inside spare space. Its outer box alone is not a settled plot.
+      plots: [...document.querySelectorAll("#subscriptionUsage .qc-plot")].map((p) => Math.round(p.getBoundingClientRect().height)),
     });
     let last = read(), still = 0;
     const tick = () => {

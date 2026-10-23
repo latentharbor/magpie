@@ -161,7 +161,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           // Unhide puts one back where it was in the list; the line clicked
           // under stays where it was on the screen as the row goes in above
           const back = p.locator('#usageAgentsHid .row.stat[data-id="curl"] .us-unhide');
-          await reader.inView(p, back);
+          // At the very top the app deliberately keeps scrollTop at zero
+          // when a row arrives above. Exercise anchoring after the reader
+          // has scrolled into the list, where the hidden line is held.
+          await reader.wheelTo(p, back, 200);
+          assert(await top(p) > 0, "the reader has left the top before testing the held line");
           const lineAt = () => line.evaluate((e) => e.getBoundingClientRect().top);
           const was = await lineAt();
           await back.click();

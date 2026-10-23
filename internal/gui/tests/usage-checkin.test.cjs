@@ -21,7 +21,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { watchSettingsReads, settingsDrawn } = require("./reader.cjs");
+const { watchSettingsReads, settingsDrawn, reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
@@ -292,11 +292,14 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const tab = page.locator("#warmTab-minimax");
       await tab.waitFor();
       assert.equal(await tab.isHidden(), false);
+      await reach(page, tab);
       await tab.click();
       await page.locator("#minimaxList").waitFor();
       assert.match(await page.locator("#minimaxCheckinSub").innerText(), /MiniMax Code/);
       const saved = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/settings" && r.method() === "POST");
-      await page.locator("#minimaxCheckinSegs button").nth(1).click();
+      const on = page.locator("#minimaxCheckinSegs button").nth(1);
+      await reach(page, on);
+      await on.click();
       await saved;
       assert.deepEqual(asked, [true]);
       assert.deepEqual(errors, []);
@@ -361,13 +364,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.equal(await page.locator("#warmTab-minimax").isHidden(), true, "MiniMax's tab with no MiniMax account");
       // at 440x900 the tabs are below the fold: the reader scrolls to them
       // with the wheel (a scroll of the script's own is put back, by design)
-      await page.mouse.move(220, 400);
-      for (let i = 0; i < 10; i++) {
-        const r = await tab.boundingBox(), foot = await page.locator("footer.foot").boundingBox();
-        if (r.y + r.height < foot.y - 8) break;
-        await page.mouse.wheel(0, 200);
-        await page.waitForTimeout(100);
-      }
+      await reach(page, tab);
       await tab.click();
       await page.locator("#qoderList").waitFor();
       const sub = await page.locator("#qoderCheckinSub").innerText();
@@ -376,7 +373,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const box = await page.locator("#qoderCheckinRow").boundingBox();
       assert(box.width > 0 && box.x + box.width <= 440, "the row fits at 440px");
       const saved = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/settings" && r.method() === "POST");
-      await page.locator("#qoderCheckinSegs button").nth(1).click();
+      const on = page.locator("#qoderCheckinSegs button").nth(1);
+      await reach(page, on);
+      await on.click();
       await saved;
       assert.deepEqual(asked, [true]);
       assert.deepEqual(errors, []);
