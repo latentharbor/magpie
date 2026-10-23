@@ -49,6 +49,9 @@ function server(lang, posts) {
       return json(cur);
     }
     if (url.pathname === "/api/usage/quotas") return json([]);
+    // Opening Usage also reads its aggregate. A generic {} is not that API's
+    // shape: it throws while formatting cost and leaves an error over controls.
+    if (url.pathname === "/api/usage") return json({ calls: 0, input: 0, output: 0, cost: 0, agents: [], models: [], days: [] });
     if (url.pathname === "/api/plugins") return json({ plugins: [] });
     if (url.pathname === "/api/groups") return json({ groups: [], models: [] });
     if (url.pathname.startsWith("/api/")) return json({});
@@ -87,6 +90,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           const row = page.locator("#quotaReadsRow");
           const opts = row.locator("#quotaReadsSegs .opt");
           await opts.first().waitFor();
+          assert.equal(await page.locator("#status.err").count(), 0, "the Usage fixture must not leave a formatting error over settings");
           assert.equal((await row.locator(".name").textContent()).trim(), name);
           const sub = (await row.locator(".sub").textContent()).trim();
           assert(sub.includes("magpie quota"), "the sub says what counts as asking: " + sub);
