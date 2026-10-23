@@ -2,7 +2,7 @@ name: Distribution maintenance notices
 
 on:
   workflow_run:
-    workflows: [Distribution release]
+    workflows: [Test, Distribution release]
     types: [completed]
 
 permissions:
@@ -29,6 +29,8 @@ jobs:
       - uses: actions/github-script@v7
         with:
           script: |
+            const run = context.payload.workflow_run;
+            const kind = run.name === 'Test' ? 'test' : 'release';
             await require(`${process.env.GITHUB_WORKSPACE}/build/fork_notice.cjs`)(
-              github, context, 'release', context.payload.workflow_run.conclusion !== 'success'
+              github, context, kind, run.conclusion !== 'success'
             );

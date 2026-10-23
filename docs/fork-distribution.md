@@ -122,8 +122,9 @@ requires maintainer attention; it is never silently published.
 
 With repository Issues enabled, synchronization failures open or update one
 bot-owned maintenance issue. Successful synchronization closes it; a recurrence
-reopens it. A separate completed-release workflow reports release failures the
-same way. Notices contain only a generic description and the public Actions run
+reopens it. A completed-run workflow reports main Test failures and release
+failures independently the same way, including a Test failure that blocks a
+release from starting. Notices contain only a generic description and the public Actions run
 link, never logs or configuration. Cancelled and skipped release runs do not
 report recovery. GitHub notification delivery still depends on the owner's
 repository watching and notification preferences.

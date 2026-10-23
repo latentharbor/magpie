@@ -3,6 +3,7 @@ module.exports = async function report(github, context, kind, failed) {
   const titles = {
     upstream: "Upstream synchronization needs attention",
     release: "Distribution release needs attention",
+    test: "Distribution checks need attention",
   };
   if (!Object.hasOwn(titles, kind)) throw new Error("Unknown notice kind");
   const { owner, repo } = context.repo;

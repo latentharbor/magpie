@@ -48,3 +48,16 @@ test("a release notice links the completed run and never edits a pull request", 
   assert.equal(f.writes[0].issue_number, undefined);
   assert.match(f.writes[0].body, /actions\/runs\/99/);
 });
+test("failed main checks have their own notice and recover independently", async () => {
+  const f = fixture([{ number: 4, state: "open", body: "<!-- distribution-notice:release -->" }]);
+  const completed = { ...context, payload: { workflow_run: { id: 101 } } };
+  await report(f.github, completed, "test", true);
+  assert.equal(f.writes.length, 1);
+  assert.equal(f.writes[0].issue_number, undefined, "a failed Test never overwrites the release notice");
+  assert.equal(f.writes[0].title, "Distribution checks need attention");
+  assert.match(f.writes[0].body, /actions\/runs\/101/);
+  const recovered = fixture([{ number: 8, state: "open", body: f.writes[0].body }]);
+  await report(recovered.github, completed, "test", false);
+  assert.equal(recovered.writes[0].issue_number, 8);
+  assert.equal(recovered.writes[0].state, "closed");
+});
