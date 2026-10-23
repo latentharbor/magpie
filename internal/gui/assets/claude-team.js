@@ -177,7 +177,10 @@ async function openClaudeTeam(organizationId = "") {
       else await closeModal();
       await loadProvidersNow();
     } catch (e) { fail(e); }
-    finally { pending = false; save.disabled = false; }
+    finally {
+      pending = false; save.disabled = false;
+      if (ed.isConnected) { draw(); poll(); }
+    }
   };
   save.disabled = true; await load(true); save.disabled = !view;
 }

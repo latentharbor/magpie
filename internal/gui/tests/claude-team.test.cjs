@@ -43,6 +43,7 @@ function fixture(lang) {
         const v=views.get(body.organizationId);
         if(url.pathname.endsWith("config")) {
           v.config={...body}; delete v.config.sessionKey;
+          if (f.failCaptureOnSave) v.members[1].quotaError="Quota collection failed; retry while this account has Premium access";
           let index=providers.findIndex(p=>p.teamOrganization===body.organizationId);
           if(index<0) providers.push(provider(v)); else providers[index]=provider(v);
         } else if(url.pathname.endsWith("quota")) {
@@ -150,6 +151,27 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       assert.deepEqual(f.posts[3].body.members,[id(71),id(72)]);
       assert.equal(f.views.get(org).config.threshold,95,"other organization remains unchanged");
       assert.deepEqual(errors,[]);
+    });
+    test(engine+" "+lang+": saved usage failure leaves retry usable", {timeout:30000}, async t=>{
+      const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
+      t.after(()=>browser.close());
+      const page=await(await browser.newContext({viewport:{width:1000,height:850},reducedMotion:"reduce"})).newPage();
+      const words=strings().I18N[lang]||{}, tr=s=>words[s]||s, f=fixture(lang);
+      f.failCaptureOnSave=true;
+      await page.route("**/*",f.route);
+      await page.goto("http://magpie.test/?view=providers&edit=claude-team-"+org);
+      await page.locator(".team-accts > button").click();
+      const dialog=page.locator(".claude-team");
+      await dialog.locator(".team-member").nth(12).waitFor();
+      await dialog.getByRole("button",{name:tr("Save"),exact:true}).click();
+      await page.waitForFunction(()=>document.querySelector(".claude-team .bar .primary")?.disabled===false);
+      const row=dialog.locator('.team-member[data-account="'+id(3)+'"]');
+      await row.getByText(tr("Quota collection failed; retry while this account has Premium access"),{exact:true}).waitFor();
+      const retry=row.getByRole("button",{name:tr("Retry usage collection"),exact:true});
+      assert(await retry.isEnabled(),"save completed but the failed member's retry stayed disabled");
+      await retry.click();
+      await row.getByText(tr("Collecting usage…"),{exact:true}).waitFor();
+      assert.deepEqual(f.posts.map(p=>p.path),["/api/claude-team/config","/api/claude-team/quota"]);
     });
   }
 }
