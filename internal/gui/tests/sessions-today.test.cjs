@@ -66,7 +66,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
   for (const lang of ["en", "zh"]) {
     test(`${engine} ${lang}: today's bar keeps its tooltip`, async (t) => {
       const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
-      const context = await browser.newContext({ viewport: { width: 1100, height: 760 }, reducedMotion: "reduce", timezoneId: TZ });
+      // The English expectation below is US month-day order. The app
+      // correctly keeps a host's en-GB day-month order; do not inherit it
+      // into a fixture whose expected dates use Node's plain "en".
+      const context = await browser.newContext({ viewport: { width: 1100, height: 760 }, reducedMotion: "reduce", timezoneId: TZ, locale: "en-US" });
       const page = await context.newPage();
       page.setDefaultTimeout(5000);
       const errors = [], reads = { n: 0 };

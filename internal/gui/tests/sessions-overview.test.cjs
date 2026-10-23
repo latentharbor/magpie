@@ -109,7 +109,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
   for (const lang of ["en", "zh"]) {
     test(`${engine} ${lang}: the sessions overview`, async (t) => {
       const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
-      const context = await browser.newContext({ viewport: { width: 1100, height: 760 }, reducedMotion: "reduce", timezoneId: "Asia/Shanghai" });
+      // The skill's fixed "Sep 27" expectation uses US English, rather
+      // than the host's English date order that the app deliberately keeps.
+      const context = await browser.newContext({ viewport: { width: 1100, height: 760 }, reducedMotion: "reduce", timezoneId: "Asia/Shanghai", locale: "en-US" });
       const page = await context.newPage();
       page.setDefaultTimeout(5000);
       const errors = [], seen = [], ctl = {};
