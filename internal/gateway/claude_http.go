@@ -2,7 +2,7 @@ package gateway
 
 // Opt-in HTTP inference shares the normal routing, accounting and Team drain
 // path. It does not share a running CLI's conversation or refresh its tokens.
-// The application-level profile is pinned, not a claim of TLS/TUI equivalence.
+// The compatibility profile is pinned to an offline native CLI capture.
 
 import (
 	"context"
@@ -29,11 +29,15 @@ const claudeHTTPVersion = "2.1.309"
 
 type claudeTransportKey struct{}
 type claudeHTTPKey struct{}
+type claudeHTTPProbeKey struct{}
 type claudeHTTPCall struct {
 	auth    provider.ClaudeHTTPCredentials
 	session string
 	prompt  string
 	turn    int
+	native  bool
+	headers http.Header
+	probe   bool
 }
 
 var claudeHTTPAuth = provider.ClaudeHTTPAuth
@@ -70,7 +74,20 @@ func (s *Server) serveClaudeHTTP(w http.ResponseWriter, r *http.Request, from pr
 		}
 	}
 	prompt := uuid.NewSHA1(uuid.NameSpaceOID, []byte(session+"\x00"+string(body))).String()
-	ctx := context.WithValue(r.Context(), claudeHTTPKey{}, claudeHTTPCall{auth: auth, session: session, prompt: prompt, turn: max(1, turn)})
+	c := claudeHTTPCall{auth: auth, session: session, prompt: prompt, turn: max(1, turn), headers: r.Header.Clone()}
+	c.probe, _ = r.Context().Value(claudeHTTPProbeKey{}).(bool)
+	if from == provider.Anthropic && nativeClaudeHTTPRequest(r.Header, body) {
+		c.native = true
+		if id := claudeHTTPUUID(r.Header.Get("x-claude-code-session-id")); id != "" {
+			c.session = id
+		} else if id := claudeHTTPUUID(gjson.Get(gjson.GetBytes(body, "metadata.user_id").String(), "session_id").String()); id != "" {
+			c.session = id
+		}
+		if id := claudeHTTPUUID(r.Header.Get("x-claude-code-prompt-id")); id != "" {
+			c.prompt = id
+		}
+	}
+	ctx := context.WithValue(r.Context(), claudeHTTPKey{}, c)
 	r = r.WithContext(ctx)
 	if from == provider.Anthropic {
 		status, msg, _ := s.passthrough(w, r, p, from, model, body, usage)
@@ -91,20 +108,39 @@ func claudeHTTPBody(body []byte, c claudeHTTPCall) ([]byte, error) {
 	if !gjson.ValidBytes(body) {
 		return nil, fmt.Errorf("invalid Anthropic request")
 	}
+	if c.native {
+		// Keep the caller's system blocks byte-for-byte, including cache marks,
+		// SDK identity variants, attribution and continuity tags. Only the
+		// selected credential owns device/account metadata; re-sign afterwards.
+		body, err := claudeHTTPMetadata(body, c)
+		if err != nil {
+			return nil, err
+		}
+		return signAnthropicMessagesBody(body)
+	}
 	var system []json.RawMessage
+	var identity json.RawMessage
 	s := gjson.GetBytes(body, "system")
 	if s.Type == gjson.String {
 		b, _ := json.Marshal(map[string]string{"type": "text", "text": s.String()})
-		system = append(system, b)
+		if claudeHTTPIdentityText(s.String()) {
+			identity = b
+		} else if !strings.HasPrefix(s.String(), "x-anthropic-billing-header:") {
+			system = append(system, b)
+		}
 	} else if s.Exists() {
 		if !s.IsArray() {
 			return nil, fmt.Errorf("system must be text or an array")
 		}
 		for _, b := range s.Array() {
-			// The selected transport owns these two identity blocks, but no
-			// other system instruction (including the client's harness).
 			t := b.Get("text").String()
-			if strings.HasPrefix(t, "x-anthropic-billing-header:") || t == claudeHTTPIdentity {
+			if claudeHTTPIdentityText(t) {
+				if identity == nil {
+					identity = json.RawMessage(b.Raw)
+				}
+				continue
+			}
+			if strings.HasPrefix(t, "x-anthropic-billing-header:") {
 				continue
 			}
 			system = append(system, json.RawMessage(b.Raw))
@@ -140,15 +176,16 @@ func claudeHTTPBody(body []byte, c claudeHTTPCall) ([]byte, error) {
 	sum := sha256.Sum256([]byte("59cf53e54c78" + string(utf16.Decode(sampled)) + claudeHTTPVersion))
 	billing := fmt.Sprintf("x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=cli; cch=00000; cc_prompt_id=%s; cc_turn_origin=human; cc_prompt_index=%d; cc_turn_index=%d;", claudeHTTPVersion, hex.EncodeToString(sum[:])[:3], c.prompt, max(1, c.turn), max(1, c.turn))
 	b, _ := json.Marshal(map[string]string{"type": "text", "text": billing})
-	id, _ := json.Marshal(map[string]string{"type": "text", "text": claudeHTTPIdentity})
-	system = append([]json.RawMessage{b, id}, system...)
+	if identity == nil {
+		identity, _ = json.Marshal(map[string]string{"type": "text", "text": claudeHTTPIdentity})
+	}
+	system = append([]json.RawMessage{b, identity}, system...)
 	var err error
 	body, err = sjson.SetBytes(body, "system", system)
 	if err != nil {
 		return nil, err
 	}
-	identity, _ := json.Marshal(map[string]string{"device_id": c.auth.DeviceID, "account_uuid": c.auth.AccountUUID, "session_id": c.session})
-	body, err = sjson.SetBytes(body, "metadata.user_id", string(identity))
+	body, err = claudeHTTPMetadata(body, c)
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +207,10 @@ func claudeHTTPBody(body []byte, c claudeHTTPCall) ([]byte, error) {
 			return nil, err
 		}
 	}
+	body, err = claudeHTTPDefaultCache(body, c)
+	if err != nil {
+		return nil, err
+	}
 	return signAnthropicMessagesBody(body)
 }
 
@@ -177,6 +218,18 @@ const claudeHTTPIdentity = "You are Claude Code, Anthropic's official CLI for Cl
 
 func claudeHTTPHeaders(req *http.Request, body []byte, c claudeHTTPCall) {
 	h := req.Header
+	if c.native {
+		for k, values := range c.headers {
+			if claudeCodeHeader(k) || strings.EqualFold(k, "x-client-request-id") || strings.EqualFold(k, "Accept") {
+				h[k] = append([]string(nil), values...)
+			}
+		}
+		h.Del("x-api-key")
+		h.Set("Authorization", "Bearer "+c.auth.Token)
+		h.Set("x-claude-code-session-id", c.session)
+		provider.MergeList(h, "Anthropic-Beta", "oauth-2025-04-20")
+		return
+	}
 	h.Del("x-api-key")
 	h.Set("Authorization", "Bearer "+c.auth.Token)
 	h.Set("Accept", "application/json")
@@ -185,6 +238,9 @@ func claudeHTTPHeaders(req *http.Request, body []byte, c claudeHTTPCall) {
 	h.Set("x-claude-code-session-id", c.session)
 	h.Set("x-claude-code-prompt-id", c.prompt)
 	h.Set("x-claude-code-request-class", "main")
+	if class := c.headers.Get("x-claude-code-request-class"); class != "" {
+		h.Set("x-claude-code-request-class", class)
+	}
 	h.Set("x-client-request-id", uuid.NewString())
 	h.Set("anthropic-version", "2023-06-01")
 	h.Set("anthropic-dangerous-direct-browser-access", "true")
@@ -213,16 +269,9 @@ func claudeHTTPHeaders(req *http.Request, body []byte, c claudeHTTPCall) {
 	}
 	// Inspect parsed fields, not text containing a pretend cache-control object.
 	var ttl bool
-	var walk func(gjson.Result)
-	walk = func(v gjson.Result) {
-		if v.IsObject() && v.Get("cache_control.ttl").String() == "1h" {
-			ttl = true
-		}
-		if v.IsObject() || v.IsArray() {
-			v.ForEach(func(_, v gjson.Result) bool { walk(v); return true })
-		}
+	for _, path := range claudeHTTPCachePaths(body) {
+		ttl = ttl || gjson.GetBytes(body, path+".ttl").String() == "1h"
 	}
-	walk(gjson.ParseBytes(body))
 	if ttl {
 		betas = append(betas, "extended-cache-ttl-2025-04-11")
 	}
@@ -258,7 +307,9 @@ func probeClaudeHTTP(ctx context.Context, p provider.Provider, model string) err
 	s := New()
 	defer s.subscription.abortAll()
 	body, _ := json.Marshal(map[string]any{"model": model, "max_tokens": 8, "stream": false, "messages": []any{map[string]string{"role": "user", "content": "hi"}}})
-	r, err := http.NewRequestWithContext(context.WithValue(ctx, claudeTransportKey{}, "http"), http.MethodPost, "http://localhost/v1/messages", nil)
+	ctx = context.WithValue(ctx, claudeTransportKey{}, "http")
+	ctx = context.WithValue(ctx, claudeHTTPProbeKey{}, true)
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/v1/messages", nil)
 	if err != nil {
 		return err
 	}

@@ -4200,11 +4200,18 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 	if why, ok := provider.RevokedSignIn(p.Account, req); ok {
 		return revokedReply(req, why), nil
 	}
-	if to == provider.Anthropic {
-		s.fitUserBetas(p, req.Header)
-	}
 	if c, ok := claudeHTTPOf(ctx, p); ok && to == provider.Anthropic {
 		claudeHTTPHeaders(req, body, c)
+		// The compatibility profile must not re-add a beta rejected by the
+		// upstream on the preceding attempt, even without custom headers.
+		if kept := s.betas(p, req.Header.Values("anthropic-beta")); len(kept) > 0 {
+			req.Header.Set("anthropic-beta", strings.Join(kept, ","))
+		} else {
+			req.Header.Del("anthropic-beta")
+		}
+	}
+	if to == provider.Anthropic {
+		s.fitUserBetas(p, req.Header)
 	}
 	sent := len(body)
 	if p.Account != nil && p.Account.Agent == "codex" {

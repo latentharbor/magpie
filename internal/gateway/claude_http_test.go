@@ -312,3 +312,62 @@ func TestClaudeHTTPNativeCCHCapture(t *testing.T) {
 		t.Fatal("no native first-party-host request in capture")
 	}
 }
+
+// Run the real CLI's fake-token capture through request admission and the
+// ordinary upstream builder, not only the body helper.
+func TestClaudeHTTPNativeCaptureThroughGateway(t *testing.T) {
+	path := os.Getenv("MAGPIE_CLAUDE_HTTP_CAPTURE")
+	if path == "" {
+		t.Skip("offline native capture not supplied")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var captures []struct {
+		URL     string            `json:"url"`
+		Headers map[string]string `json:"headers"`
+		Body    json.RawMessage   `json:"body"`
+	}
+	if err = json.Unmarshal(b, &captures); err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, capture := range captures {
+		if !strings.Contains(capture.URL, "/v1/messages") {
+			continue
+		}
+		s, p, sent, head := httpClaudeFixture(t)
+		r := httpClaudeRequest()
+		for k, v := range capture.Headers {
+			r.Header.Set(k, v)
+		}
+		w := httptest.NewRecorder()
+		var call Call
+		status, msg := s.attempt(w, r, provider.Anthropic, p, gjson.GetBytes(capture.Body, "model").String(), capture.Body, &call)
+		if status != 200 {
+			t.Fatalf("native capture failed: %d %s", status, msg)
+		}
+		for _, field := range []string{"messages", "tools", "thinking", "output_config", "context_management", "diagnostics"} {
+			if gjson.GetBytes(*sent, field).Raw != gjson.GetBytes(capture.Body, field).Raw {
+				t.Errorf("changed captured native %s", field)
+			}
+		}
+		before, after := gjson.GetBytes(capture.Body, "system").Array(), gjson.GetBytes(*sent, "system").Array()
+		if len(before) != len(after) {
+			t.Fatal("changed captured native system length")
+		}
+		for i := 1; i < len(before); i++ {
+			if before[i].Raw != after[i].Raw {
+				t.Errorf("changed captured native system block %d", i)
+			}
+		}
+		if head.Get("x-claude-code-session-id") != r.Header.Get("x-claude-code-session-id") {
+			t.Error("changed captured native session")
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("capture contained no native inference request")
+	}
+}

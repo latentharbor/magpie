@@ -1,0 +1,18 @@
+Source: local official Claude Code 2.1.309, macOS arm64.
+Binary SHA-256: 5eadc0009cdcdbc0d06e58110d7b2baf88ced6088b1c33a60a21217fe410619c
+Captured 2026-10-24 UTC+08, using a fake OAuth token, isolated HOME, loopback
+HTTP CONNECT proxy and locally trusted HTTPS mock. No production account,
+external DNS lookup or external connection was used.
+
+The fixture describes the /v1/messages?beta=true inference ClientHello, not
+/api/claude_code/settings or /api/claude_code/policy_limits. Those control
+requests used a different cipher order and omitted ALPN/status_request/SCT.
+The inference hello was 1508 bytes including its TLS record header. Two fresh
+connections matched after excluding randoms, session bytes and ephemeral key
+bytes. The fixture retains their lengths, group IDs, and all extension data.
+
+Two turns with keep-alive used one inference TLS connection. With the mock
+closing the first response, the next turn reconnected with the same fresh
+hello shape and no PSK extension; the server reported no session resumption.
+The fixture does not establish production acceptance, allowance consumption,
+other versions/platforms, or equality of the full TLS stack / HTTP framing.

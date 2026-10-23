@@ -16,6 +16,20 @@ not exited, read or modified by the controller.
 
 ## Optional HTTP transport (experimental)
 
+Native Claude Code owns its cache placement and TTLs; all its markers are
+forwarded, including an omitted TTL (the wire default is 5m). Generated requests
+with no existing cache policy receive subscription defaults: 1h for a main
+turn, 5m for a classified subagent. Probe/title/summary requests receive none.
+Any caller cache policy, including explicit 5m/1h, prevents automatic insertion;
+neither its TTL nor its breakpoint budget is silently rewritten. Cache positions
+are read only at protocol locations, never from tool input/schema/result data.
+See [Claude Code's caching reference](https://code.claude.com/docs/en/prompt-caching).
+Cache TTL is a caching policy, not an anti-abuse control. Upstream OAuth
+authentication does not change the caller's login-mode checks or native UI.
+Cache hit rate and subscription consumption equivalence need separate live
+measurements; neither header compatibility nor a matching TLS handshake proves
+them.
+
 Settings → Replies offers **Claude subscription transport**: the default
 `Claude Code CLI (claude -p)` or `Claude Code HTTP (experimental)`.
 `settings.json` stores `claudeTransport` as `cli` or `http`; missing means
@@ -33,18 +47,47 @@ use the existing Anthropic translators. There is no hidden CLI tool harness or
 CLI session resume in this path; the caller must send its conversation history.
 The CLI-only lean-prompt preference is retained but hidden in HTTP mode.
 
-The application-level compatibility profile is pinned to locally observed
-Claude Code **2.1.309**: CLI headers, OAuth betas, account/device/session
+Native-request compatibility is selected only for Anthropic-format requests
+with CLI UA/x-app and attribution plus a recognized identity block, not UA alone.
+It preserves the caller's system/identity block attributes, SDK variants,
+diagnostics, session/prompt IDs, request class and client SDK headers. Only the
+selected account/device identity is substituted in metadata (unknown fields
+survive), and a present CCH is re-signed after final body changes. This is not
+an authentication exemption. Other callers receive compatibility fields; an
+existing standalone identity is reused, not duplicated or stripped of cache
+attributes. Existing provider refusal learning still filters final betas.
+
+The generated application-level compatibility profile is pinned to locally
+observed Claude Code **2.1.309**: CLI headers, OAuth betas, account/device/session
 metadata, billing prompt fields and the final-body CCH checksum. The checksum
 compatibility implementation is adapted from
 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), under its retained
 MIT license (`third_party/cliproxyapi-LICENSE.txt`). A loopback-only capture of
 the native interactive CLI through a rejecting local proxy also verified the
-hostname-dependent fields. That is **not** a production API acceptance check:
-the HTTP client still uses Go's TLS stack, the caller's harness is retained,
-and neither indistinguishable fingerprinting nor equivalent subscription
-charging/anti-abuse treatment is promised. Using this mode may carry account
-restriction risks. It remains explicitly experimental.
+hostname-dependent fields.
+
+HTTP inference has its own uTLS transport (`claude_http_tls.go`), selected by
+the request's admitted HTTP-subscription context and fixed HTTPS origin. Its
+ClientHello matches local **2.1.309/macOS arm64** `/v1/messages` captures:
+ciphers and extension order, X25519MLKEM768 + X25519 shares, HTTP/1.1 ALPN,
+signature algorithms, session ID/key-share lengths and record size (1508 bytes
+for api.anthropic.com). Randoms and ephemeral keys are generated afresh. The
+same binary's settings/policy control-plane ClientHello is different (1482
+bytes, no ALPN); it is not used as an inference reference. A local trusted mock
+API established which requests each handshake carried. Native connection reuse
+and a forced reconnect were observed: no PSK resumption in that reconnect.
+Accordingly this transport reuses connections but does not introduce TLS
+session resumption. Pools are bounded and partitioned by selected account and
+effective proxy. Direct, HTTP/HTTPS CONNECT and SOCKS paths retain cancellation
+and certificate verification; other vendors keep the normal transport. No
+fallback to ordinary Go TLS occurs on a failed Claude handshake.
+
+These captures are **not** allowance-saving checks. A
+matching captured ClientHello does not prove the entire TLS implementation,
+HTTP serialization, a different OS/runtime/version, or server treatment is
+indistinguishable. The profile is version-pinned, not auto-derived on update;
+recapture before changing its advertised version. Equivalent subscription
+charging is not promised. The mode remains experimental.
 
 `provider.ClaudeHTTPAuth` rereads the selected account's authoritative OAuth
 store each call and requires a live expiry, `user:inference`, account/org IDs
@@ -58,10 +101,39 @@ Offline coverage includes native and translated streaming/whole replies,
 protocol/effort preservation, selected OAuth identity, transport snapshot,
 cancellation, quota-header feedback, a 429 → Team handoff retaining the request,
 and independent checksum vectors. `MAGPIE_CLAUDE_HTTP_CAPTURE` may point to a
-sanitized local native capture to additionally compare its observed checksum;
+sanitized local native capture to additionally compare its observed checksum
+and pass its actual requests through the gateway builder;
 the capture test skips without that optional file. No live account or gateway
 is used by these tests. The remainder of this page describes the default CLI
 transport only.
+
+### HTTP parity verification (2026-10-24)
+
+The local 2.1.309 capture used a fake OAuth token, isolated HOME and loopback
+CONNECT/HTTPS mock only. Its binary hash and sanitized ClientHello fixture are
+recorded in `internal/gateway/testdata/claude-2.1.309-hello-notes.txt`.
+
+- `go test -race -tags nogui ./internal/gateway -run '^TestClaudeHTTP' -count=20`
+  passed, including native request preservation, cache policy, beta refusal,
+  actual socket ClientHello, reuse/reconnect, certificate rejection and CONNECT
+  cancellation. Changing ALPN from `http/1.1` to `h2` made
+  `TestClaudeHTTPHelloMatchesNative309` fail with a wire-profile difference;
+  restoring it passed.
+- Both optional native-capture tests passed with the sanitized local capture:
+  the independent CCH check and actual gateway request-builder replay.
+- The complete sandboxed `go test -tags nogui ./... -timeout=45m` passed.
+  `gofmt -l` and `git diff --check` printed nothing.
+- Darwin/Linux/Windows arm64 vet and builds passed with `nogui`; native Darwin
+  and Windows amd64 vet/build also passed without that tag. Darwin printed
+  existing tray enum-conversion and deployment-target linker warnings.
+- A separate real subscription smoke check used a temporary HOME, copied
+  access-only credentials and the actual loopback gateway listener. HTTP
+  inference returned 200 with the requested short reply; native `/usage`
+  returned both session/week use and reset times. The administrator members
+  GET also returned 200 without a challenge. No seats were changed by these
+  checks; copied access credentials were cleared afterwards.
+- Allowance consumption equivalence, other native CLI versions/platforms and
+  Claude Desktop feature restoration were not tested by this check.
 
 ## Which Claude Code runs
 
