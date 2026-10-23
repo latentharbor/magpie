@@ -473,25 +473,67 @@ func claudeLimitWindows(ls []ClaudeLimit) []QuotaWindow {
 	return ws
 }
 
-// Refresh only after a verified seat transfer, off the inference path. /usage
-// is Claude Code's local command, not a model prompt. Failure keeps the last
-// observation; it neither closes the new seat nor rejects waiting requests.
-func (t *claudeTeamController) refreshQuota(ctx context.Context, id string) {
+// /usage is a local command, not an inference prompt. Failed or incomplete
+// collections retain the last complete observation, including its reset times.
+func (t *claudeTeamController) refreshQuota(ctx context.Context, id string) error {
+	user := t.userOf(id)
+	var ws []QuotaWindow
+	var err error
 	claudeCLIUsage.RLock()
 	available := claudeCLIUsage.f != nil
 	claudeCLIUsage.RUnlock()
 	if !available {
-		return
+		err = errClaudeCannotRun
+	} else if user == "" {
+		err = errors.New("saved Team identity unavailable")
+	} else {
+		ws, err = readSavedClaudeUsage(ctx, user)
 	}
-	user := t.userOf(id)
-	ws, err := readSavedClaudeUsage(ctx, user)
+	if err == nil && !completeClaudeTeamQuota(ws) {
+		err = errors.New("incomplete allowance windows")
+	}
+	t.mu.Lock()
+	if t.disk.QuotaErrors == nil {
+		t.disk.QuotaErrors = map[string]string{}
+	}
 	if err != nil {
-		return
+		// Never expose helper stderr or credentials through the member API.
+		t.disk.QuotaErrors[id] = "Quota collection failed; retry while this account has Premium access"
+	} else {
+		fresh := claudeTeamWindowLimits(ws)
+		// /usage may omit a model-specific window supplied by response
+		// headers. Do not erase those independent restrictions.
+		for _, previous := range t.disk.Limits[id] {
+			if !slices.ContainsFunc(fresh, func(w ClaudeLimit) bool { return w.Kind == previous.Kind }) {
+				fresh = append(fresh, previous)
+			}
+		}
+		t.disk.Limits[id] = fresh
+		if t.disk.Observed == nil {
+			t.disk.Observed = map[string]time.Time{}
+		}
+		t.disk.Observed[id] = time.Now().UTC()
+		delete(t.disk.QuotaErrors, id)
 	}
-	noteClaudeTeamWindows(user, ws)
+	t.signalLocked()
+	t.mu.Unlock()
+	if err == nil {
+		noteClaudeTeamWindows(user, ws)
+	}
+	if e := t.persist(); e != nil {
+		t.mu.Lock()
+		t.disk.QuotaErrors[id] = "Could not save usage; retry collection"
+		t.signalLocked()
+		t.mu.Unlock()
+		return e
+	}
+	if err != nil {
+		return errors.New("Quota collection failed; retry while this account has Premium access")
+	}
+	return nil
 }
 
-func noteClaudeTeamWindows(user string, ws []QuotaWindow) {
+func claudeTeamWindowLimits(ws []QuotaWindow) []ClaudeLimit {
 	var ls []ClaudeLimit
 	for _, w := range ws {
 		for _, kind := range claudeKinds {
@@ -505,5 +547,9 @@ func noteClaudeTeamWindows(user string, ws []QuotaWindow) {
 			ls = append(ls, l)
 		}
 	}
-	NoteClaudeLimits(user, ls)
+	return ls
+}
+
+func noteClaudeTeamWindows(user string, ws []QuotaWindow) {
+	NoteClaudeLimits(user, claudeTeamWindowLimits(ws))
 }

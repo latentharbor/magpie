@@ -26,7 +26,9 @@ function renderTeamAccounts(a, p) {
     row.append(dot, el("span", "rename", m.user), el("span", "grow"), el("span", "plan", state));
     const q = { windows: (m.limits || []).map((w) => ({ name: w.kind === "five_hour" ? "5 hours" : w.kind === "seven_day" ? "7 days" : w.kind,
       used: w.used * 100, resetsAt: w.resetsAt ? new Date(w.resetsAt * 1000).toISOString() : null })), readDeferred: true, asOf: m.observedAt };
-    row.append(accountQuota({ [m.user]: q }, m.user));
+    const quota = accountQuota({ [m.user]: q }, m.user);
+    if (m.quotaError || m.quotaPending) quota.append(el("span", "aq-asof", t(m.quotaPending ? "Collecting usage…" : m.quotaError)));
+    row.append(quota);
     list.append(row);
   }
   return list;
@@ -96,6 +98,20 @@ async function openClaudeTeam(organizationId = "") {
       const foot = el("div", "team-member-foot");
       if (states[m.state]) foot.append(el("span", "hint", t(states[m.state])));
       if (m.observedAt) foot.append(el("span", "hint", t("Last observed: {time}", { time: date(m.observedAt) })));
+      if (m.quotaError && !m.quotaPending) foot.append(el("span", "hint", t(m.quotaError)));
+      if (m.quotaPending) foot.append(el("span", "hint", t("Collecting usage…")));
+      if (m.selected) {
+        const retry = el("button", "text", t("Retry usage collection"));
+        retry.disabled = pending || m.quotaPending;
+        retry.onclick = async () => {
+          if (pending) return;
+          pending = true; draw();
+          try { view = await api("claude-team/quota", { organizationId: view.config.organizationId, accountId: m.accountId }); }
+          catch (e) { fail(e); }
+          finally { pending = false; draw(); poll(); }
+        };
+        foot.append(retry);
+      }
       if (m.seatTier === "unassigned" && m.limits?.length) foot.append(el("span", "hint", t("Cached usage; refreshed when a seat is assigned")));
       if (m.seatTier === "team_tier_1") {
         const rotate = el("button", "text", t("Rotate seat now")); rotate.disabled = !view.config.enabled || view.rotating || pending;
@@ -143,7 +159,7 @@ async function openClaudeTeam(organizationId = "") {
   };
   const poll = () => {
     clearTimeout(timer);
-    if (view?.rotating && ed.isConnected) timer = setTimeout(() => { if (ed.isConnected && !$("#modal").hidden) load(); }, 1500);
+    if ((view?.rotating || view?.members?.some((m) => m.quotaPending)) && ed.isConnected) timer = setTimeout(() => { if (ed.isConnected && !$("#modal").hidden) load(); }, 1500);
   };
   org.oninput = draw;
   refresh.onclick = () => load();
@@ -155,7 +171,11 @@ async function openClaudeTeam(organizationId = "") {
     try {
       view = await api("claude-team/config", { name: name.value.trim(), routing, enabled: enabled.checked, organizationId: org.value.trim(), sessionKey: key.value,
         threshold: value, members: [...selected].filter((id) => (view.members || []).some((m) => m.accountId === id && m.organizationId.toLowerCase() === org.value.trim().toLowerCase())) });
-      key.value = ""; await closeModal(); await loadProvidersNow();
+      key.value = "";
+      organizationId = view.config.organizationId;
+      if (view.members?.some((m) => m.selected && (m.quotaPending || m.quotaError))) { draw(); poll(); }
+      else await closeModal();
+      await loadProvidersNow();
     } catch (e) { fail(e); }
     finally { pending = false; save.disabled = false; }
   };

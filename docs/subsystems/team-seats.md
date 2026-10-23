@@ -88,12 +88,20 @@ cleared merely because an account receives a Premium seat.
 
 The persisted snapshots feed ordinary account quota displays and routing even
 in held/read-only mode before the generic quota cache warms up. Unassigned
-accounts do not call `/usage`; legacy snapshots with no observation timestamp
-do not invent one from the journal's modification time. After a verified
-assignment, the controller refreshes the new account through the existing saved
-Claude Code `/usage` command, bounded by 20 seconds, retaining credential-refresh
-locking and persistence. This happens after handoff waiters are released; an
-error retains the snapshot and never gates healthy inference. Disabling or
+accounts do not call `/usage` for ordinary display; legacy snapshots with no
+observation timestamp do not invent one from the journal's modification time.
+Successful login of a selected member, adding a member to the pool, and an
+observed Premium assignment (including changes made on the web) queue an immediate
+background read through the existing saved Claude Code `/usage` command. Each
+read is bounded by 20 seconds and retains credential-refresh locking. It saves
+both global windows and reset times; a zero-use window may have no reset when
+not yet started. Partial or failed reads preserve the last complete snapshot
+and observation time, even after Unassigned, with a per-member error and retry.
+Reads and retries never allocate or rotate seats. External assignments are
+detected by the ordinary five-minute reconciliation, not a browser webhook.
+Fresh captures precede automatic rotation decisions; captures following an
+internal transfer run after handoff waiters are released. Errors never gate
+healthy inference. Disabling or
 removing a provider suppresses automatic seat movement, without changing its
 cloud assignments.
 
@@ -133,7 +141,11 @@ Manual rotation posts a background request; status polling makes no cloud
 calls. The API is `GET /api/claude-team/subscriptions`,
 `GET /api/claude-team/{config|members}?organizationId={UUID}` (or `?new=1` for
 saved public identities),
-`POST /api/claude-team/config`, and `POST /api/claude-team/rotate`.
+`POST /api/claude-team/config`, `POST /api/claude-team/rotate`, and
+`POST /api/claude-team/quota` (`organizationId`, `accountId`) for a background
+read-only retry. The editor polls pending collections and shows failures while
+retaining the last successful values; saving with pending/failed collection
+keeps the editor open.
 Rotate includes `organizationId` and `from`; legacy no-organization requests
 address the original controller. The original provider's `claude/...` model
 alias and gateway-key model/account restrictions remain scoped to the original

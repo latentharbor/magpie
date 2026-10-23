@@ -872,6 +872,9 @@ func addLogin(l savedLogin) (using bool, err error) {
 	defer func() { // under the name it is kept by (codexName), once loginsMu is let go
 		if err == nil {
 			StaleAllowance(l.Agent, l.User)
+			if l.Agent == "claude" {
+				captureClaudeTeamLogin(l)
+			}
 		}
 	}()
 	loginsMu.Lock()

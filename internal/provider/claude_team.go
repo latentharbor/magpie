@@ -40,6 +40,8 @@ type ClaudeTeamMember struct {
 	Lapsed         bool          `json:"lapsed"`
 	Active         int           `json:"active"`
 	ObservedAt     *time.Time    `json:"observedAt,omitempty"`
+	QuotaError     string        `json:"quotaError,omitempty"`
+	QuotaPending   bool          `json:"quotaPending,omitempty"`
 }
 
 type ClaudeTeamEvent struct {
@@ -73,6 +75,7 @@ type claudeTeamDisk struct {
 	Seats          map[string]string          `json:"seats,omitempty"`
 	Limits         map[string][]ClaudeLimit   `json:"limits"`
 	Observed       map[string]time.Time       `json:"observed,omitempty"`
+	QuotaErrors    map[string]string          `json:"quotaErrors,omitempty"`
 	Original       map[string]claudeTeamFlags `json:"original"`
 	Pending        *claudeTeamPending         `json:"pending,omitempty"`
 	History        []ClaudeTeamEvent          `json:"history"`
@@ -97,11 +100,14 @@ type claudeTeamController struct {
 	loaded                       bool
 	path                         string
 	waiting                      int
+	quotaDue                     map[string]bool
+	quotaAttempted               map[string]bool
+	quotaBusy                    string
 }
 
 func newClaudeTeamController() *claudeTeamController {
 	return &claudeTeamController{wake: make(chan struct{}, 1), changed: make(chan struct{}),
-		active: map[string]int{}, closed: map[string]bool{}, users: map[string]string{}, seats: map[string]string{},
+		active: map[string]int{}, closed: map[string]bool{}, users: map[string]string{}, seats: map[string]string{}, quotaDue: map[string]bool{}, quotaAttempted: map[string]bool{},
 		disk: claudeTeamDisk{Limits: map[string][]ClaudeLimit{}, Original: map[string]claudeTeamFlags{}}}
 }
 
@@ -289,6 +295,7 @@ func (t *claudeTeamController) selectPath() error {
 	t.cfg = ClaudeTeamConfig{}
 	t.disk = claudeTeamDisk{Limits: map[string][]ClaudeLimit{}, Original: map[string]claudeTeamFlags{}}
 	t.seats, t.users, t.closed = map[string]string{}, map[string]string{}, map[string]bool{}
+	t.quotaDue, t.quotaAttempted, t.quotaBusy = map[string]bool{}, map[string]bool{}, ""
 	t.legacyRoutes = nil
 	t.loaded, t.requested, t.rotating, t.manual, t.err = false, false, false, "", ""
 	return nil
@@ -450,6 +457,15 @@ func (t *claudeTeamController) save(ctx context.Context, c ClaudeTeamConfig) err
 			return err
 		}
 	}
+	// Joining the pool is a capture event even if no internal transfer took
+	// place. The controller performs the read off this configuration request.
+	t.mu.Lock()
+	for _, id := range c.Members {
+		if !slices.Contains(old.Members, id) {
+			t.queueQuotaLocked(id)
+		}
+	}
+	t.mu.Unlock()
 	t.notify()
 	return nil
 }
@@ -542,8 +558,12 @@ func (t *claudeTeamController) synchronize(c ClaudeTeamConfig, seats []claudeTea
 	t.disk.Seats = map[string]string{}
 	t.legacyRoutes = nil
 	for _, s := range seats {
+		previous := t.seats[s.AccountID]
 		t.seats[s.AccountID] = s.SeatTier
 		if slices.Contains(c.Members, s.AccountID) {
+			if s.SeatTier == "team_tier_1" && (previous != s.SeatTier || !t.quotaAttempted[s.AccountID] && len(t.disk.Limits[s.AccountID]) == 0) {
+				t.queueQuotaLocked(s.AccountID)
+			}
 			t.disk.Seats[s.AccountID] = s.SeatTier
 			states[s.AccountID] = s.SeatTier == "team_tier_1"
 		}
@@ -1016,8 +1036,11 @@ func (t *claudeTeamController) reconcile(ctx context.Context, manual string) err
 		return err
 	}
 	if manual == "" && !t.routeEnabled(c) {
+		t.collectQuotaDue(ctx)
 		return nil // a disabled/removed subscription must not rotate in the background
 	}
+	// Read newly observed assignments before stale snapshots can move them.
+	t.collectQuotaDue(ctx)
 	from, to, err := t.choose(c, seats, manual)
 	if err != nil {
 		return err
@@ -1127,32 +1150,16 @@ func (t *claudeTeamController) keep(ctx context.Context) {
 		t.mu.Lock()
 		manual := t.manual
 		t.manual = ""
-		var previous time.Time
-		if n := len(t.disk.History); n > 0 {
-			previous = t.disk.History[n-1].At
-		}
 		t.mu.Unlock()
 		// Once accepted, transfer reconciliation has an independent bounded
 		// lifetime; shutdown waits for it before releasing the controller lock.
+		t.collectQuotaDue(ctx)
 		work, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		err := t.reconcile(work, manual)
 		cancel()
-		if err == nil {
-			t.mu.Lock()
-			var target string
-			if n := len(t.disk.History); n > 0 {
-				h := t.disk.History[n-1]
-				if h.At.After(previous) && h.Result == "assigned" {
-					target = h.To
-				}
-			}
-			t.mu.Unlock()
-			if target != "" {
-				probe, stop := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
-				t.refreshQuota(probe, target)
-				stop()
-			}
-		}
+		// New logins/members and externally observed assignments share the
+		// same capture queue as internal assignments, independent of history.
+		t.collectQuotaDue(ctx)
 		if saveErr := t.persist(); err == nil {
 			err = saveErr
 		}
@@ -1190,6 +1197,17 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 	for id, n := range t.active {
 		active[id] = n
 	}
+	quotaErrors := make(map[string]string, len(t.disk.QuotaErrors))
+	quotaPending := make(map[string]bool, len(t.quotaDue)+1)
+	for id, e := range t.disk.QuotaErrors {
+		quotaErrors[id] = e
+	}
+	for id := range t.quotaDue {
+		quotaPending[id] = true
+	}
+	if t.quotaBusy != "" {
+		quotaPending[t.quotaBusy] = true
+	}
 	t.mu.Unlock()
 	if c.OrganizationID == "" {
 		if disk, err := t.readConfig(); err == nil {
@@ -1208,6 +1226,7 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 		}
 		account := strings.ToLower(id.AccountID)
 		m := ClaudeTeamMember{AccountID: account, OrganizationID: id.OrganizationID, User: l.User, Selected: slices.Contains(c.Members, account), On: l.On && !l.TeamOff, SeatTier: seats[account], Limits: limits[account], Lapsed: l.Lapsed != "", Active: active[account], State: "ready"}
+		m.QuotaError, m.QuotaPending = quotaErrors[account], quotaPending[account]
 		if at := observed[account]; !at.IsZero() {
 			m.ObservedAt = &at
 		}

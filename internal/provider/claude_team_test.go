@@ -63,6 +63,13 @@ func (f *fakeTeamAdmin) SetTier(_ context.Context, id, tier string) error {
 func teamFixture(t *testing.T) (*claudeTeamController, *fakeTeamAdmin, ClaudeTeamConfig) {
 	t.Helper()
 	isolate(t)
+	// Real captures also warm the generic allowance cache. Fixtures reuse
+	// emails, so no previous test's observation may seed this pool on save.
+	claudeUsage.Lock()
+	oldUsage := claudeUsage.m
+	claudeUsage.m = map[string]claudeUsageEntry{}
+	claudeUsage.Unlock()
+	t.Cleanup(func() { claudeUsage.Lock(); claudeUsage.m = oldUsage; claudeUsage.Unlock() })
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)

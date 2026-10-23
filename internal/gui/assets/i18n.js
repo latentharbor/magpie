@@ -4,6 +4,10 @@
 // works. {name} slots are filled by t(str, vars).
 const I18N = {
   zh: {
+    "Collecting usage…": "正在采集额度…",
+    "Retry usage collection": "重新采集额度",
+    "Quota collection failed; retry while this account has Premium access": "额度采集失败；请在此账号拥有 Premium 权限时重试",
+    "Could not save usage; retry collection": "额度保存失败；请重新采集",
     "Among accounts with quota, uses the weekly reset first, then the 5-hour reset. No preferred account.": "在仍有额度的账号中，优先使用周额度更早重置的账号，再比较 5 小时重置时间。不设首选账号。",
     "Window not started": "额度窗口尚未开始",
     "Last observed: {time}": "上次采集：{time}",
@@ -3929,6 +3933,10 @@ const I18N = {
     "Audio": "音频",
   },
   "zh-TW": {
+    "Collecting usage…": "正在擷取用量…",
+    "Retry usage collection": "重新擷取用量",
+    "Quota collection failed; retry while this account has Premium access": "用量擷取失敗；請在此帳號擁有 Premium 權限時重試",
+    "Could not save usage; retry collection": "用量儲存失敗；請重新擷取",
     "Among accounts with quota, uses the weekly reset first, then the 5-hour reset. No preferred account.": "在仍有額度的帳號中，優先使用週額度較早重置的帳號，再比較 5 小時重置時間。不設首選帳號。",
     "Window not started": "額度視窗尚未開始",
     "Last observed: {time}": "上次擷取：{time}",
@@ -7839,6 +7847,10 @@ const I18N = {
     "Audio": "音訊",
   },
   ja: {
+    "Collecting usage…": "使用量を取得中…",
+    "Retry usage collection": "使用量を再取得",
+    "Quota collection failed; retry while this account has Premium access": "使用量の取得に失敗しました。Premium 権限がある間に再試行してください",
+    "Could not save usage; retry collection": "使用量を保存できませんでした。再取得してください",
     "Among accounts with quota, uses the weekly reset first, then the 5-hour reset. No preferred account.": "残量のあるアカウントの週次リセット、次に5時間リセットが早い順に選びます。優先アカウントはありません。",
     "Window not started": "利用枠はまだ開始されていません",
     "Last observed: {time}": "最終取得：{time}",
@@ -11751,6 +11763,10 @@ const I18N = {
     "Audio": "音声",
   },
   de: {
+    "Collecting usage…": "Nutzung wird erfasst…",
+    "Retry usage collection": "Nutzung erneut erfassen",
+    "Quota collection failed; retry while this account has Premium access": "Nutzung konnte nicht erfasst werden; mit Premium-Zugriff erneut versuchen",
+    "Could not save usage; retry collection": "Nutzung konnte nicht gespeichert werden; erneut erfassen",
     "Among accounts with quota, uses the weekly reset first, then the 5-hour reset. No preferred account.": "Bei Konten mit Restkontingent entscheidet zuerst der Wochenreset, dann der 5-Stunden-Reset. Kein bevorzugtes Konto.",
     "Window not started": "Nutzungsfenster noch nicht gestartet",
     "Last observed: {time}": "Zuletzt erfasst: {time}",

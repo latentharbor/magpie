@@ -11,6 +11,24 @@ import (
 )
 
 func claudeTeamRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/claude-team/quota", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			OrganizationID string `json:"organizationId"`
+			AccountID      string `json:"accountId"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&in); err != nil {
+			fail(w, err)
+			return
+		}
+		if err := provider.RetryClaudeTeamQuota(in.OrganizationID, in.AccountID); err != nil {
+			fail(w, err)
+			return
+		}
+		v, _ := provider.ClaudeTeamOrganization(in.OrganizationID)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusAccepted)
+		writeJSON(w, v)
+	})
 	mux.HandleFunc("GET /api/claude-team/subscriptions", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, provider.ClaudeTeamSubscriptions())

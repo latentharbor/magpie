@@ -22,9 +22,10 @@ const (
 func TestCoreScriptBudget(t *testing.T) {
 	// This custom build intentionally adds native Claude Team controls to
 	// Providers, not a separate plugin page. Allow only its small entry
-	// hooks and 13 KB for multi-organization forms and native account quota rows;
+	// hooks and 14 KB for multi-organization forms, native account quota rows
+	// and asynchronous collection status/retry (one additional KB);
 	// keep the upstream budgets above unchanged.
-	appBudget, coreBudget := appScriptBudget+512, coreScriptBudget+13_000
+	appBudget, coreBudget := appScriptBudget+512, coreScriptBudget+14_000
 	page, err := os.ReadFile("assets/index.html")
 	if err != nil {
 		t.Fatal(err)

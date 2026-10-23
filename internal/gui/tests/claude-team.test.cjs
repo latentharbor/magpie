@@ -45,6 +45,9 @@ function fixture(lang) {
           v.config={...body}; delete v.config.sessionKey;
           let index=providers.findIndex(p=>p.teamOrganization===body.organizationId);
           if(index<0) providers.push(provider(v)); else providers[index]=provider(v);
+        } else if(url.pathname.endsWith("quota")) {
+          const m=v.members.find(m=>m.accountId===body.accountId);
+          delete m.quotaError; m.quotaPending=true;
         } else v.history.push({at:"2026-10-23T10:00:00Z",from:id(2),to:id(3),result:"assigned"});
         return json(v);
       }
@@ -105,6 +108,17 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       await dialog.getByRole("button",{name:tr("Rotate seat now"),exact:true}).click();
       await dialog.getByText(tr("Recent seat changes"),{exact:true}).waitFor();
       assert.deepEqual(f.posts[1],{path:"/api/claude-team/rotate",body:{organizationId:org,from:id(2)}});
+      const failed=f.views.get(org).members[1];
+      failed.quotaError="Quota collection failed; retry while this account has Premium access";
+      await dialog.getByRole("button",{name:tr("Refresh"),exact:true}).click();
+      await dialog.getByText(tr(failed.quotaError),{exact:true}).waitFor();
+      const failedRow=dialog.locator('.team-member[data-account="'+id(3)+'"]');
+      assert((await failedRow.innerText()).includes("67%"),"failure retains cached usage");
+      await failedRow.getByRole("button",{name:tr("Retry usage collection"),exact:true}).click();
+      await failedRow.getByText(tr("Collecting usage…"),{exact:true}).waitFor();
+      assert.deepEqual(f.posts[2],{path:"/api/claude-team/quota",body:{organizationId:org,accountId:id(3)}});
+      assert.equal(f.views.get(org).history.length,1,"retry never rotates seats");
+      failed.quotaPending=false;
       if(process.env.SCREENSHOT_DIR && lang==="zh") {
         await fs.mkdir(process.env.SCREENSHOT_DIR,{recursive:true});
         await page.evaluate(async()=>{ await Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>{}))); document.querySelector('.claude-team .ebody').scrollTop=0; });
@@ -132,8 +146,8 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       await dialog.waitFor({state:"detached"});
       await page.locator('#providers .row[data-id="claude-team-'+second+'"]').waitFor();
       assert.equal(f.providers.length,2,"adding an organization does not replace the first");
-      assert.equal(f.posts[2].body.organizationId,second);
-      assert.deepEqual(f.posts[2].body.members,[id(71),id(72)]);
+      assert.equal(f.posts[3].body.organizationId,second);
+      assert.deepEqual(f.posts[3].body.members,[id(71),id(72)]);
       assert.equal(f.views.get(org).config.threshold,95,"other organization remains unchanged");
       assert.deepEqual(errors,[]);
     });

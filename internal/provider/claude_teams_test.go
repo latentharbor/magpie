@@ -158,7 +158,7 @@ func TestClaudeTeamQuotaRefreshUsesSavedCodeCommandAndKeepsSnapshotOnFailure(t *
 		if dir != claudeAccountDir(user) {
 			t.Error("quota command used the agent's own login or another account")
 		}
-		return "Current session: 17% used\nCurrent week (all models): 38% used", nil
+		return teamUsageFixture(), nil
 	})
 	t.Cleanup(func() { UsageClaudeVia(old) })
 	tm.refreshQuota(context.Background(), teamID(2))

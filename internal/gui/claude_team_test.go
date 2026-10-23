@@ -70,4 +70,27 @@ func TestClaudeTeamAPIKeepsAdministratorCredentialPrivate(t *testing.T) {
 	if string(b) != before {
 		t.Fatal("invalid save changed configuration")
 	}
+	for _, body := range []string{`{broken`, `{"organizationId":"invalid","accountId":"invalid"}`, `{"organizationId":"` + org + `","accountId":"00000000-0000-4000-8000-000000000002"}`} {
+		w = httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/claude-team/quota", strings.NewReader(body)))
+		if w.Code < 400 || strings.Contains(w.Body.String(), key) {
+			t.Fatalf("invalid quota retry was accepted or leaked a credential: %d %s", w.Code, w.Body)
+		}
+	}
+	// A retry only queues the selected local identity. No administrator or
+	// inference transport is installed in this isolated test.
+	account := "00000000-0000-4000-8000-000000000002"
+	login := `[{"agent":"claude","user":"fixture@example.test","auth":{},"profile":{"emailAddress":"fixture@example.test","accountUuid":"` + account + `","organizationUuid":"` + org + `"}}]`
+	if err := os.WriteFile(filepath.Join(filepath.Dir(provider.Path()), "logins.json"), []byte(login), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w = post(`{"enabled":false,"organizationId":"` + org + `","threshold":100,"members":["` + account + `"]}`)
+	if w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/claude-team/quota", strings.NewReader(`{"organizationId":"`+org+`","accountId":"`+account+`"}`)))
+	if w.Code != http.StatusAccepted || !strings.Contains(w.Body.String(), `"quotaPending":true`) || strings.Contains(w.Body.String(), key) {
+		t.Fatalf("retry did not queue a private quota read: %d %s", w.Code, w.Body)
+	}
 }
