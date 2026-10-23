@@ -430,7 +430,7 @@ dee@example.com`); otherwise it appears as **account not recorded**, never
 inferred from today's sign-in. OTLP export never carries the account.
 
 One magpie can serve several computers (an office one, a personal one):
-share it on the network (Settings → Share on local network), and on each
+share it on the network (Settings → Network and sharing → Share on local network), and on each
 other computer add it as a **Remote magpie** — in the app's Add sheet, under
 its own heading, Another computer's magpie, after On this machine; on the
 TUI's Providers page (`a`, then its address and key; `w` changes the address,
@@ -505,7 +505,7 @@ works. Changing one starts nothing by itself. See
 [provider-plugins.md](subsystems/provider-plugins.md#a-plugins-own-options).
 
 The gateway issues **gateway keys** for clients, separate from a provider's
-upstream API keys. Turn on **Settings → Share on local network**, then open
+upstream API keys. Turn on **Settings → Network and sharing → Share on local network**, then open
 **Gateway → Gateway keys → Add gateway key**. This block appears only while
 sharing is on. Create a named key for each client and copy it from its row.
 To move from another gateway without touching its clients, enter the key they
@@ -687,7 +687,7 @@ another machine (#1022): it carries a forwarding header (`Forwarded`,
 with sharing, or a `MAGPIE_ADDR` on the network, it needs an enabled gateway
 key, as from the network. This
 covers every route: the model APIs, quotas, MCP sign-ins. To serve magpie
-through a Cloudflare Tunnel, turn on **Settings → Share on local network**,
+through a Cloudflare Tunnel, turn on **Settings → Network and sharing → Share on local network**,
 add a gateway key for each client, point the tunnel's service at
 `http://127.0.0.1:3425`, and give clients the tunnel's address with that key.
 A tunnel that forwards bare TCP (frp's `tcp`, `ssh -R`, socat) adds no header
@@ -1687,7 +1687,7 @@ Building an app or agent that should use magpie, or get a row on the
 Agents page: see [Integrating your app or agent](integrating.md).
 
 External clients behind a reverse proxy need an enabled gateway key
-(Gateway → Gateway keys): with Settings → Share on local network on, or a
+(Gateway → Gateway keys): with Settings → Network and sharing → Share on local network on, or a
 `MAGPIE_ADDR` on the network, magpie asks for one; otherwise it refuses
 them, unless the proxy authenticates its clients itself
 (`MAGPIE_TRUST_PROXY=1`, below). A public URL with no port of
@@ -2282,7 +2282,7 @@ request from outside it, the host's own included, must carry an enabled
 gateway key as its API key, and one without gets 401. Make one in the
 browser UI (Gateway → Gateway keys) or with
 `docker exec magpie magpie gateway-key add "Docker client"`. Sharing
-(Settings → Share on local network) isn't needed for this; turning it on
+(Settings → Network and sharing → Share on local network) isn't needed for this; turning it on
 also creates a key named **Magpie**. The ports above are published on the
 host's loopback; Docker's `-p 3425:3425` puts the gateway on every interface
 of the host, for other machines to reach. Upgrading from an earlier image:

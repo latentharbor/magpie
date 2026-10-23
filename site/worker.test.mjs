@@ -322,6 +322,10 @@ test("partners: links go through /go", () => {
   assert.equal(acme.chat, LIST[0].chat);
   assert.equal(acme.regions[0].keysUrl, "https://usemagpie.ai/go/acme/keys/cn");
   assert.equal(acme.regions[0].website, undefined);
+  // the editor names a /go website by the host it sends the browser to
+  assert.equal(acme.siteHost, "acme.example");
+  assert.equal(acme.regions[0].siteHost, undefined);
+  assert.equal(plain.siteHost, undefined);
   assert.equal(acme.regions[1].keysUrl, undefined);
   assert.deepEqual(plain, LIST[1]);
   // partners.js itself is left as it is

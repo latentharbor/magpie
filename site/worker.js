@@ -166,10 +166,13 @@ function live(p, now) {
 
 // served is the list the app gets: those whose term hasn't ended (an
 // ended one stays in partners.js, so the /go links of providers added from
-// it keep working), with their website and key page as /go links.
+// it keep working), with their website and key page as /go links. A
+// website's own host goes beside it as siteHost, for the editor's link to
+// read (www.kimi.com, not usemagpie.ai).
 export function served(list, now) {
   const go = (p, what, r) => GO + [p.id, what, r && r.id].filter(Boolean).map(encodeURIComponent).join("/");
-  const linked = (o, p, r) => ({ ...o, ...(o.website && { website: go(p, "site", r) }), ...(o.keysUrl && { keysUrl: go(p, "keys", r) }) });
+  const host = (u) => { try { return new URL(u).host; } catch { return ""; } };
+  const linked = (o, p, r) => ({ ...o, ...(o.website && { website: go(p, "site", r), siteHost: host(o.website) }), ...(o.keysUrl && { keysUrl: go(p, "keys", r) }) });
   return list
     .filter((p) => !p.until || now < Date.parse(p.until))
     .map((p) => ({ ...linked(p, p), ...(p.regions && { regions: p.regions.map((r) => linked(r, p, r)) }) }));

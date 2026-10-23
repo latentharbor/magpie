@@ -575,6 +575,32 @@ calls does. Starting such a request anew instead would tell the whole
 conversation to a new run, a prefix the cache has never seen (#1716,
 #1717), for every message sent mid-turn.
 
+## Tool calls written as text
+
+A run told the conversation as text (`renderClaudePrompt`, and
+`renderClaudeTurn` with the client's own calls in the turn) is shown each
+past call as a `[tool call <name> id=… args=…]` line and each result as
+`[tool result id=…]`. The model can copy that form and write its calls as
+text: Claude Code has no call to make, the turn ends with end_turn, and the
+client shows the lines as the reply's words while nothing runs (Zhenzhen on
+Discord: Claude Desktop on Fable 5.1 got
+`[tool call mcp__magpie__Bash id=toolu_0Validate bash args={…}]`).
+
+- Such a prompt ends with a note (`pastCallsNote`) that the lines record
+  earlier calls and that writing one calls nothing. A prompt with no call in
+  it is told as before.
+- `readOutput` holds back a reply's words from the first line that opens
+  with `[tool call ` (`textCalls`); words before it, and lines that only
+  start like it, go on as they come. A reply that ends there with end_turn
+  and calls none of the client's tools isn't ended: once its turn's
+  `result` is in, the run is told `textCallsAsk` as a user message, and the
+  reply goes on in the next message (one `message_start`, as after Claude
+  Code's own call), so the client gets the real `tool_use` and its results
+  go on in the run. It is asked once per reply: written as text again, the
+  words reach the client as written. A run with no input to write to, or a
+  reply that called the client's tools too (the text is left out), is
+  not asked.
+
 ## The account's allowance on the reply (#1257)
 
 Claude Code tells a run's account allowance in its stream-json
@@ -609,7 +635,7 @@ go test -tags nogui ./internal/gateway/ -run '^TestClaudeToolNamesComeBackAsDecl
 go test -tags nogui ./internal/gateway/ -run 'TestClaudeRunsHeldToTheRoom|TestClaudeRoom|TestClaudeOneOffsTakeRoom|TestClaudeMemRuns|TestClaudeRunsMost|TestClaudeNoRoom' -count=1
 go test -tags nogui ./internal/cli/ -run '^TestClaudeCodeRunsSetsTheUsersOwn$' -count=1
 go test -tags nogui ./internal/settings/ -run '^TestClaudeRunsMostIsMachineLocal$' -count=1
-go test -tags nogui ./internal/gateway/ -run 'ClaudeSubscriptionRunsTheDownloaded|ClaudeSubscriptionWithoutClaudeCode|ClaudeRewritten|LostMedia|ImagesTakenOut|RunLetGoWhenTheClientRewrote|ClaudeSessionTempFiles|ClaudeLetGo|ClaudeSessionFiles|ClaudeOldSessions|ClaudeSubscriptionReplySaysTheAllowance|ClaudeAllowanceHeaders|ClaudeForksAnsweringTheLeadsCalls|ClaudeTurnGivenUpOn|ClaudeToolResultsGivenUpOn|ClaudePromptMarksEarlierTurns|ClaudeHistoryCachedAcrossNewRuns|ClaudeUnloadableSession|ClaudeEndedRunSaysWhy|ClaudeIdle|ClaudeSideQuestion|ClaudeNoRunSaysWhy|ClaudeToolResultsNoRunSaysWhy|ClaudePromptToldUserText|ClaudePromptKeepsInstructions|ClaudeToolResultsGoOnWithTheUsersWords|ClaudeToolResultsKeepInstructions|ToolResultKeepsUserTextSentMidTurn' -count=1
+go test -tags nogui ./internal/gateway/ -run 'ClaudeSubscriptionRunsTheDownloaded|ClaudeSubscriptionWithoutClaudeCode|ClaudeRewritten|LostMedia|ImagesTakenOut|RunLetGoWhenTheClientRewrote|ClaudeSessionTempFiles|ClaudeLetGo|ClaudeSessionFiles|ClaudeOldSessions|ClaudeSubscriptionReplySaysTheAllowance|ClaudeAllowanceHeaders|ClaudeForksAnsweringTheLeadsCalls|ClaudeTurnGivenUpOn|ClaudeToolResultsGivenUpOn|ClaudePromptMarksEarlierTurns|ClaudeHistoryCachedAcrossNewRuns|ClaudeUnloadableSession|ClaudeEndedRunSaysWhy|ClaudeIdle|ClaudeSideQuestion|ClaudeNoRunSaysWhy|ClaudeToolResultsNoRunSaysWhy|ClaudePromptToldUserText|ClaudePromptKeepsInstructions|ClaudeToolResultsGoOnWithTheUsersWords|ClaudeToolResultsKeepInstructions|ToolResultKeepsUserTextSentMidTurn|ClaudeTextToolCalls|ClaudeTextCallsHoldsOnlyTheLine|ClaudePromptSaysPastCallsAreARecord' -count=1
 ```
 
 `claude_rewritten_test.go` has a case for each relaxation and one for each
