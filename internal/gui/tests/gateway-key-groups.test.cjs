@@ -62,12 +62,17 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // or the element isn't one these rules know. The message says which:
       // each element's tag, class, place and style, and each stylesheet with
       // how many rules it holds.
-      const lefts = await page.locator("#gatewayKeys .key-models, .proto-menu .pm-item").evaluateAll((els) => {
+      // A saved key asynchronously redraws the list. Query and inspect in
+      // one page task: evaluateAll can transfer the previous detached nodes
+      // across worlds while that redraw completes (their computed style is "").
+      const lefts = await page.evaluate(() => {
+        const els = [...document.querySelectorAll("#gatewayKeys .key-models, .proto-menu .pm-item")];
         const sheets = [...document.styleSheets].map((s) => { try { return (s.href || "<style>").replace(location.origin, "") + ":" + s.cssRules.length; } catch (e) { return s.href + ":" + e.name; } });
         const bad = els.map((e) => ({ e, s: getComputedStyle(e) })).filter(({ s }) => s.borderLeftStyle !== "none")
           .map(({ e, s }) => ({ tag: e.tagName, cls: e.className, in: e.parentElement?.className, connected: e.isConnected, style: s.borderLeftStyle, width: s.borderLeftWidth, color: s.borderLeftColor }));
         return { n: els.length, bad, sheets };
       });
+      assert.equal(lefts.n, 3, "all three connected key model buttons were inspected");
       assert.deepEqual(lefts.bad, [], "a coloured left border: " + JSON.stringify(lefts));
       assert.deepEqual(errors, []);
     });
