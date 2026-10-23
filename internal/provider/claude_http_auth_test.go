@@ -2,10 +2,13 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -141,5 +144,112 @@ func TestClaudeHTTPAuthUsesConfiguredClaudeDirectory(t *testing.T) {
 	got, err := ClaudeHTTPAuth(context.Background(), a)
 	if err != nil || got != (ClaudeHTTPCredentials{Token: "configured-access", AccountUUID: "configured-account", OrganizationUUID: "configured-org", DeviceID: "configured-device"}) {
 		t.Fatalf("configured sign-in = %+v, %v", got, err)
+	}
+}
+
+func TestClaudeHTTPAuthNativeRefreshSharesAttemptAndAllowsCancellation(t *testing.T) {
+	home, a := claudeHTTPFixture(t)
+	dir := filepath.Join(home, "configured")
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	writeFile(t, filepath.Join(dir, ".claude.json"), map[string]any{
+		"userID": "device", "oauthAccount": map[string]any{"emailAddress": a.User, "accountUuid": "own-account", "organizationUuid": "own-org"},
+	})
+	put := func(token string, expires time.Time) {
+		b, _ := json.Marshal(map[string]any{"claudeAiOauth": claudeAuth{
+			AccessToken: token, RefreshToken: "native-only", ExpiresAt: expires.UnixMilli(), Scopes: []string{"user:inference"},
+		}})
+		if err := writePrivate(filepath.Join(dir, ".credentials.json"), b); err != nil {
+			t.Error(err)
+		}
+	}
+	put("old", time.Now().Add(-time.Hour))
+	var calls atomic.Int32
+	started, release := make(chan struct{}), make(chan struct{})
+	old := UsageClaudeVia(func(ctx context.Context, got string) (string, error) {
+		if got != dir {
+			t.Errorf("native refresh directory=%q, want configured directory", got)
+		}
+		calls.Add(1)
+		close(started)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-release:
+		}
+		put("native-renewed", time.Now().Add(time.Hour))
+		// Native access refresh succeeded even if /usage itself was denied.
+		return "", errors.New("private helper stderr")
+	})
+	t.Cleanup(func() { UsageClaudeVia(old) })
+	var wg sync.WaitGroup
+	answer := func() {
+		defer wg.Done()
+		got, err := ClaudeHTTPAuth(context.Background(), a)
+		if err != nil || got.Token != "native-renewed" {
+			t.Errorf("native renewal not read: token matches=%v error=%v", got.Token == "native-renewed", err)
+		}
+	}
+	wg.Add(1)
+	go answer()
+	<-started
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := ClaudeHTTPAuth(ctx, a); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled waiter: %v", err)
+	}
+	for range 16 {
+		wg.Add(1)
+		go answer()
+	}
+	close(release)
+	wg.Wait()
+	if calls.Load() != 1 {
+		t.Fatalf("native refresh attempts=%d, want one", calls.Load())
+	}
+}
+
+func TestClaudeHTTPAuthSavedRefreshUsesNativeDirectoryAndSyncs(t *testing.T) {
+	_, _ = claudeHTTPFixture(t)
+	l := savedLogin{Agent: "claude", User: "saved@example.com", On: true,
+		Auth: mustJSONRaw(t, map[string]any{"claudeAiOauth": claudeAuth{
+			AccessToken: "expired", RefreshToken: "native-owned", ExpiresAt: time.Now().Add(-time.Hour).UnixMilli(), Scopes: []string{"user:inference"},
+		}}),
+		Profile: mustJSONRaw(t, map[string]any{"emailAddress": "saved@example.com", "accountUuid": "saved-account", "organizationUuid": "saved-org"}),
+	}
+	writeFile(t, loginsPath(), []savedLogin{l})
+	old := UsageClaudeVia(func(ctx context.Context, dir string) (string, error) {
+		if dir != claudeAccountDir(l.User) {
+			t.Fatal("refresh left the selected saved directory")
+		}
+		writeFile(t, filepath.Join(dir, ".credentials.json"), map[string]any{"claudeAiOauth": claudeAuth{
+			AccessToken: "saved-renewed", RefreshToken: "native-rotated", ExpiresAt: time.Now().Add(time.Hour).UnixMilli(), Scopes: []string{"user:inference"},
+		}})
+		return "", nil
+	})
+	t.Cleanup(func() { UsageClaudeVia(old) })
+	a := &Account{Agent: "claude", User: l.User, token: func(context.Context) (string, error) {
+		t.Fatal("HTTP invoked the inference-token helper")
+		return "", nil
+	}}
+	got, err := ClaudeHTTPAuth(context.Background(), a)
+	if err != nil || got.Token != "saved-renewed" || got.AccountUUID != "saved-account" {
+		t.Fatalf("saved refresh failed: token matches=%v error=%v", got.Token == "saved-renewed", err)
+	}
+	kept, _ := parseClaudeCredentials(readLogins()[0].Auth)
+	if kept.OAuth.RefreshToken != "native-rotated" {
+		t.Fatal("native refresh was not synchronized back to the saved login")
+	}
+}
+
+func TestClaudeHTTPAuthNativeHelperSuccessCannotAuthorizeExpiredAccess(t *testing.T) {
+	_, a := claudeHTTPFixture(t)
+	writeFile(t, claudeCredentialsPath(), map[string]any{"claudeAiOauth": claudeAuth{
+		AccessToken: "expired", RefreshToken: "native-only", ExpiresAt: time.Now().Add(-time.Hour).UnixMilli(), Scopes: []string{"user:inference"},
+	}})
+	calls := 0
+	old := UsageClaudeVia(func(context.Context, string) (string, error) { calls++; return "Current session: 0% used", nil })
+	t.Cleanup(func() { UsageClaudeVia(old) })
+	if _, err := ClaudeHTTPAuth(context.Background(), a); !errors.Is(err, errClaudeHTTPExpired) || calls != 1 {
+		t.Fatalf("successful helper authorized stale access: calls=%d error=%v", calls, err)
 	}
 }

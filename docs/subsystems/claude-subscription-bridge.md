@@ -92,9 +92,15 @@ charging is not promised. The mode remains experimental.
 `provider.ClaudeHTTPAuth` rereads the selected account's authoritative OAuth
 store each call and requires a live expiry, `user:inference`, account/org IDs
 and the installation's real device ID. It does not generate identities or
-rotate shared refresh tokens: Claude Code owns that locking protocol. Refresh
-an expired account through Claude Code before retrying. Sign-in and usage
-collection still use the existing CLI paths. The provider's Test action follows
+rotate shared refresh tokens: Claude Code owns that locking protocol. An expired,
+otherwise complete sign-in delegates one bounded `/usage` to native Claude Code
+in the selected account's directory. Concurrent requests share that attempt;
+cancelled waiters can leave immediately. Only a fresh reread of the authoritative
+store authorizes inference, even if the helper claims success. The saved-account
+handoff guard stays held during native refresh; no Magpie lock needed by its
+readers is held over the helper. Missing metadata, revoked credentials and failed
+native refresh remain explicit errors. Sign-in and usage collection still use
+the existing CLI paths. The provider's Test action follows
 the chosen transport, without silently falling back to CLI on HTTP errors.
 
 Offline coverage includes native and translated streaming/whole replies,
@@ -132,6 +138,10 @@ recorded in `internal/gateway/testdata/claude-2.1.309-hello-notes.txt`.
   returned both session/week use and reset times. The administrator members
   GET also returned 200 without a challenge. No seats were changed by these
   checks; copied access credentials were cleared afterwards.
+- Separate real explicit-5m and explicit-1h requests each wrote about 44K input
+  tokens into their respective cache-creation bucket. Their immediate second
+  requests reported those tokens as cache reads with no cache creation. This
+  verifies those two cache paths, not a long-term consumption comparison.
 - Allowance consumption equivalence, other native CLI versions/platforms and
   Claude Desktop feature restoration were not tested by this check.
 

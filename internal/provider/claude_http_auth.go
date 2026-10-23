@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/yetone/magpie/internal/appdir"
 )
 
 // ClaudeHTTPCredentials is the selected account's OAuth access and public
@@ -17,12 +20,64 @@ type ClaudeHTTPCredentials struct {
 	Token, AccountUUID, OrganizationUUID, DeviceID string
 }
 
-// ClaudeHTTPAuth reads the selected Claude account without running Claude Code
-// or refreshing its credentials. Every call reads the current credential store,
-// so a native refresh is picked up on the next request. Expired or incomplete
-// credentials fail explicitly; rotating them without Claude Code's native lock
-// would risk spending the refresh token while another process holds it.
+var errClaudeHTTPExpired = errors.New("Claude HTTP OAuth access token expired; refresh this account in Claude Code, then retry")
+
+var claudeHTTPRefreshing = struct {
+	sync.Mutex
+	pending map[string]chan struct{}
+}{pending: map[string]chan struct{}{}}
+
+// ClaudeHTTPAuth rereads the selected credential store on each call. Only an
+// expired, otherwise complete sign-in delegates a bounded /usage to native
+// Claude Code, which owns refresh locking. Concurrent requests share that
+// attempt; no refresh token is handled by the HTTP transport.
 func ClaudeHTTPAuth(ctx context.Context, a *Account) (ClaudeHTTPCredentials, error) {
+	creds, err := readClaudeHTTPAuth(ctx, a)
+	if !errors.Is(err, errClaudeHTTPExpired) {
+		return creds, err
+	}
+	key := claudeProfilePath() + "\x00" + strings.ToLower(a.User)
+	claudeHTTPRefreshing.Lock()
+	if done := claudeHTTPRefreshing.pending[key]; done != nil {
+		claudeHTTPRefreshing.Unlock()
+		select {
+		case <-ctx.Done():
+			return ClaudeHTTPCredentials{}, ctx.Err()
+		case <-done:
+			return readClaudeHTTPAuth(ctx, a)
+		}
+	}
+	done := make(chan struct{})
+	claudeHTTPRefreshing.pending[key] = done
+	claudeHTTPRefreshing.Unlock()
+	defer func() {
+		claudeHTTPRefreshing.Lock()
+		delete(claudeHTTPRefreshing.pending, key)
+		close(done)
+		claudeHTTPRefreshing.Unlock()
+	}()
+	// Another native process may have renewed between the initial read and
+	// admission. A missing expiry is incomplete metadata, never permission to
+	// invoke a refresh; readClaudeHTTPAuth classifies it separately.
+	if creds, err = readClaudeHTTPAuth(ctx, a); !errors.Is(err, errClaudeHTTPExpired) {
+		return creds, err
+	}
+	work, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if a.token != nil {
+		_ = inSavedClaudeDir(a.User, func(dir string) error {
+			_, err := runClaudeUsage(ViaLogin(work, "claude", a.User), dir)
+			return err
+		})
+	} else {
+		_, _ = runClaudeUsage(ViaLogin(work, "claude", a.User), appdir.Getenv("CLAUDE_CONFIG_DIR"))
+	}
+	// A denied /usage may still have renewed access successfully. Conversely a
+	// successful helper is no proof: only the authoritative store authorizes it.
+	return readClaudeHTTPAuth(ctx, a)
+}
+
+func readClaudeHTTPAuth(ctx context.Context, a *Account) (ClaudeHTTPCredentials, error) {
 	if err := ctx.Err(); err != nil {
 		return ClaudeHTTPCredentials{}, err
 	}
@@ -85,8 +140,8 @@ func ClaudeHTTPAuth(ctx context.Context, a *Account) (ClaudeHTTPCredentials, err
 	if !slices.Contains(c.OAuth.Scopes, "user:inference") {
 		return ClaudeHTTPCredentials{}, errors.New("Claude HTTP transport requires an OAuth sign-in with user:inference scope")
 	}
-	if c.OAuth.ExpiresAt <= time.Now().UnixMilli() {
-		return ClaudeHTTPCredentials{}, errors.New("Claude HTTP OAuth access token expired or has no expiry; refresh this account in Claude Code, then retry (HTTP transport does not rotate shared refresh tokens)")
+	if c.OAuth.ExpiresAt <= 0 {
+		return ClaudeHTTPCredentials{}, errors.New("Claude HTTP OAuth access token has no expiry; refresh this account in Claude Code, then retry")
 	}
 	id, ok := claudeSessionIdentity(profile)
 	if !ok || id.OrganizationID == "" {
@@ -104,6 +159,9 @@ func ClaudeHTTPAuth(ctx context.Context, a *Account) (ClaudeHTTPCredentials, err
 	}
 	if err := ctx.Err(); err != nil {
 		return ClaudeHTTPCredentials{}, err
+	}
+	if c.OAuth.ExpiresAt <= time.Now().UnixMilli() {
+		return ClaudeHTTPCredentials{}, errClaudeHTTPExpired
 	}
 	return ClaudeHTTPCredentials{Token: c.OAuth.AccessToken, AccountUUID: id.AccountID, OrganizationUUID: id.OrganizationID, DeviceID: device}, nil
 }
