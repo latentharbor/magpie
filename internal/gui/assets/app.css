@@ -3302,7 +3302,8 @@ body:not(.side-nav) #view-settings .set-head.stuck::before { box-shadow: 0 1px 0
 .mo-ph:hover { background: color-mix(in srgb, var(--k) 22%, transparent); }
 .mo-ph:focus-visible { background: color-mix(in srgb, var(--k) 22%, transparent); }
 .mo-saw .mo-ph { padding: 1px 6px; margin: 0 1px; border-radius: 5px; color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--accent) 40%, transparent); animation: mo-breathe 4.8s ease-in-out infinite; }
-.mo-saw .mo-ph:hover, .mo-saw .mo-ph:focus-visible { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.mo-saw .mo-ph:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.mo-saw .mo-ph:focus-visible { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 @keyframes mo-breathe { 50% { box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--accent) 75%, transparent), 0 0 0 3px color-mix(in srgb, var(--accent) 7%, transparent); } }
 .mo-orig { color: var(--fg); border-bottom: 1px dotted var(--muted); }
 .mo-orig.gone { color: var(--faint); }
@@ -3321,13 +3322,15 @@ body:not(.side-nav) #view-settings .set-head.stuck::before { box-shadow: 0 1px 0
 .mo-top { min-width: 0; }
 .mo-values { display: flex; flex-direction: column; }
 .mo-val { display: flex; align-items: center; gap: 14px; height: 38px; padding: 0 10px; margin: 0 -10px; border: 0; border-radius: 9px; background: none; color: var(--fg); font: inherit; font-size: 12.5px; text-align: left; cursor: default; outline: none; }
-.mo-val:hover, .mo-val:focus-visible { background: var(--pill); }
+.mo-val:hover { background: var(--pill); }
+.mo-val:focus-visible { background: var(--pill); }
 .mo-val .i { flex: none; width: 16px; font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .mo-val .sh { flex: 0 1 150px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--code); font-size: 12px; letter-spacing: .03em; }
 .mo-val .by { flex: none; width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--muted); }
 .mo-val .bar { flex: 1; min-width: 12px; display: flex; }
 .mo-val .bar i { height: 1px; background: color-mix(in srgb, var(--fg) 24%, transparent); transition: background-color .15s; }
-.mo-val:hover .bar i, .mo-val:focus-visible .bar i { background: var(--accent); }
+.mo-val:hover .bar i { background: var(--accent); }
+.mo-val:focus-visible .bar i { background: var(--accent); }
 .mo-val .x { flex: none; min-width: 36px; text-align: right; font-variant-numeric: tabular-nums; }
 .mo-foot { display: flex; align-items: center; gap: 10px; margin-top: 22px; padding-top: 12px; border-top: 1px solid var(--line); }
 .mo-note { flex: 1; min-width: 0; font-size: 11.5px; line-height: 1.4; color: var(--muted); }
