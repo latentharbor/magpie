@@ -428,12 +428,15 @@ func runAfterExit(pid int, command string) error {
 	return cmd.Start()
 }
 
-// relaunchOpen is the open command Relaunch runs for bundle.
+// Ask LaunchServices for a new instance. Just after exit it can still have
+// the old process registered, so an ordinary open sends that gone process a
+// reopen event and fails with -600. The GUI instance lock still prevents two
+// active magpies. Adapted from upstream 27a8255fd793ec1b3cb078681f80d3a0ba216d77.
 func relaunchOpen(bundle string, window bool) string {
 	if window {
-		return fmt.Sprintf("open %q", bundle)
+		return fmt.Sprintf("open -n %q", bundle)
 	}
-	return fmt.Sprintf("open %q --args tray", bundle)
+	return fmt.Sprintf("open -n %q --args tray", bundle)
 }
 
 // ReplaceBinary puts the release's build for this binary where the

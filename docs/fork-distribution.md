@@ -110,6 +110,12 @@ draft becomes Latest only after all builds, signature generation and final
 main/CI checks succeed. Notes describe maintenance generically and are not
 generated from commit messages or private configuration.
 
+On macOS, the post-exit relaunch requests a new LaunchServices instance
+(`open -n`) rather than a reopen event that may target the exited process.
+The ordinary application instance lock still prevents duplicate active apps.
+Failed opens retain the bounded retries; a locked-session update has not been
+verified on this distribution.
+
 [`fork-sync.yml`](../.github/workflows/fork-sync.yml) checks upstream every six
 hours. It performs a normal merge, preserving distribution changes or failing
 without updating main on conflict. A concurrent push is rejected; there is no

@@ -23,8 +23,10 @@ func fakeOpen(t *testing.T, fails int) string {
 d='` + dir + `'
 n=$(( $(cat "$d/tries" 2>/dev/null || echo 0) + 1 ))
 echo $n > "$d/tries"
+app=
+for a in "$@"; do case "$a" in *.app) app=$a;; esac; done
 if [ $n -le ` + strconv.Itoa(fails) + ` ]; then
-  echo "_LSOpenURLsWithCompletionHandler() failed for the application $1 with error -600." >&2
+  echo "_LSOpenURLsWithCompletionHandler() failed for the application $app with error -600." >&2
   exit 1
 fi
 echo "$@" > "$d/opened"
@@ -66,7 +68,7 @@ func TestRelaunchOpenTriedAgain(t *testing.T) {
 	opened := filepath.Join(dir, "opened")
 	for end := time.Now().Add(30 * time.Second); time.Now().Before(end); time.Sleep(50 * time.Millisecond) {
 		if b, err := os.ReadFile(opened); err == nil && len(b) > 0 {
-			if got, want := strings.TrimSpace(string(b)), bundle+" --args tray"; got != want {
+			if got, want := strings.TrimSpace(string(b)), "-n "+bundle+" --args tray"; got != want {
 				t.Fatalf("opened %q, want %q", got, want)
 			}
 			if n := tries(dir); n != 3 {
