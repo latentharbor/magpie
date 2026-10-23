@@ -13,7 +13,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { openPart } = require("./reader.cjs");
+const { openPart, reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const DAV = { kind: "webdav", url: "https://dav.example.com/dav/", user: "me", passwordSet: true };
@@ -106,6 +106,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.equal(await first.locator(".name").textContent(), w.s3Row);
       assert.ok((await first.locator(".sub").textContent()).endsWith(" · " + w.davKept), "the row says WebDAV's settings are kept");
 
+      await reach(page, first.locator(".val button").last());
       await first.locator(".val button").last().click();
       const form = list.locator(".sync-form");
       await form.waitFor({ state: "visible" });
@@ -119,9 +120,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // the page where it was
       await toEnd();
       const top = () => page.evaluate(() => document.querySelector("#view-settings").scrollTop);
-      const segTop = () => page.evaluate(() => document.querySelector(".sync-form .segs").getBoundingClientRect().top - document.querySelector("#view-settings").getBoundingClientRect().top);
-      for (let i = 0; i < 40 && (await segTop()) < 40; i++) { await page.mouse.wheel(0, -40); await page.waitForTimeout(15); }
-      await page.waitForTimeout(300);
+      await reach(page, form.locator(".segs .opt", { hasText: "WebDAV" }));
       const before = await top();
       await form.locator(".segs .opt", { hasText: "WebDAV" }).click();
       await page.waitForTimeout(250);
@@ -134,6 +133,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.equal(await hint.textContent(), w.moving);
       assert.equal(await save.textContent(), w.move);
 
+      await reach(page, save);
       await save.click();
       await form.waitFor({ state: "detached" });
       assert.deepEqual(posts, [{ url: DAV.url, user: "me", password: "", passphrase: "", keys: true, agents: true, library: true }]);

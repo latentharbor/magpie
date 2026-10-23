@@ -8,7 +8,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { openPart } = require("./reader.cjs");
+const { openPart, reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 
@@ -79,6 +79,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       };
       await toEnd();
       assert.equal(await first.locator(".name").textContent(), zh ? "WebDAV / S3 / GitHub 同步" : "WebDAV, S3 or GitHub sync");
+      await reach(page, first.locator(".val button"));
       await first.locator(".val button").click();
 
       const form = list.locator(".sync-form");
@@ -92,9 +93,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const top = () => page.evaluate(() => document.querySelector("#view-settings").scrollTop);
       // at the page's end, then back up by the wheel till the choice is in sight
       await toEnd();
-      const segTop = () => page.evaluate(() => document.querySelector(".sync-form .segs").getBoundingClientRect().top - document.querySelector("#view-settings").getBoundingClientRect().top);
-      for (let i = 0; i < 40 && (await segTop()) < 10; i++) { await page.mouse.wheel(0, -40); await page.waitForTimeout(15); }
-      await page.waitForTimeout(300);
+      // Ten pixels below the view's edge can still be under its sticky
+      // heading. Reach the actual button, including a clear hit target.
+      await reach(page, form.locator(".segs .opt", { hasText: "S3" }));
       const before = await top();
       assert.ok(before > 0, "the settings page must be scrolled");
       await form.locator(".segs .opt", { hasText: "S3" }).click();
@@ -114,6 +115,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await box(L.endpoint).fill("https://acct.r2.cloudflarestorage.com");
       await box(L.phrase).fill("correct horse");
       const save = form.locator(".bar .primary");
+      await reach(page, save);
       await save.click();
       assert.equal(await form.locator(".editor-error").textContent(), zh ? "请填写存储桶名称" : "Name the bucket");
       assert.equal(posts.length, 0);
@@ -123,13 +125,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await box(L.region).fill("auto");
       await box(L.key).fill("AKIDEXAMPLE");
       await box(L.secret).fill("s3cr3t");
+      await reach(page, form.locator("label.tick").first());
       await form.locator("label.tick").first().click(); // path-style
       // the WebDAV address typed before is still there, and isn't sent;
       // going back and forth, the shorter form too, moves nothing
       // the fields filled scrolled the choice out of sight: wheeled back to it
       await page.mouse.move(450, 300);
-      for (let i = 0; i < 40 && (await segTop()) < 10; i++) { await page.mouse.wheel(0, -40); await page.waitForTimeout(15); }
-      await page.waitForTimeout(300);
+      await reach(page, form.locator(".segs .opt", { hasText: "WebDAV" }));
       const at = await top();
       assert.ok(at > 0, "the settings page must still be scrolled");
       await form.locator(".segs .opt", { hasText: "WebDAV" }).click();
@@ -140,6 +142,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await page.waitForTimeout(250);
       assert.equal(await top(), at, "picking S3 again must not scroll the page");
       await toEnd(); // the save button, at the form's foot, wheeled into sight
+      await reach(page, save);
       await save.click();
       await form.waitFor({ state: "detached" });
       assert.deepEqual(posts, [{ url: "s3://magpie-sync/team", user: "AKIDEXAMPLE", password: "s3cr3t", endpoint: "https://acct.r2.cloudflarestorage.com",
@@ -155,6 +158,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // header: wheeled back until it is clear of it
       const under = () => edit.evaluate((b) => b.getBoundingClientRect().top < document.querySelector("header.top").getBoundingClientRect().bottom + 4);
       for (let i = 0; i < 40 && (await under()); i++) { await page.mouse.wheel(0, -60); await page.waitForTimeout(30); }
+      await reach(page, edit);
       await edit.click();
       await form.waitFor({ state: "visible" });
       assert.equal(await form.locator(".segs .opt.on").textContent(), zh ? "S3 · 使用中" : "S3 · on");
