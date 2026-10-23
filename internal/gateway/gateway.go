@@ -1604,6 +1604,7 @@ func estimate(req *Request) int {
 // serve routes one parsed-enough request to its provider.
 func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Protocol, body []byte) {
 	start := time.Now()
+	r = withClaudeTransport(r)
 	// a client's "off" is magpie's none, for every route and check below
 	// that reads the body's effort (plugins#334)
 	body = offAsNone(from, body)
@@ -3777,9 +3778,8 @@ func (s *Server) attempt(w http.ResponseWriter, r *http.Request, from provider.P
 	r = r.WithContext(p.Via(r.Context()))
 	// the reply says who answered it (#822)
 	noteMember(w, r, p, model)
-	// A Claude Code subscription must run through the genuine binary. Direct
-	// OAuth HTTP requests are content-classified as third-party traffic when
-	// they carry another agent's harness (Pi, OpenCode, and others).
+	// CLI remains the default. The subscription entry snapshots an explicitly
+	// selected HTTP mode behind the same Team admission/draining guard.
 	if p.Account != nil && p.Account.Agent == "claude" {
 		call.To = provider.Anthropic
 		return s.serveClaudeSubscription(w, r, from, p, model, body, &call.Usage)
@@ -4086,6 +4086,16 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 		noteWireTier(ctx, to, body)
 	}
 	base := p.Base(to)
+	if c, ok := claudeHTTPOf(ctx, p); ok && to == provider.Anthropic {
+		var err error
+		body, err = claudeHTTPBody(body, c)
+		if err != nil {
+			return nil, err
+		}
+		if path == "/v1/messages" {
+			path += "?beta=true"
+		}
+	}
 	if p.IsOpenCode() && p.OpenCodeFree(gjson.GetBytes(body, "model").String()) {
 		// Zen's free tier answers at the inference API's URL alone (zenfree.go)
 		base = provider.OpenCodeFreeURL(base)
@@ -4180,8 +4190,10 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 		passOnCaller(ctx, req)
 		markSearching(ctx, req)
 	}
-	if err := p.Sign(ctx, req, to, body); err != nil {
-		return nil, err
+	if _, direct := claudeHTTPOf(ctx, p); !direct {
+		if err := p.Sign(ctx, req, to, body); err != nil {
+			return nil, err
+		}
 	}
 	// a sign-in its vendor revoked isn't sent again: the next member is
 	// asked, and the agent told to sign in again (#1793)
@@ -4191,13 +4203,24 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 	if to == provider.Anthropic {
 		s.fitUserBetas(p, req.Header)
 	}
+	if c, ok := claudeHTTPOf(ctx, p); ok && to == provider.Anthropic {
+		claudeHTTPHeaders(req, body, c)
+	}
 	sent := len(body)
 	if p.Account != nil && p.Account.Agent == "codex" {
 		// a turn goes zstd-compressed, as Codex's own client sends it;
 		// sent plain, ChatGPT answered a 1.1 MB one 503 (ylorn on X)
 		sent = provider.CodexCompressed(req, body)
 	}
-	res, err := p.Do(s.client, req)
+	client := s.client
+	if _, ok := claudeHTTPOf(ctx, p); ok {
+		// This account's bearer token is for the fixed Anthropic origin only.
+		// Do not follow even a same-host downgrade redirect with it.
+		copy := *client
+		copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &copy
+	}
+	res, err := p.Do(client, req)
 	if err == nil && res.StatusCode >= 400 && provider.OpenCodeURL(req.URL.String()) {
 		logOpenCodeRefusal(p, req, res.StatusCode)
 	}
@@ -4229,6 +4252,9 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 	}
 	// what a Codex account's reply says it has used, for its cap (#1295)
 	heardCodexLimits(p, res)
+	if _, ok := claudeHTTPOf(ctx, p); ok {
+		heardClaudeHTTPLimits(p, res)
+	}
 	noteSignIn(ctx, p.Account, req, res)
 	return res, nil
 }

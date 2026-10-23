@@ -1,6 +1,6 @@
 # Claude subscription bridge: turns across Claude Code runs
 
-A Claude subscription's requests are answered by the local `claude` binary
+A Claude subscription's requests are answered by default by the local `claude` binary
 (`internal/gateway/claude_subscription.go`, `serveClaudeSubscription`). This
 page covers how a conversation's turns find the Claude Code process, or the
 saved session, that had its last turn, and what a run leaves on disk. Tool
@@ -13,6 +13,55 @@ only counts active managed requests for draining and forwards native allowance
 observations. An uncommitted refusal can continue on a newly enabled account
 after a bounded handoff; visible output is never replayed. Claude Desktop is
 not exited, read or modified by the controller.
+
+## Optional HTTP transport (experimental)
+
+Settings → Replies offers **Claude subscription transport**: the default
+`Claude Code CLI (claude -p)` or `Claude Code HTTP (experimental)`.
+`settings.json` stores `claudeTransport` as `cli` or `http`; missing means
+`cli`, and invalid values are rejected. The gateway snapshots the choice at
+request admission, so a change never redirects an in-flight or queued request.
+This is a global transport choice, not a replacement account pool.
+
+HTTP inference (`internal/gateway/claude_http.go`) uses the same selected
+account, proxy, routing, metering, Team draining and uncommitted-refusal handoff
+as CLI inference. It sends directly to `https://api.anthropic.com/v1/messages`
+with that account's OAuth access token; redirects are not followed. Native
+Anthropic requests keep their tools, tool IDs/results, signed thinking,
+instructions, explicit token/effort settings and cache marks. Chat and Responses
+use the existing Anthropic translators. There is no hidden CLI tool harness or
+CLI session resume in this path; the caller must send its conversation history.
+The CLI-only lean-prompt preference is retained but hidden in HTTP mode.
+
+The application-level compatibility profile is pinned to locally observed
+Claude Code **2.1.309**: CLI headers, OAuth betas, account/device/session
+metadata, billing prompt fields and the final-body CCH checksum. The checksum
+compatibility implementation is adapted from
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), under its retained
+MIT license (`third_party/cliproxyapi-LICENSE.txt`). A loopback-only capture of
+the native interactive CLI through a rejecting local proxy also verified the
+hostname-dependent fields. That is **not** a production API acceptance check:
+the HTTP client still uses Go's TLS stack, the caller's harness is retained,
+and neither indistinguishable fingerprinting nor equivalent subscription
+charging/anti-abuse treatment is promised. Using this mode may carry account
+restriction risks. It remains explicitly experimental.
+
+`provider.ClaudeHTTPAuth` rereads the selected account's authoritative OAuth
+store each call and requires a live expiry, `user:inference`, account/org IDs
+and the installation's real device ID. It does not generate identities or
+rotate shared refresh tokens: Claude Code owns that locking protocol. Refresh
+an expired account through Claude Code before retrying. Sign-in and usage
+collection still use the existing CLI paths. The provider's Test action follows
+the chosen transport, without silently falling back to CLI on HTTP errors.
+
+Offline coverage includes native and translated streaming/whole replies,
+protocol/effort preservation, selected OAuth identity, transport snapshot,
+cancellation, quota-header feedback, a 429 → Team handoff retaining the request,
+and independent checksum vectors. `MAGPIE_CLAUDE_HTTP_CAPTURE` may point to a
+sanitized local native capture to additionally compare its observed checksum;
+the capture test skips without that optional file. No live account or gateway
+is used by these tests. The remainder of this page describes the default CLI
+transport only.
 
 ## Which Claude Code runs
 

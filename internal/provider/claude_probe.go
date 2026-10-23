@@ -1,12 +1,13 @@
 package provider
 
-// A Claude account is tested as it is used: by Claude Code itself, never
-// by a request magpie makes to Anthropic's API with the account's sign-in.
+// A Claude account is tested through the transport selected for its requests.
 
 import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/yetone/magpie/internal/settings"
 )
 
 // errClaudeViaCLI is what a request straight to Anthropic's API on a
@@ -22,15 +23,39 @@ var claudeCLIProbe func(ctx context.Context, configDir, model string) error
 // ProbeClaudeVia sets how a Claude account's test runs Claude Code.
 func ProbeClaudeVia(f func(ctx context.Context, configDir, model string) error) { claudeCLIProbe = f }
 
+// claudeHTTPProbe tests the selected account through the gateway's HTTP
+// transport, including its account credentials and proxy.
+var claudeHTTPProbe func(context.Context, Provider, string) error
+
+// ProbeClaudeHTTPVia sets how an HTTP Claude account's model test runs.
+func ProbeClaudeHTTPVia(f func(context.Context, Provider, string) error) { claudeHTTPProbe = f }
+
 // claudeWait is how long a test waits on Claude Code, which takes a few
 // seconds to start before it asks.
 const claudeWait = time.Minute
 
-// testClaude is a Claude account's test of model, run by Claude Code.
+// testClaude is a Claude account's test of model on its selected transport.
 func (p Provider) testClaude(ctx context.Context, model string) Result {
 	r := Result{Protocol: Anthropic, Model: model, Account: p.Account.User}
 	if model == "" {
 		r.Error = "no model to try: expose one, or refresh the model list"
+		return r
+	}
+	if settings.Load().ClaudeTransport == "http" {
+		if claudeHTTPProbe == nil {
+			r.Error = "Claude HTTP transport isn't available to run the test"
+			return r
+		}
+		ctx, cancel := context.WithTimeout(ctx, claudeWait)
+		defer cancel()
+		start := time.Now()
+		err := claudeHTTPProbe(ctx, p, model)
+		r.Millis = time.Since(start).Milliseconds()
+		if err != nil {
+			r.Error = err.Error()
+			return r
+		}
+		r.OK = true
 		return r
 	}
 	if claudeCLIProbe == nil {

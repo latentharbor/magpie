@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -169,6 +170,45 @@ func perModelValue(typ reflect.Type, table string) reflect.Value {
 		return out
 	}
 	return reflect.Zero(typ)
+}
+
+// Older settings pages keep the opt-in transport; invalid choices never
+// replace the saved choice, while an empty choice restores the CLI default.
+func TestSettingsClaudeTransport(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	handler := Handler(nil, nil)
+	for _, x := range []struct {
+		body string
+		want string
+		bad  bool
+	}{
+		{`{"claudeTransport":"http"}`, "http", false},
+		{`{"theme":"dark"}`, "http", false},
+		{`{"claudeTransport":"automatic"}`, "http", true},
+		{`{"claudeTransport":""}`, "cli", false},
+		{`{"claudeTransport":"http"}`, "http", false},
+		{`{"claudeTransport":"cli"}`, "cli", false},
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("POST", "/api/settings", strings.NewReader(x.body)))
+		if (rec.Code != http.StatusOK) != x.bad {
+			t.Fatalf("%s: %d %s", x.body, rec.Code, rec.Body)
+		}
+		if got := settings.Load().ClaudeTransport; got != x.want {
+			t.Fatalf("%s: transport = %q, want %q", x.body, got, x.want)
+		}
+		if !x.bad {
+			var response struct {
+				ClaudeTransport string `json:"claudeTransport"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.ClaudeTransport != x.want {
+				t.Fatalf("API response transport = %q, want %q", response.ClaudeTransport, x.want)
+			}
+		}
+	}
 }
 
 // How often a refused request is asked again (DD on Discord) is set by the

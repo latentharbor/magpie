@@ -4,8 +4,8 @@ package provider
 // runs Claude Code in a config directory of its own (CLAUDE_CONFIG_DIR): its
 // sign-in is put there once, from logins.json, and from then on Claude Code
 // keeps it, refreshing it as it does its own. magpie never refreshes a
-// Claude sign-in nor asks Anthropic anything with one; it only reads back
-// what Claude Code left, so logins.json follows.
+// Claude sign-in; it reads back what Claude Code left, so logins.json follows.
+// The opt-in HTTP inference transport also reads that authoritative store.
 
 import (
 	"bytes"

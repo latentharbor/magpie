@@ -141,6 +141,9 @@ func nativeTeamFixture(t *testing.T) *nativeTeamTransport {
 		cancel()
 		<-done
 		c.Enabled = false
+		// A disabled subscription deliberately still owns its pool. Empty the
+		// fixture's pool too, so later ordinary Claude tests do not inherit it.
+		c.Members = nil
 		if err := provider.SaveClaudeTeam(context.Background(), c); err != nil {
 			t.Error(err)
 		}

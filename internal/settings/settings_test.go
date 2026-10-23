@@ -15,6 +15,41 @@ import (
 	"github.com/yetone/magpie/internal/redact"
 )
 
+func TestClaudeTransport(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if got := Load().ClaudeTransport; got != "cli" {
+		t.Fatalf("missing settings default transport = %q, want cli", got)
+	}
+	for _, choice := range []string{"", "cli", "http"} {
+		if err := Save(Settings{ClaudeTransport: choice}); err != nil {
+			t.Fatal(err)
+		}
+		want := choice
+		if want == "" {
+			want = "cli"
+		}
+		if got := Load().ClaudeTransport; got != want {
+			t.Fatalf("saved %q: transport = %q, want %q", choice, got, want)
+		}
+	}
+	for _, bad := range []string{"HTTP", "automatic", " http", "cli "} {
+		if err := Save(Settings{ClaudeTransport: bad}); err == nil {
+			t.Fatalf("invalid transport %q accepted", bad)
+		}
+		if got := Load().ClaudeTransport; got != "http" {
+			t.Fatalf("invalid save changed transport to %q", got)
+		}
+	}
+	for _, old := range []string{`{}`, `{"claudeTransport":""}`} {
+		if err := os.WriteFile(Path(), []byte(old), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := Load().ClaudeTransport; got != "cli" {
+			t.Fatalf("legacy %s: transport = %q, want cli", old, got)
+		}
+	}
+}
+
 func TestRoundTrip(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	if s := Load(); s.Theme != "system" || s.Lang != "system" {

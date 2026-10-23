@@ -800,14 +800,14 @@ func (a *Account) StandIn() bool { return a != nil && a.standIn }
 
 // claudeProvider is the Claude Code provider of acct.
 func claudeProvider(acct *Account) Provider {
-	// nothing is sent to Anthropic in Claude Code's name: a request on the
-	// account runs Claude Code itself (the gateway's bridge, a test), so
-	// one that would go straight to the API with its sign-in is refused
+	// Default signing refuses raw OAuth forwarding. The gateway's explicit
+	// experimental HTTP transport reads its own validated credentials and
+	// signs only its fixed Anthropic destination, without this generic signer.
 	acct.sign = func(context.Context, *http.Request, []byte) error { return errClaudeViaCLI }
 	acct.models = func() []catalog.Model { return catalog.Provider("anthropic") }
 	acct.magpieList = true
 	// Claude's models are the ones magpie knows: listing them would ask
-	// Anthropic with the account's sign-in, which magpie never does
+	// Anthropic with the account's sign-in, which listing does not do
 	acct.fetch = func(context.Context) ([]catalog.Model, error) {
 		ms := catalog.Provider("anthropic")
 		return ms, catalog.SaveLive("claude", claudeBase, ms)
