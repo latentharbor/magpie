@@ -1,0 +1,163 @@
+// Each organization is an independent subscription using the normal router.
+function claudeTeamRoutingHint(routing) {
+  return routing === "" ? t("Among accounts with quota, uses the weekly reset first, then the 5-hour reset. No preferred account.") : "";
+}
+
+function claudeTeamSummary(p) {
+  return t("Seats in use: {used}/{total}", {used:p.team.inUse,total:p.team.seats});
+}
+
+function claudeTeamTile() {
+  const b = pickRow("claude-color", "Claude Team");
+  b.onclick = () => openClaudeTeam();
+  return b;
+}
+
+function renderTeamAccounts(a, p) {
+  const list = el("div", "accts team-accts"), settings = el("button", "text", "Claude Team");
+  settings.onclick = async () => { editing = null; draft = null; await closeModal(); openClaudeTeam(p.teamOrganization); };
+  list.append(settings);
+  if (p.team) list.append(el("div", "hint", t("Seats in use: {used}/{total}", { used: p.team.inUse, total: p.team.seats })));
+  list.append(el("p", "hint", t("Cached usage; refreshed when a seat is assigned")));
+  for (const m of (p.team?.members || []).filter((m) => m.selected)) {
+    const row = el("div", "acc with-aq"), dot = el("span", "dot tick fixed");
+    if (m.on) dot.append(svg(CHECK, 10, 2.2));
+    const state = m.seatTier === "team_tier_1" ? "Premium" : t("Unassigned");
+    row.append(dot, el("span", "rename", m.user), el("span", "grow"), el("span", "plan", state));
+    const q = { windows: (m.limits || []).map((w) => ({ name: w.kind === "five_hour" ? "5 hours" : w.kind === "seven_day" ? "7 days" : w.kind,
+      used: w.used * 100, resetsAt: w.resetsAt ? new Date(w.resetsAt * 1000).toISOString() : null })), readDeferred: true, asOf: m.observedAt };
+    row.append(accountQuota({ [m.user]: q }, m.user));
+    list.append(row);
+  }
+  return list;
+}
+
+async function openClaudeTeam(organizationId = "") {
+  const ed = el("div", "editor claude-team"), head = el("div", "ehead");
+  head.append(icon("claude-color"), el("b", "", "Claude Team"));
+  const message = el("div", "hint team-message"), panel = el("div", "team-summary");
+  message.setAttribute("role", "status");
+  const name = input("", t("Name")), org = input(organizationId, t("Organization UUID"));
+  const key = input("", "sessionKey", "password"), threshold = input("100", "100");
+  key.autocomplete = "off"; org.spellcheck = false; threshold.inputMode = "decimal";
+  org.readOnly = !!organizationId;
+  const [enableRow, enabled] = tick(t("Enable seat rotation"), false);
+  const fields = el("div", "team-fields"), chooseOrg = el("div", "team-organizations");
+  let routing = "";
+  const routeBox = el("div", "team-routing");
+  const drawRouting = () => {
+    routeBox.replaceChildren(routingSegs(ROUTINGS.filter(([id]) => id !== "weight").map(([id, label]) => [id, t(label)]), routing, (value) => { routing = value; drawRouting(); }));
+    const hint = claudeTeamRoutingHint(routing) || t(ROUTINGS.find(([id]) => id === routing)?.[2] || "");
+    if (hint) routeBox.append(el("p", "hint", hint));
+  };
+  fields.append(...field(t("Name"), name), ...field(t("Organization UUID"), org),
+    ...field(t("Administrator sessionKey"), key, t("Stored on this computer only; leave blank to keep the saved credential")),
+    ...field(t("Rotate at usage (%)"), threshold), ...field(t("Routing"), routeBox), ...field(t("Status"), enableRow));
+  const pool = el("div", "team-pool"), bar = el("div", "bar");
+  const cancel = el("button", "text", t("Cancel")), save = el("button", "text primary", t("Save")), refresh = el("button", "text", t("Refresh"));
+  cancel.onclick = () => { key.value = ""; closeModal(); };
+  bar.append(refresh, el("span", "grow"), cancel, save);
+  ed.append(head, el("p", "hint team-intro", t("Premium accounts are on; standby accounts stay off. Existing replies finish before a seat moves.")), fields, chooseOrg, panel, message, pool, bar);
+  openModal(ed);
+  let view, selected = new Set(), pending = false, timer;
+  const date = (x) => new Date(x).toLocaleString(intlLang());
+  const fail = (e) => { message.textContent = e.message; };
+  const draw = () => {
+    panel.replaceChildren(); pool.replaceChildren();
+    if (!view) return;
+    panel.append(el("b", "", t("Seats in use: {used}/{total}", { used: view.inUse || 0, total: view.seats || 0 })));
+    if (view.error) panel.append(el("p", "hint", view.error));
+    if (view.nextReset) panel.append(el("p", "hint", t("Earliest reset: {time}", { time: date(view.nextReset) })));
+    pool.append(el("h3", "", t("Seat pool")));
+    const members = (view.members || []).filter((m) => m.organizationId.toLowerCase() === org.value.trim().toLowerCase());
+    if (!members.length) pool.append(el("p", "hint", t("Sign in to at least two Claude accounts in this organization first")));
+    for (const m of members) {
+      const row = el("div", "team-member"), label = el("label", "team-check"), box = el("input");
+      row.dataset.account = m.accountId; box.type = "checkbox"; box.checked = selected.has(m.accountId);
+      box.onchange = () => { box.checked ? selected.add(m.accountId) : selected.delete(m.accountId); };
+      const user = el("span", "team-user", m.user); user.title = m.user;
+      label.append(box, user);
+      const top = el("div", "team-member-head"); top.append(label);
+      const state = m.seatTier === "team_tier_1" ? "Premium" : m.seatTier === "unassigned" ? t("Unassigned") : t("Not verified");
+      top.append(el("span", "team-seat", state)); row.append(top);
+      const windows = el("div", "team-windows");
+      for (const kind of ["five_hour", "seven_day"]) {
+        const w = (m.limits || []).find((w) => w.kind === kind), line = el("div", "team-window");
+        const label = kind === "five_hour" ? t("5 hours") : t("7 days");
+        if (w) {
+          const meter = el("progress"); meter.max = 1; meter.value = w.used; meter.setAttribute("aria-label", label);
+          line.append(el("span", "", label + " · " + Math.round(w.used * 100) + "%"), meter,
+            el("span", "hint", w.resetsAt ? t("Resets: {time}", { time: date(w.resetsAt * 1000) }) : w.used === 0 ? t("Window not started") : t("Reset time unknown")));
+        } else line.append(el("span", "", label), el("span", "hint", t("Usage unknown")));
+        windows.append(line);
+      }
+      row.append(windows);
+      const states = { signed_out: "Sign in again", cooling: "Cooling down", unknown: "Usage unknown", ready: "Ready" };
+      const foot = el("div", "team-member-foot");
+      if (states[m.state]) foot.append(el("span", "hint", t(states[m.state])));
+      if (m.observedAt) foot.append(el("span", "hint", t("Last observed: {time}", { time: date(m.observedAt) })));
+      if (m.seatTier === "unassigned" && m.limits?.length) foot.append(el("span", "hint", t("Cached usage; refreshed when a seat is assigned")));
+      if (m.seatTier === "team_tier_1") {
+        const rotate = el("button", "text", t("Rotate seat now")); rotate.disabled = !view.config.enabled || view.rotating || pending;
+        rotate.onclick = async () => {
+          if (pending) return;
+          pending = true; draw();
+          try { view = await api("claude-team/rotate", { organizationId: view.config.organizationId, from: m.accountId }); message.textContent = t("Seat rotation requested"); }
+          catch (e) { fail(e); }
+          finally { pending = false; draw(); poll(); }
+        };
+        foot.append(rotate);
+      }
+      row.append(foot); pool.append(row);
+    }
+    if (view.history?.length) {
+      const history = el("details", "team-history"); history.append(el("summary", "", t("Recent seat changes")));
+      const who = (id) => view.members.find((m) => m.accountId === id)?.user || id;
+      const result = { assigned: "Assigned", rolled_back: "Rolled back", unchanged: "Unchanged" };
+      for (const h of view.history.slice(-5).reverse()) history.append(el("p", "hint", date(h.at) + " · " + who(h.from) + " → " + who(h.to) + " · " + t(result[h.result] || "Not verified")));
+      pool.append(history);
+    }
+  };
+  const load = async (initial = false) => {
+    try {
+      const next = await api("claude-team/members?" + (organizationId ? "organizationId=" + encodeURIComponent(organizationId) : "new=1"));
+      if (!ed.isConnected) return;
+      view = next;
+      if (initial) {
+        name.value = view.config.name || ""; org.value = view.config.organizationId || organizationId;
+        threshold.value = view.config.threshold || 100; enabled.checked = !!view.config.enabled;
+        routing = providers?.providers.find((p) => p.teamOrganization === organizationId)?.routing || view.config.routing || ""; drawRouting();
+        key.placeholder = view.sessionSet ? t("Saved; leave blank to keep") : "sessionKey";
+        selected = new Set(view.config.members || []);
+        if (!organizationId) {
+          const ids = [...new Set(view.members.map((m) => m.organizationId))];
+          for (const id of ids) {
+            const b = el("button", "text", id); b.type = "button";
+            b.onclick = () => { org.value = id; selected = new Set(view.members.filter((m) => m.organizationId === id).map((m) => m.accountId)); draw(); };
+            chooseOrg.append(b);
+          }
+        }
+      }
+      draw(); poll();
+    } catch (e) { fail(e); }
+  };
+  const poll = () => {
+    clearTimeout(timer);
+    if (view?.rotating && ed.isConnected) timer = setTimeout(() => { if (ed.isConnected && !$("#modal").hidden) load(); }, 1500);
+  };
+  org.oninput = draw;
+  refresh.onclick = () => load();
+  save.onclick = async () => {
+    if (pending) return;
+    const value = decimalOf(threshold.value);
+    if (!Number.isFinite(value) || value < 1 || value > 100) { threshold.focus({ preventScroll: true }); return; }
+    pending = true; save.disabled = true;
+    try {
+      view = await api("claude-team/config", { name: name.value.trim(), routing, enabled: enabled.checked, organizationId: org.value.trim(), sessionKey: key.value,
+        threshold: value, members: [...selected].filter((id) => (view.members || []).some((m) => m.accountId === id && m.organizationId.toLowerCase() === org.value.trim().toLowerCase())) });
+      key.value = ""; await closeModal(); await loadProvidersNow();
+    } catch (e) { fail(e); }
+    finally { pending = false; save.disabled = false; }
+  };
+  save.disabled = true; await load(true); save.disabled = !view;
+}

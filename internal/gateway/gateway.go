@@ -580,6 +580,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	// and signs Codex and Claude Code in to their next account when the
 	// one they are on is spent
 	go provider.KeepOnAnAccountWithRoom(ctx)
+	go provider.KeepClaudeTeam(ctx)
 	// and, when settings say to, starts its accounts' next windows as the last reset
 	go provider.KeepCodexWindowsWarm(ctx)
 	go provider.KeepClaudeWindowsWarm(ctx, warmClaude)
@@ -2001,6 +2002,36 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	var cands []candidate
 	var pl planned
 	var group *GroupRef
+	// An empty Team route can be between seats. Keep only these waiting
+	// streams alive; normal routing never contacts or waits for the admin.
+	kept := &keptAlive{proto: from, told: start, streams: streamOf(body)}
+	if k := handedOnOf(r); k != nil {
+		kept = k
+	}
+	var teamWait *holdWriter
+	waitTeam := func(user string) {
+		h := newHoldWriter(w, true)
+		h.ctx, h.streams, h.alive = r.Context(), kept.streams, kept
+		stop := h.keepQueued()
+		if user == "" {
+			awaitClaudeTeam(r.Context())
+		} else {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+			provider.AwaitClaudeTeamUser(ctx, user)
+			cancel()
+		}
+		stop()
+		if kept.sent {
+			// Until tries begin, early errors must end the SSE response,
+			// not write JSON behind headers already sent as a stream.
+			teamWait, w = h, h
+		}
+	}
+	defer func() {
+		if teamWait != nil {
+			teamWait.release()
+		}
+	}()
 	// a conversation's affinity is to one model: another's cache is its
 	// own, and an agent's side requests (a title, a summary) to a smaller
 	// model leave the conversation where it is
@@ -2009,6 +2040,20 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	if isGroup {
 		// a routing group: every member's keys or accounts weighed together
 		cands, pl = s.planGroup(g, ms, from)
+		if len(cands) == 0 && slices.ContainsFunc(ms, func(m provider.Member) bool {
+			return m.Provider.Account != nil && m.Provider.Account.Agent == "claude" && provider.ClaudeTeamManaged(m.Provider.Account.User)
+		}) {
+			waitTeam("")
+			ms = slices.Clone(ms)
+			for i, m := range ms {
+				if m.Provider.Account != nil && m.Provider.Account.Agent == "claude" {
+					if fresh, _, ok := provider.Resolve(m.Provider.ID + "/" + m.Model); ok {
+						ms[i].Provider = fresh
+					}
+				}
+			}
+			cands, pl = s.planGroup(g, ms, from)
+		}
 		group = groupRef(g, ms)
 		group.Paused = paused
 		scope, mode, rotate = provider.GroupPrefix+g.ID, g.Affinity, routingOf(g.Routing) == provider.Rotate
@@ -2020,6 +2065,15 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		}
 	} else {
 		cands, pl = s.plan(p, model, from)
+		if len(cands) == 0 && p.Account != nil && p.Account.Agent == "claude" && provider.ClaudeTeamManaged(p.Account.User) {
+			// The one seat is between accounts. Only an empty route waits;
+			// a healthy normal request never waits for the control plane.
+			waitTeam(p.Account.User)
+			if fresh, m, ready := provider.Resolve(asked); ready {
+				p, model = fresh, m
+				cands, pl = s.plan(p, model, from)
+			}
+		}
 		if handedOnOf(r) != nil {
 			// Codex's own sign-in, asked as often as it is asked: only
 			// the fallbacks are left (codexFallBack)
@@ -2146,6 +2200,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		return
 	}
 	if len(cands) == 0 {
+		if p.Account != nil && p.Account.Agent == "claude" && provider.ClaudeTeamManaged(p.Account.User) {
+			if at, ok := provider.ClaudeTeamUserReset(p.Account.User); ok {
+				call.Status, call.Error = 429, teamResetError(w, from, at)
+				turnedAway()
+				return
+			}
+		}
 		call.Status, call.Error = 404, "no member ready"
 		writeError(w, from, 404, fmt.Sprintf("none of %s's models is ready", call.Model))
 		turnedAway()
@@ -2332,10 +2393,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	var forbade []forbidden        // the plain 403s rested so far (forbiddenAlike)
 	autoReset := resetFirst != nil // a Codex or Claude reset looked at, once a request
 	// what the tries' held streams sent the agent ahead of a reply (#751)
-	kept := &keptAlive{proto: from, told: start}
-	if k := handedOnOf(r); k != nil {
-		// Codex's own sign-in waited for first, with Codex kept alive
-		kept = k
+	if teamWait != nil {
+		// The candidate writers inherit the comments sent while waiting.
+		w, teamWait = teamWait.w, nil
 	}
 	var sentMs int64 // ms from the request to its answering try going to the vendor
 	// of it, magpie's own, the tries that failed first and the wait for a
@@ -2410,7 +2470,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// for its allowance running out to be told as that one's error
 		// and once the agent has the stream's headers from an earlier try's
 		// keepalives, for a failure to be told as the stream's error
-		hw := newHoldWriter(w, !last || again < max(lastRetries, rateRetries) || other != nil || kept.sent || autoPicks(c) && repicked < 2 ||
+		teamAccount := c.p.Account != nil && c.p.Account.Agent == "claude" && provider.ClaudeTeamManaged(c.p.Account.User)
+		hw := newHoldWriter(w, teamAccount || !last || again < max(lastRetries, rateRetries) || other != nil || kept.sent || autoPicks(c) && repicked < 2 ||
 			patience > 0 && rounds < replanRounds && (waitFrom.IsZero() || time.Since(waitFrom) < patience) || wantWhole)
 		// a compaction's summary is held to its end, for a cut or an
 		// error halfway to go to the next candidate (#2274)
@@ -3307,6 +3368,22 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 				skipped = append(skipped, c.label()+": "+call.Error)
 				matesLast(cands[i+1:], c)
 				continue
+			}
+		}
+		if teamAccount && hw.failed() && !hw.passing && pin == "" && aff.Why != "strict" && checkpoint == nil && !sealedTask &&
+			(failure(hw.code(), hw.errBody()) == failQuota || hw.code() == 429 && provider.ClaudeTeamExhausted(c.p.Account.User) || strings.Contains(call.Error, "Claude Team seat rotation in progress")) {
+			stopAlive := hw.keepQueued()
+			fresh := s.teamSuccessors(r, from, c, cands)
+			stopAlive()
+			if len(fresh) > 0 {
+				cands = append(cands, fresh...)
+				last = false
+			} else if last {
+				if at, known := provider.ClaudeTeamUserReset(c.p.Account.User); known {
+					hw.held.Reset()
+					hw.status, hw.failure, hw.stream, hw.whole = 0, 0, false, false
+					call.Status, call.Error = 429, teamResetError(hw, from, at)
+				}
 			}
 		}
 		if !last && hw.failed() {

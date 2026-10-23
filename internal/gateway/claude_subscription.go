@@ -4057,6 +4057,16 @@ func (b *subscriptionBridge) whyCallsLost(req *Request) string {
 }
 
 func (s *Server) serveClaudeSubscription(w http.ResponseWriter, r *http.Request, from provider.Protocol, p provider.Provider, model string, body []byte, usage *Usage) (int, string) {
+	user := ""
+	if p.Account != nil {
+		user = p.Account.User
+	}
+	release, admitted := provider.TrackClaudeTeamRequest(user)
+	if !admitted {
+		const message = "Claude Team seat rotation in progress"
+		return writeError(w, from, 503, message), message
+	}
+	defer release()
 	owner := p.ID
 	if p.Account != nil {
 		owner += "\x00" + p.Account.User

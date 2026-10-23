@@ -28,6 +28,9 @@ var savedTokenMu = filelock.Mutex{Path: func() string { return loginsPath() + ".
 // SetLoginOn puts a saved account in use beside the agent's own, or takes
 // it out. The account the agent is signed in to is always in use.
 func SetLoginOn(agent, user string, on bool) error {
+	if agent == "claude" && ClaudeTeamManaged(user) {
+		return errors.New("Claude Team manages this account's switch; disable Team control before changing it manually")
+	}
 	if discoveryOff() {
 		return errAccountDiscoveryOff
 	}
@@ -91,6 +94,9 @@ func pausedOwn(ls []savedLogin, agent, user string) bool {
 			continue
 		}
 		if strings.EqualFold(l.User, user) {
+			if l.TeamOff {
+				return true
+			}
 			paused = l.Paused
 		} else {
 			others = others || l.On
@@ -103,6 +109,9 @@ func pausedOwn(ls []savedLogin, agent, user string) bool {
 // is signed in to, paused while another of its accounts is on (#263): the
 // gateway passes over it, the agent staying signed in to it.
 func (p Provider) OwnPaused() bool {
+	if ClaudeTeamOf(p) != "" {
+		return !p.TeamRouteOn()
+	}
 	if p.Account == nil || p.Account.token != nil && !p.Account.standIn || !slices.Contains(loginAgents, p.Account.Agent) {
 		return false
 	}
@@ -129,6 +138,9 @@ func (p Provider) AlsoOn() []Provider {
 // alsoOn is AlsoOn as each sign-in makes its accounts, without the
 // provider's settings.
 func (p Provider) alsoOn() []Provider {
+	if ClaudeTeamOf(p) != "" {
+		return p.teamAlsoOn()
+	}
 	if p.IsPlugin() {
 		return pluginAlsoOn(*p.Account.plugin)
 	}
@@ -146,6 +158,9 @@ func (p Provider) alsoOn() []Provider {
 	}
 	var out []Provider
 	for _, l := range Logins(p.Account.Agent) {
+		if p.Account.Agent == "claude" && claudeLoginInTeam(l.User) {
+			continue
+		}
 		if l.Active || l.first || !l.On {
 			continue
 		}

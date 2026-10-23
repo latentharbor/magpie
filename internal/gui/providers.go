@@ -71,20 +71,22 @@ type modelJSON struct {
 }
 
 type providerJSON struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Icon      string            `json:"icon"`
-	Preset    string            `json:"preset"`
-	Host      string            `json:"host"`
-	Chat      string            `json:"chat"`
-	Responses string            `json:"responses"`
-	Anthropic string            `json:"anthropic"`
-	Gemini    string            `json:"gemini,omitempty"` // a Gemini API's base (#1346)
-	Decide    string            `json:"decide,omitempty"` // a decision API: it only routes groups
-	Catalog   string            `json:"catalog"`
-	Website   string            `json:"website"`
-	KeysURL   string            `json:"keysUrl"`
-	Headers   map[string]string `json:"headers,omitempty"`
+	Team             *provider.ClaudeTeamView `json:"team,omitempty"`
+	TeamOrganization string                   `json:"teamOrganization,omitempty"`
+	ID               string                   `json:"id"`
+	Name             string                   `json:"name"`
+	Icon             string                   `json:"icon"`
+	Preset           string                   `json:"preset"`
+	Host             string                   `json:"host"`
+	Chat             string                   `json:"chat"`
+	Responses        string                   `json:"responses"`
+	Anthropic        string                   `json:"anthropic"`
+	Gemini           string                   `json:"gemini,omitempty"` // a Gemini API's base (#1346)
+	Decide           string                   `json:"decide,omitempty"` // a decision API: it only routes groups
+	Catalog          string                   `json:"catalog"`
+	Website          string                   `json:"website"`
+	KeysURL          string                   `json:"keysUrl"`
+	Headers          map[string]string        `json:"headers,omitempty"`
 	// JSON fields added to each request's body (provider.ExtraBody, #1604)
 	ExtraBody provider.ExtraBody `json:"extraBody,omitempty"`
 	// the API the user gave a custom provider's Base URL as (BaseAPI)
@@ -694,6 +696,24 @@ func providerInfoWith(p provider.Provider, agents []agentUse, desktop map[string
 		out.Account = &accountJSON{Account: *a, Agent: a.Agent}
 		out.Account.Name, out.Account.Icon = accountLabel(p)
 		out.Account.Logins = provider.Logins(a.Agent)
+		out.TeamOrganization = provider.ClaudeTeamOf(p)
+		if out.TeamOrganization != "" {
+			v, err := provider.ClaudeTeamOrganization(out.TeamOrganization)
+			if err == nil {
+				out.Team = &v
+				out.Account.Logins = slices.DeleteFunc(out.Account.Logins, func(l provider.Login) bool {
+					return !slices.ContainsFunc(v.Members, func(m provider.ClaudeTeamMember) bool { return m.Selected && strings.EqualFold(m.User, l.User) })
+				})
+			}
+			for i := range out.Account.Logins {
+				out.Account.Logins[i].Active = false
+			}
+			out.Account.Name, out.Account.Icon = p.Name, "claude-color"
+		} else if a.Agent == "claude" {
+			out.Account.Logins = slices.DeleteFunc(out.Account.Logins, func(l provider.Login) bool {
+				return provider.ClaudeTeamLoginOwned(l.User)
+			})
+		}
 		if a.Agent == "claude" {
 			out.Account.WSL = provider.ClaudeInWSL()
 		}
@@ -987,6 +1007,7 @@ func moveContext(r *http.Request) (context.Context, context.CancelFunc) {
 }
 
 func providerRoutes(mux *http.ServeMux, w Windows) {
+	claudeTeamRoutes(mux)
 	importAppsRoutes(mux)
 	pluginRoutes(mux, w)
 	traceRoutes(mux)

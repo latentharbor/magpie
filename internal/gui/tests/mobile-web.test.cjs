@@ -326,6 +326,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
             for (const view of views) {
               if (view === "agents" && !baselineFile("app.js").includes("function connectPanel")) continue;
               await go(current, view); await go(original, view);
+              // This custom build adds a native Claude Team subscription
+              // entry. Its real form, opening and narrow layout are covered
+              // by claude-team.test.cjs. Compare every existing tile and the
+              // rest of Providers against the unmodified upstream layout.
+              if (view === "providers" && !baselineFile("app.js").includes("claudeTeamTile(")) {
+                await current.locator('#view-providers .tile[data-pick="Claude Team"]').evaluate((b) => b.remove());
+              }
               await current.mouse.move(0, 0); await original.mouse.move(0, 0);
               // Removing hover can repaint the tab's shadow in a later frame.
               await current.waitForTimeout(350); await original.waitForTimeout(350);

@@ -2,6 +2,9 @@
 /magpie.exe
 /magpie.app/
 /dist/
+/staging/
+/.verification/
+__pycache__/
 /magpie-dev
 /rsrc_windows_*.syso
 /magpie-dev-backend

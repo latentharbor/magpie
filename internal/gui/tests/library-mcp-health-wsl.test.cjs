@@ -61,7 +61,7 @@ const words = {
   en: { checked: "Checked in: ", failed: "Failed in: ", down: "WSL Arch not running", downTip: "magpie can't check it: the agents given it run in WSL Arch, which isn't running, and a check doesn't start it" },
   zh: { checked: "检查位置：", failed: "失败位置：", down: "WSL Arch 未运行", downTip: "magpie 无法检查：用它的智能体运行在 WSL Arch 里，而它没有在运行，检查不会去启动它" },
   "zh-TW": { checked: "檢查位置：", failed: "失敗位置：", down: "WSL Arch 未執行", downTip: "magpie 無法檢查：使用它的智慧體執行在 WSL Arch 裡，而它沒有在執行，檢查不會去啟動它" },
-  ja: { checked: "チェックした場所: ", failed: "失敗した場所: ", down: "WSL Arch は停止中", downTip: "magpie はチェックできません: これを使うエージェントは WSL Arch で動きますが、Arch は起動していません。チェックのために起動はしません" },
+  ja: { checked: "チェックした場所: ", failed: "失敗した場所: ", down: "WSL Arch は停止中", downTip: "magpie はチェックできません: これを使うエージェントが動く WSL Arch は起動しておらず、チェックのために起動はしません" },
   de: { checked: "Geprüft in: ", failed: "Fehlgeschlagen in: ", down: "WSL Arch läuft nicht", downTip: "magpie kann ihn nicht prüfen: Die Agenten, die ihn bekommen, laufen in WSL Arch, das nicht läuft, und eine Prüfung startet es nicht" },
 };
 

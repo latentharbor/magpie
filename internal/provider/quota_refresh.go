@@ -135,7 +135,7 @@ func refreshCards(ctx context.Context, provider, user string) (subs, plans, bala
 	r := cardRefresh{provider, user}
 	ctx = context.WithValue(Asked(ctx), cardRefreshKey{}, r) // a card's refresh is the user asking
 	ctx, seq := quotaReading(ctx)
-	if provider == "claude" {
+	if provider == "claude" || ClaudeTeamOf(Provider{ID: provider}) != "" {
 		// Claude Code's /usage, run when the user asks (claudeWindows)
 		markClaudeUsageAsked()
 	}

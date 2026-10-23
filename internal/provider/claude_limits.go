@@ -16,9 +16,9 @@ import (
 // seven_day_overage_included), the share used,
 // 0–1, and when it renews, in Unix seconds (0 when not said).
 type ClaudeLimit struct {
-	Kind     string
-	Used     float64
-	ResetsAt int64
+	Kind     string  `json:"kind"`
+	Used     float64 `json:"used"`
+	ResetsAt int64   `json:"resetsAt"`
 }
 
 // claudeKinds are the windows Claude Code names, as the usage endpoint's
@@ -95,6 +95,7 @@ func NoteClaudeLimits(user string, ls []ClaudeLimit) {
 	e.err = nil                           // a new observation supersedes the failed reading
 	c.m[key] = e
 	c.Unlock()
+	claudeTeamForUser(user).note(user, ls)
 	StaleAllowance("claude", user)
 }
 

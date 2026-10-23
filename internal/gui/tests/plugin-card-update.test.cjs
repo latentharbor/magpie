@@ -60,6 +60,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         page.on("pageerror", (e) => errors.push(e.message));
         await page.route("**/*", server(lang));
         await page.goto("http://magpie.test/?view=plugins");
+        // The startup update badge can choose Installed after this page
+        // opens. This test is about a Discover card, not that scheduling
+        // race: wait for the known update, then select Discover explicitly.
+        await page.locator('#nav button[data-view="plugins"].has-dot').waitFor();
+        await page.locator('#view-plugins .lib-tabs').getByRole("button", { name: lang === "zh" ? "发现" : "Discover", exact: true }).click();
         const card = page.locator('#view-plugins .pm-card[data-pkg="opencode-copilot-auth"]').first();
         const up = card.locator("button.pm-act.pm-up");
         await up.waitFor();

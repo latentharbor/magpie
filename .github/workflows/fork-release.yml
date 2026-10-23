@@ -1,0 +1,204 @@
+name: Distribution release
+
+on:
+  workflow_run:
+    workflows: [Test]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Exact current main SHA (blank uses current main)'
+        type: string
+
+concurrency:
+  group: distribution-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate:
+    if: >-
+      github.repository == 'latentharbor/magpie' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.head_branch == 'main'))
+    runs-on: ubuntu-latest
+    outputs:
+      eligible: ${{ steps.gate.outputs.eligible }}
+      sha: ${{ steps.gate.outputs.sha }}
+      version: ${{ steps.gate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Require the independent release signing key
+        env:
+          FORK_RELEASE_PRIVATE_KEY: ${{ secrets.FORK_RELEASE_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$FORK_RELEASE_PRIVATE_KEY" || { echo '::error::Missing FORK_RELEASE_PRIVATE_KEY; no unauthenticated release will be published.'; exit 1; }
+          python3 -m unittest discover -s build -p 'fork*_test.py'
+          python3 build/fork_release.py check-key
+          python3 build/fork_release.py flags 0.0.0 >/dev/null
+      - name: Gate on green Test at exact main SHA
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SHA: ${{ inputs.sha || github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          SHA="${REQUESTED_SHA:-$(git rev-parse HEAD)}"
+          python3 build/fork_release.py gate "$SHA" >> "$GITHUB_OUTPUT"
+
+  macos:
+    needs: gate
+    if: needs.gate.outputs.eligible == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build magpie.app with explicit distribution trust
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          test "$(go env GOARCH)" = "$ARCH"
+          FLAGS="$(python3 build/fork_release.py flags "$VERSION")"
+          make app VERSION="$VERSION" LDFLAGS="$FLAGS"
+          codesign --force --deep --sign - magpie.app
+          codesign --verify --deep --strict magpie.app
+          codesign -dv magpie.app 2>&1 | grep -Fx 'Signature=adhoc'
+          mkdir -p dist
+          # Independent authentication is not Apple notarization. Do not remove
+          # quarantine attributes, disable Gatekeeper or claim spctl approval.
+          ditto -c -k --keepParent magpie.app "dist/magpie-darwin-$ARCH.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distribution-macos-${{ matrix.arch }}
+          path: dist/magpie-darwin-${{ matrix.arch }}.zip
+          if-no-files-found: error
+
+  linux:
+    needs: gate
+    if: needs.gate.outputs.eligible == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build desktop
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          FLAGS="$(python3 build/fork_release.py flags "$VERSION")"
+          make release-linux VERSION="$VERSION" LDFLAGS="$FLAGS"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distribution-linux-${{ matrix.runner }}
+          path: dist/magpie-linux-*
+          if-no-files-found: error
+
+  binaries:
+    needs: gate
+    if: needs.gate.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build CLI and Windows desktop
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          FLAGS="$(python3 build/fork_release.py flags "$VERSION")"
+          make release-cli release-windows VERSION="$VERSION" LDFLAGS="$FLAGS"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distribution-binaries
+          path: |
+            dist/magpie-cli-*
+            dist/magpie-windows-*.exe
+          if-no-files-found: error
+
+  publish:
+    needs: [gate, macos, linux, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ needs.gate.outputs.sha }}
+      VERSION: ${{ needs.gate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: distribution-*
+          path: dist
+          merge-multiple: true
+      - name: Prepare verified distribution assets
+        env:
+          FORK_RELEASE_PRIVATE_KEY: ${{ secrets.FORK_RELEASE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          python3 build/fork_release.py gate "$SHA" --version "$VERSION"
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=40" > "$RUNNER_TEMP/history.json"
+          python3 build/fork_release.py manifest dist "$VERSION" "$RUNNER_TEMP/history.json"
+          python3 build/fork_release.py sign dist
+          python3 -c 'from build.fork_release import NOTES; print(NOTES)' > "$RUNNER_TEMP/notes.md"
+      - name: Publish only a complete release at current green main
+        run: |
+          set -euo pipefail
+          # Recheck after downloading/building: never publish a superseded SHA.
+          python3 build/fork_release.py gate "$SHA" --version "$VERSION"
+          TAG="v$VERSION"
+          # Creation is intentionally draft-first. Failure leaves no partial Latest feed.
+          if gh release view "$TAG" --json isDraft,targetCommitish > "$RUNNER_TEMP/existing.json" 2>/dev/null; then
+            jq -e --arg sha "$SHA" '.isDraft == true and .targetCommitish == $sha' "$RUNNER_TEMP/existing.json"
+          else
+            gh release create "$TAG" --target "$SHA" --draft --title "magpie $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+          gh release upload "$TAG" dist/magpie-* dist/SHA256SUMS dist/latest.json dist/latest.json.sig dist/notes.json --clobber
+          test "$(gh release view "$TAG" --json assets --jq '.assets | length')" = 17
+          python3 build/fork_release.py gate "$SHA" --version "$VERSION"
+          gh release edit "$TAG" --draft=false --latest

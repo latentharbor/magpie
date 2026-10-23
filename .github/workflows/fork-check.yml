@@ -1,0 +1,19 @@
+name: Distribution checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    if: github.repository == 'latentharbor/magpie'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check release metadata and workflow guards
+        run: python3 -m unittest discover -s build -p 'fork*_test.py'

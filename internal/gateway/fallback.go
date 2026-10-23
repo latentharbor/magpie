@@ -181,7 +181,7 @@ func perKeyBarred(p provider.Provider, model string, from provider.Protocol) (ou
 		var all []candidate
 		// the account the agent is signed in to, unless the user paused
 		// it for the others on (#263)
-		if len(also) == 0 || !p.OwnPaused() {
+		if (len(also) == 0 || !p.OwnPaused()) && p.TeamRouteOn() {
 			all = append(all, candidate{p: p, model: model, rest: p.ID})
 		}
 		for i, q := range also {

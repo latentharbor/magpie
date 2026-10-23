@@ -5884,7 +5884,7 @@ function renderProviders() {
     // accounts list says of each, not a green "signed in"
     const inUse = (p.account?.logins || []).filter((l) => l.on || l.active);
     const lapsed = inUse.length > 0 && inUse.every((l) => l.lapsed);
-    who.append(name, el("div", "sub", (p.account ? t(lapsed ? "{user} is signed out" : "signed in as {user}", { user: p.account.user }) : p.host) + " · " + models));
+    who.append(name, el("div", "sub", (p.team ? claudeTeamSummary(p) : p.account ? t(lapsed ? "{user} is signed out" : "signed in as {user}", { user: p.account.user }) : p.host) + " · " + models));
     const using = p.agents.filter((a) => a.current);
     const uses = el("div", "uses");
     for (const a of using) {
@@ -5952,7 +5952,7 @@ function renderProviders() {
   keptIcons = null;
   markUpstream();
   view.scrollTop = top; // first: a closing dialog folds into its row where it is
-  if (dialog) openModal(dialog); else closeModal();
+  if (dialog) openModal(dialog); else if (!$("#modal .claude-team")) closeModal();
 }
 
 // providerHandle is an on row's logo, which is also its handle (#499):
@@ -7309,10 +7309,11 @@ function renderAdd() {
       for (const p of partners) p.new = false;
       markNewPartners();
     }
-    if (subs.length || inPlugins) {
+    if (subs.length || inPlugins || "claude team".includes(f)) {
       any = true;
       const grid = section("Subscriptions", "sign in, no key");
       for (const x of subs) grid.append(subTile(x));
+      if (!f || "claude team".includes(f)) grid.append(claudeTeamTile());
       if (!f || inPlugins) grid.append(morePluginsTile(f));
       const w = subs.find((x) => signing?.agent === x.agent);
       if (w) tiles.append(renderSigning(w));
@@ -9252,8 +9253,8 @@ function drawEditor(p, presetID) {
     if (subOf(a.agent)) {
       // no Claude Code on Windows: the gateway runs the one in WSL
       const via = a.wsl ? t("Runs through WSL · {distro}: Claude Code there signs in and answers; Windows has none of its own.", { distro: a.wsl }) + " " : "";
-      ed.append(...field(t("Accounts"), renderAccounts(a, p), via + (p.routing ? t("Tick every account to use; Routing says how requests spread over them.") : subOf(a.agent).single ? t("{agent} keeps one account; the gateway runs it for every request. Signing in to another replaces it.", { agent: a.agentName }) : subOf(a.agent).own && (a.logins || []).some((l) => l.own) ? t("The gateway uses the first. Tick more and it moves on to the next when the one before it is out of quota. {agent} itself stays signed in as it is.", { agent: a.agentName && a.agentName !== a.agent ? a.agentName : p.name }) : subOf(a.agent).own || subOf(a.agent).plugin ? t("The gateway uses the first. Tick more and it moves on to the next when the one before it is out of quota.") : t("{agent} signs in to the first. Tick more and the gateway moves on to the next when the one before it is out of quota. Sessions already running keep theirs until restarted.", { agent: a.agentName }))));
-      if ((a.logins || []).filter((l) => l.active || l.on).length > 1) ed.append(...renderRouting(p));
+      ed.append(...field(t("Accounts"), renderAccounts(a, p), p.teamOrganization ? t("Premium accounts are on; standby accounts stay off. Existing replies finish before a seat moves.") : via + (p.routing ? t("Tick every account to use; Routing says how requests spread over them.") : subOf(a.agent).single ? t("{agent} keeps one account; the gateway runs it for every request. Signing in to another replaces it.", { agent: a.agentName }) : subOf(a.agent).own && (a.logins || []).some((l) => l.own) ? t("The gateway uses the first. Tick more and it moves on to the next when the one before it is out of quota. {agent} itself stays signed in as it is.", { agent: a.agentName && a.agentName !== a.agent ? a.agentName : p.name }) : subOf(a.agent).own || subOf(a.agent).plugin ? t("The gateway uses the first. Tick more and it moves on to the next when the one before it is out of quota.") : t("{agent} signs in to the first. Tick more and the gateway moves on to the next when the one before it is out of quota. Sessions already running keep theirs until restarted.", { agent: a.agentName }))));
+      if (p.teamOrganization || (a.logins || []).filter((l) => l.active || l.on).length > 1) ed.append(...renderRouting(p));
       if (p.move) ed.append(...renderMove(p));
     } else {
       const acct = el("div", "acct");
@@ -11790,7 +11791,7 @@ function renderRouting(p) {
   // #209, #408)
   const a = p.account;
   // — at 98%, In order once used up (#530), never when kept on the first (#524)
-  const own = (routing) => !a || (a.agent !== "codex" && a.agent !== "claude") ? ""
+  const own = (routing) => p.teamOrganization || !a || (a.agent !== "codex" && a.agent !== "claude") ? ""
     : " " + (keptLogin(p)
       ? t("Routing picks the account for each request through magpie, in the accounts' order; {agent} on its own stays signed in to {user}, whatever it has left.", { agent: a.agentName, user: keptLogin(p) })
       : p.keepLogin
@@ -11807,7 +11808,7 @@ function renderRouting(p) {
   const rHint = el("div", "hint"), rUnsaved = unsaved();
   const drawRouting = () => {
     const cur = routingsOf(p).find(([id]) => id === routingNow()) || ROUTINGS[0];
-    rHint.textContent = (ROUTINGS.includes(cur) ? t(cur[2]) : cur[2]) + own(cur[0]);
+    rHint.textContent = (p.teamOrganization && claudeTeamRoutingHint(cur[0]) || (ROUTINGS.includes(cur) ? t(cur[2]) : cur[2])) + own(cur[0]);
     rUnsaved.hidden = routingNow() === (p.routing || "");
     // in turn and by weight go round already
     kLabel.hidden = kWrap.hidden = routingNow() === "rotate" || routingNow() === "weight";
@@ -12890,6 +12891,7 @@ function loginsInOrder(a, p) {
 }
 
 function renderAccounts(a, p) {
+  if (p?.teamOrganization) return renderTeamAccounts(a, p);
   const sub = subOf(a.agent);
   const list = el("div", "accts");
   const ls = loginsInOrder(a, p);

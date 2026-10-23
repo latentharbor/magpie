@@ -81,13 +81,21 @@ func allows(who access.Identity, ids ...string) bool {
 
 // modelAllowed says the key may use provider p's model.
 func modelAllowed(who access.Identity, p provider.Provider, model string) bool {
-	return allows(who, p.ID+"/"+model)
+	if allows(who, p.ID+"/"+model) {
+		return true
+	}
+	// Only the migrated original organization owns the old Claude namespace;
+	// adding another organization must not inherit these model grants.
+	if provider.ClaudeTeamOf(p) != "" && slices.Contains(p.Was, "claude") {
+		return allows(who, "claude/"+model)
+	}
+	return false
 }
 
 // memberAllowed says the key may use a routing group's member: the model,
 // or a group it is reached through that the key names.
 func memberAllowed(who access.Identity, m provider.Member) bool {
-	return allows(who, append([]string{m.Provider.ID + "/" + m.Model}, m.Path...)...)
+	return modelAllowed(who, m.Provider, m.Model) || len(m.Path) > 0 && allows(who, m.Path...)
 }
 
 // groupNamed says the key names the routing group g itself.
@@ -286,7 +294,11 @@ func accountAllowed(who access.Identity, c candidate) bool {
 	if len(who.Accounts) == 0 {
 		return true
 	}
-	return who.AllowsAccount(c.p.ID, c.p.AccountID())
+	ref := c.p.AccountID()
+	if provider.ClaudeTeamOf(c.p) != "" && slices.Contains(c.p.Was, "claude") && !who.AllowsAccount("claude", ref) {
+		return false // renaming the provider must not drop its old account scope
+	}
+	return who.AllowsAccount(c.p.ID, ref)
 }
 
 // allowedKey is p sent on the first of its keys in use the calling key

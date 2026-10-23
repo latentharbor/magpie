@@ -1,12 +1,15 @@
 // Package update keeps magpie current. Builds are published as GitHub
-// releases of yetone/magpie-releases; usemagpie.ai/api/latest describes the
+// releases of latentharbor/magpie; latest.json describes the
 // newest one: its version, notes, and every file with its SHA-256.
 //
 // The macOS app replaces its own bundle: the new zip is downloaded, checked
 // against its hash, unpacked, and accepted only if it is signed by the same
-// team as the app already installed. A bare binary (the terminal build,
+// team as the app already installed, or an explicitly opted-in distribution
+// authenticates valid ad-hoc code signatures with its build-pinned release
+// key. A bare binary (the terminal build,
 // and the desktop app on Windows and Linux) replaces itself the same way,
-// minus the signature.
+// minus the Apple signature; opted-in distribution binaries still require
+// the authenticated manifest.
 package update
 
 import (
@@ -36,8 +39,12 @@ import (
 	"github.com/yetone/magpie/internal/source"
 )
 
-// Site is magpie's home; its /api/latest is the update feed.
+// Site is magpie's home. Release downloads belong to this distribution,
+// independently of the public site's upstream downloads.
 const Site = "https://usemagpie.ai"
+
+const ReleaseRepository = "latentharbor/magpie"
+const releaseHome = "https://github.com/" + ReleaseRepository + "/releases"
 
 // Feed is where the newest release is described. MAGPIE_UPDATE_FEED points
 // it elsewhere, for testing an update against a local server.
@@ -45,22 +52,27 @@ func Feed() string {
 	if f := os.Getenv("MAGPIE_UPDATE_FEED"); f != "" {
 		return f
 	}
-	return Site + "/api/latest"
+	return releaseHome + "/latest/download/latest.json"
 }
 
 // Release is one published version.
 type Release struct {
-	Version string           `json:"version"` // "0.2.0", no v
-	Notes   string           `json:"notes"`   // markdown
-	URL     string           `json:"url"`     // the release page
-	Assets  map[string]Asset `json:"assets"`  // by file name
+	Schema     int              `json:"schema,omitempty"`
+	Repository string           `json:"repository,omitempty"`
+	Version    string           `json:"version"` // "0.2.0", no v
+	Notes      string           `json:"notes"`   // markdown
+	URL        string           `json:"url"`     // the release page
+	Assets     map[string]Asset `json:"assets"`  // by file name
+	proof      *distributionProof
 }
 
 // Asset is one downloadable file of a release.
 type Asset struct {
-	URL    string `json:"url"`
-	Size   int64  `json:"size"`
-	SHA256 string `json:"sha256"`
+	Platform string `json:"platform,omitempty"`
+	URL      string `json:"url"`
+	Size     int64  `json:"size"`
+	SHA256   string `json:"sha256"`
+	signed   bool
 }
 
 // client asks the feed and downloads a release through the proxy the rest
@@ -81,6 +93,9 @@ func Latest(ctx context.Context) (*Release, error) { return LatestIn(ctx, "") }
 // LatestIn asks the feed for the newest release, its notes in lang (see
 // InLang): the app's language, which What's new follows.
 func LatestIn(ctx context.Context, lang string) (*Release, error) {
+	if distributionTrust != "" || Feed() == releaseHome+"/latest/download/latest.json" {
+		return latestDistribution(ctx, lang)
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", withLang(Feed(), lang), nil)
 	if err != nil {
 		return nil, err
@@ -257,10 +272,14 @@ func Writable(dir string) bool {
 // Stage downloads the app in rel and unpacks it next to the installed
 // bundle, ready for Install. It returns the unpacked app.
 func Stage(ctx context.Context, rel *Release, bundle string) (string, error) {
+	if err := mayStageDistribution(rel); err != nil {
+		return "", err
+	}
 	a, ok := rel.Assets[AppAsset()]
 	if !ok {
 		return "", fmt.Errorf("release %s has no %s", rel.Version, AppAsset())
 	}
+	a.signed = trustedDistribution(rel)
 	dir := stageDir(filepath.Dir(bundle))
 	os.RemoveAll(dir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -272,13 +291,26 @@ func Stage(ctx context.Context, rel *Release, bundle string) (string, error) {
 		return "", err
 	}
 	out := filepath.Join(dir, "app")
-	if b, err := proc.CommandContext(ctx, "ditto", "-x", "-k", zip, out).CombinedOutput(); err != nil {
-		os.RemoveAll(dir)
-		return "", fmt.Errorf("unzip: %v: %s", err, b)
+	if a.signed {
+		if err := unpackDistribution(zip, out); err != nil {
+			os.RemoveAll(dir)
+			return "", fmt.Errorf("distribution unzip: %w", err)
+		}
+	} else {
+		if b, err := proc.CommandContext(ctx, "ditto", "-x", "-k", zip, out).CombinedOutput(); err != nil {
+			os.RemoveAll(dir)
+			return "", fmt.Errorf("unzip: %v: %s", err, b)
+		}
 	}
 	os.Remove(zip)
 	app := filepath.Join(out, "magpie.app")
-	if err := sameSigner(ctx, bundle, app); err != nil {
+	if a.signed {
+		if err := distributionBundle(ctx, app, rel.Version); err != nil {
+			os.RemoveAll(dir)
+			return "", err
+		}
+	}
+	if err := stagedSigner(ctx, bundle, app, rel); err != nil {
 		os.RemoveAll(dir)
 		return "", err
 	}
@@ -292,6 +324,9 @@ func sameSigner(ctx context.Context, bundle, app string) error {
 		return fmt.Errorf("the downloaded app's signature is broken: %s", strings.TrimSpace(string(b)))
 	}
 	want, got := team(ctx, bundle), team(ctx, app)
+	if want == "" || got == "" {
+		return errors.New("automatic app updates require a Developer ID signature on both the installed and downloaded app; install a signed release manually first")
+	}
 	if want != got {
 		return fmt.Errorf("the downloaded app is signed by %q, not %q", got, want)
 	}
@@ -422,10 +457,14 @@ func ReplaceBinary(ctx context.Context, rel *Release) error {
 // StageBinary downloads the release's build for this binary next to it (or
 // to the cache, where magpie may not write there), ready for InstallBinary.
 func StageBinary(ctx context.Context, rel *Release) (string, error) {
+	if err := mayStageDistribution(rel); err != nil {
+		return "", err
+	}
 	a, ok := rel.Assets[BinaryAsset()]
 	if !ok {
 		return "", fmt.Errorf("release %s has no %s", rel.Version, BinaryAsset())
 	}
+	a.signed = trustedDistribution(rel)
 	exe, err := Executable()
 	if err != nil {
 		return "", err
@@ -792,11 +831,24 @@ func fetch(ctx context.Context, a Asset, path string) error {
 	// through a mirror when one is given (mirror.go): the hash checked
 	// below is still the feed's
 	u := mirrored(mirrorOf(ctx), a.URL)
+	if a.signed {
+		// Authenticated distribution downloads use their repository directly.
+		// A configured transport proxy still applies; arbitrary mirrors do not.
+		u = a.URL
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return err
 	}
-	res, err := source.Do(client, req)
+	if a.signed && !distributionURL(req.URL, false) {
+		return errors.New("distribution asset does not belong to its pinned repository")
+	}
+	var res *http.Response
+	if a.signed {
+		res, err = distributionClient().Do(req)
+	} else {
+		res, err = source.Do(client, req)
+	}
 	if err != nil {
 		if u != a.URL {
 			return &MirrorError{Mirror: strings.TrimSuffix(u, a.URL), Err: err}
@@ -824,14 +876,21 @@ func fetch(ctx context.Context, a Asset, path string) error {
 		body = &counter{r: res.Body, total: max(total, 0), report: report}
 		report(0, max(total, 0))
 	}
-	_, err = io.Copy(io.MultiWriter(f, h), body)
+	var written int64
+	if a.signed {
+		body = io.LimitReader(body, a.Size+1)
+	}
+	written, err = io.Copy(io.MultiWriter(f, h), body)
 	if cerr := f.Close(); err == nil {
 		err = cerr
+	}
+	if err == nil && a.signed && written != a.Size {
+		err = errors.New("the download does not match its signed size")
 	}
 	if err == nil && !strings.EqualFold(hex.EncodeToString(h.Sum(nil)), a.SHA256) {
 		err = fmt.Errorf("%s does not match its checksum", filepath.Base(path))
 		if u != a.URL {
-			err = fmt.Errorf("%s from the mirror %s does not match its checksum from %s; not installed", filepath.Base(path), strings.TrimSuffix(u, a.URL), Site)
+			err = fmt.Errorf("%s from the mirror %s does not match its checksum from %s; not installed", filepath.Base(path), strings.TrimSuffix(u, a.URL), Feed())
 		}
 	}
 	if err != nil && u != a.URL && !errors.As(err, new(*MirrorError)) {

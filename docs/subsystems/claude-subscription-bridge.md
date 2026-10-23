@@ -7,6 +7,13 @@ saved session, that had its last turn, and what a run leaves on disk. Tool
 calls within a turn (`match`, `continueWith`) are only touched on where they
 meet it.
 
+This custom build has an optional [native Team controller](team-seats.md).
+Seat transfers happen in the background, not before each request. The bridge
+only counts active managed requests for draining and forwards native allowance
+observations. An uncommitted refusal can continue on a newly enabled account
+after a bounded handoff; visible output is never replayed. Claude Desktop is
+not exited, read or modified by the controller.
+
 ## Which Claude Code runs
 
 `claudeBinary` (and the sign-in's `claudeExecutable`) take

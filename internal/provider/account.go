@@ -840,8 +840,27 @@ func Accounts() []Provider {
 		cfg = filepath.Join(home, ".config")
 	}
 	var out []Provider
-	if p, ok := claudeAccount(); ok {
-		out = append(out, p)
+	p, haveClaude := claudeAccount()
+	if !haveClaude {
+		// Configured subscriptions remain editable even when every member is off.
+		p = claudeProvider(&Account{Agent: "claude"})
+	}
+	out = append(out, claudeTeamProviders(p)...)
+	if haveClaude {
+		if !claudeLoginInTeam(p.Account.User) {
+			out = append(out, p)
+		} else {
+			// A managed account belongs to its organization subscription only.
+			for _, l := range readLogins() {
+				if l.Agent == "claude" && !claudeLoginInTeam(l.User) {
+					q := p
+					q.Account = claudeTeamAccount(p.Account, l)
+					q.Account.standIn = true
+					out = append(out, q)
+					break
+				}
+			}
+		}
 	}
 	if p, ok := codexAccount(home); ok {
 		out = append(out, p)

@@ -30,10 +30,12 @@ var claudeCLIUsage struct {
 
 // UsageClaudeVia sets how Claude Code's /usage runs. It returns once no
 // run is still going through the one it replaces.
-func UsageClaudeVia(f func(ctx context.Context, configDir string) (string, error)) {
+func UsageClaudeVia(f func(ctx context.Context, configDir string) (string, error)) func(context.Context, string) (string, error) {
 	claudeCLIUsage.Lock()
+	old := claudeCLIUsage.f
 	claudeCLIUsage.f = f
 	claudeCLIUsage.Unlock()
+	return old
 }
 
 // runClaudeUsage is what Claude Code's /usage printed, through

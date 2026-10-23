@@ -663,7 +663,17 @@ func allProviders() []Provider {
 		if _, taken := find(out, a.ID); taken || picks[a.ID].Hidden {
 			continue
 		}
-		a = withPicks(a, picks[a.ID])
+		pick, saved := picks[a.ID]
+		if ClaudeTeamOf(a) != "" && !saved {
+			// Keep the original subscription's switches/models/routing on upgrade.
+			if slices.Contains(a.Was, "claude") {
+				pick = picks["claude"]
+			}
+			if pick.ID == "" {
+				pick.Routing = a.Routing
+			}
+		}
+		a = withPicks(a, pick)
 		if a.ID == "cursor" { // picked before its efforts were one model
 			a.Models = cursorPicks(a.Models)
 		}

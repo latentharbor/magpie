@@ -20,6 +20,11 @@ const (
 )
 
 func TestCoreScriptBudget(t *testing.T) {
+	// This custom build intentionally adds native Claude Team controls to
+	// Providers, not a separate plugin page. Allow only its small entry
+	// hooks and 13 KB for multi-organization forms and native account quota rows;
+	// keep the upstream budgets above unchanged.
+	appBudget, coreBudget := appScriptBudget+512, coreScriptBudget+13_000
 	page, err := os.ReadFile("assets/index.html")
 	if err != nil {
 		t.Fatal(err)
@@ -37,8 +42,8 @@ func TestCoreScriptBudget(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if name == "app.js" && len(b) > appScriptBudget {
-			t.Errorf("app.js is %d bytes, over its budget of %d: put the page's code in its plugin, or raise the budget and say why", len(b), appScriptBudget)
+		if name == "app.js" && len(b) > appBudget {
+			t.Errorf("app.js is %d bytes, over its budget of %d: put the page's code in its plugin, or raise the budget and say why", len(b), appBudget)
 		}
 		total += len(b)
 		n++
@@ -46,7 +51,7 @@ func TestCoreScriptBudget(t *testing.T) {
 	if n < 5 {
 		t.Fatalf("found only %d core scripts in index.html", n)
 	}
-	if total > coreScriptBudget {
-		t.Errorf("the core's scripts are %d bytes, over their budget of %d: put the page's code in its plugin, or raise the budget and say why", total, coreScriptBudget)
+	if total > coreBudget {
+		t.Errorf("the core's scripts are %d bytes, over their budget of %d: put the page's code in its plugin, or raise the budget and say why", total, coreBudget)
 	}
 }
