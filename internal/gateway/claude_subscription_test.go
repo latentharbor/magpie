@@ -343,6 +343,40 @@ func TestClaudeLimits(t *testing.T) {
 	}
 }
 
+func TestClaudeRejectedLimitOverridesLaggingUtilization(t *testing.T) {
+	for _, raw := range []string{
+		`{"status":"rejected","rateLimitType":"five_hour","utilization":0.97,"resetsAt":7}`,
+		`{"status":"rejected","rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.97,"resetsAt":7}}}`,
+	} {
+		if got := claudeLimits(json.RawMessage(raw)); !slices.Equal(got, []provider.ClaudeLimit{{Kind: "five_hour", Used: 1, ResetsAt: 7}}) {
+			t.Fatalf("rejection ignored: %+v", got)
+		}
+	}
+}
+
+func TestClaudeRefusalLimitIsNarrow(t *testing.T) {
+	now := time.Unix(100, 0)
+	kept := []provider.ClaudeLimit{{Kind: "five_hour", Used: 0.97, ResetsAt: 200}, {Kind: "seven_day", Used: 0.6, ResetsAt: 300}}
+	for _, tc := range []struct{ kind, text, window string }{
+		{"rate_limit", "You've hit your session limit · resets 3:40am (Australia/Perth)", "five_hour"},
+		{"rate_limit", "You've hit your weekly limit · resets Friday", "seven_day"},
+		{"rate_limit", "Too many requests per minute", ""},
+		{"rate_limit", "You've hit your Opus limit · resets Friday", ""},
+		{"authentication_failed", "You've hit your session limit · resets Friday", ""},
+	} {
+		got, ok := claudeRefusalLimit(tc.kind, tc.text, kept, now)
+		if ok != (tc.window != "") || got.Kind != tc.window || ok && (got.Used != 1 || got.ResetsAt <= now.Unix()) {
+			t.Fatalf("%s/%s: %+v %v", tc.kind, tc.text, got, ok)
+		}
+	}
+	for _, prior := range [][]provider.ClaudeLimit{nil, {{Kind: "five_hour", ResetsAt: 99}}} {
+		got, ok := claudeRefusalLimit("rate_limit", "You've hit your session limit · resets tomorrow", prior, now)
+		if !ok || got.ResetsAt != 0 {
+			t.Fatal("invented reset for an unknown or expired window")
+		}
+	}
+}
+
 // A conversation switched to another model and back (KevinXC on Discord)
 // has a new run carry it on: the one left waiting before the switch is
 // let go then, not kept idleLongest for a turn that can't come back to it —

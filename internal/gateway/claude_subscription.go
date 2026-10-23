@@ -2370,6 +2370,12 @@ func (r *subscriptionRun) readOutput(rd io.Reader) {
 					!(own && provider.ClaudeCodeMovedOff(user)) {
 					provider.NoteClaudeSignInFailure(user, r.loginVersion, text)
 				}
+				if user, own := ownerAccount(r.owner); user != "" && provider.ClaudeTeamManaged(user) &&
+					!(own && provider.ClaudeCodeMovedOff(user)) {
+					if limit, ok := claudeRefusalLimit(errKind, text, provider.KeptClaudeLimits(user), time.Now()); ok {
+						provider.NoteClaudeLimits(user, []provider.ClaudeLimit{limit})
+					}
+				}
 				r.emit(Event{Kind: KError, Text: text, Status: envelope.APIErrorStatus, Code: errKind, RequestID: reqID})
 				r.endSegment()
 			case cut:
@@ -2582,17 +2588,47 @@ func claudeLimits(raw json.RawMessage) []provider.ClaudeLimit {
 	}
 	var out []provider.ClaudeLimit
 	for kind, w := range info.UnifiedWindows {
+		if info.Status == "rejected" && kind == info.RateLimitType {
+			w.Utilization = 1 // explicit refusal wins over a lagging percentage
+		}
 		out = append(out, provider.ClaudeLimit{Kind: kind, Used: w.Utilization, ResetsAt: w.ResetsAt})
 	}
 	if _, told := info.UnifiedWindows[info.RateLimitType]; !told && info.RateLimitType != "" {
 		switch {
-		case info.Utilization != nil:
-			out = append(out, provider.ClaudeLimit{Kind: info.RateLimitType, Used: *info.Utilization, ResetsAt: info.ResetsAt})
 		case info.Status == "rejected":
 			out = append(out, provider.ClaudeLimit{Kind: info.RateLimitType, Used: 1, ResetsAt: info.ResetsAt})
+		case info.Utilization != nil:
+			out = append(out, provider.ClaudeLimit{Kind: info.RateLimitType, Used: *info.Utilization, ResetsAt: info.ResetsAt})
 		}
 	}
 	return out
+}
+
+// A native quota refusal can arrive without another rate_limit_event. Only
+// explicit session/week refusals of a managed account justify a handoff;
+// generic 429s, per-minute limits and model-specific limits do not. Never
+// guess a reset from the human-readable local clock in the error message.
+func claudeRefusalLimit(kind, text string, kept []provider.ClaudeLimit, now time.Time) (provider.ClaudeLimit, bool) {
+	if kind != "rate_limit" {
+		return provider.ClaudeLimit{}, false
+	}
+	var window string
+	switch {
+	case strings.HasPrefix(text, "You've hit your session limit · resets "):
+		window = "five_hour"
+	case strings.HasPrefix(text, "You've hit your weekly limit · resets "):
+		window = "seven_day"
+	default:
+		return provider.ClaudeLimit{}, false
+	}
+	limit := provider.ClaudeLimit{Kind: window, Used: 1}
+	for _, old := range kept {
+		if old.Kind == window && old.ResetsAt > now.Unix() {
+			limit.ResetsAt = old.ResetsAt
+			break
+		}
+	}
+	return limit, true
 }
 
 // carryUpdate keeps this message's known 1h writes when a partial split

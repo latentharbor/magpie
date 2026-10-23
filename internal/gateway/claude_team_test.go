@@ -166,17 +166,26 @@ func nativeTeamFixture(t *testing.T) *nativeTeamTransport {
 }
 
 func TestClaudeTeamNativeLimitRetainsRequest(t *testing.T) {
-	for _, window := range []string{"five_hour", "seven_day"} {
+	for _, window := range []string{"five_hour", "seven_day", "session-refusal", "weekly-refusal"} {
 		t.Run(window, func(t *testing.T) {
 			f := nativeTeamFixture(t)
+			refusal := `echo '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"` + window + `","utilization":0.97,"resetsAt":` + strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10) + `}}'
+echo '{"type":"result","is_error":true,"result":"You have hit your ` + window + ` usage limit"}'`
+			if window == "session-refusal" || window == "weekly-refusal" {
+				name := "session"
+				if window == "weekly-refusal" {
+					name = "weekly"
+				}
+				refusal = `echo '{"type":"assistant","error":"rate_limit"}'
+echo "{\"type\":\"result\",\"is_error\":true,\"result\":\"You've hit your ` + name + ` limit · resets 3:40am (Australia/Perth)\"}"`
+			}
 			bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
 			testenv.Program(t, filepath.Join(bin, "claude"), `#!/bin/sh
 case "$1" in auth) exit 1;; esac
 while read -r line; do
   creds="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
   if grep -q tok-a "$creds"; then
-    echo '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"`+window+`","utilization":1,"resetsAt":`+strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)+`}}'
-    echo '{"type":"result","is_error":true,"result":"You have hit your `+window+` usage limit"}'
+    `+refusal+`
   else
     case "$line" in *retain-this-original-request*) ;; *) echo '{"type":"result","is_error":true,"result":"original request was lost"}'; continue;; esac
     echo '{"type":"stream_event","event":{"type":"message_start","message":{"id":"m","model":"claude-sonnet-5","usage":{"input_tokens":1}}}}'

@@ -622,6 +622,16 @@ claude-hud shows. One that signs in to magpie with magpie's key
 headers only for a claude.ai subscriber. A reply another provider answered
 carries none.
 
+An explicit `rejected` rate-limit event makes its named window unavailable,
+even if its utilization is still below 1. Other windows retain their reported
+utilization. For a managed Team account, a typed `rate_limit` result with
+Claude Code's explicit session/weekly refusal also records that window as
+unavailable when no new event arrives. It retains only a known future reset;
+human-readable local reset times are not parsed or guessed. Generic 429s,
+model-specific refusals and sign-in failures do not infer global exhaustion.
+This feeds the existing background handoff and uncommitted-request replay;
+it neither changes the requested effort nor replays visible output.
+
 ## Verification
 
 ```sh
