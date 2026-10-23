@@ -11,7 +11,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { openPart } = require("./reader.cjs");
+const { openPart, reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 
@@ -99,8 +99,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           assert.equal(await opts.nth(0).evaluate((b) => b.classList.contains("on")), true, "Automatic by default");
 
           // in a narrow window the row fits, and the page doesn't scroll sideways
-          await row.scrollIntoViewIfNeeded();
-          await page.waitForTimeout(300);
+          // The app restores unrequested programmatic scrolls. Bring the
+          // actual button clear of the fixed footer with the reader's wheel.
+          await reach(page, opts.nth(1));
           const fit = await row.evaluate((r) => {
             const b = r.getBoundingClientRect(), segs = r.querySelector("#quotaReadsSegs").getBoundingClientRect();
             return { right: b.right, segsRight: segs.right, vw: document.documentElement.clientWidth,
@@ -123,6 +124,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           assert.equal(await page.locator("#quotaReadsSegs .opt").nth(1).evaluate((b) => b.classList.contains("on")), true,
             "a save of another setting put Automatic back");
 
+          await reach(page, page.locator("#quotaReadsSegs .opt").nth(0));
           await page.locator("#quotaReadsSegs .opt").nth(0).click();
           for (let i = 0; i < 50 && posts.length < 2; i++) await page.waitForTimeout(50);
           assert.deepEqual(posts.at(-1), { reads: "" });
