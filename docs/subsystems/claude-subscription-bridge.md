@@ -108,6 +108,20 @@ A turn that goes on in the run that had the last one is told only the
 messages since (`renderClaudeTurn`), and Anthropic reads the rest from the
 cache.
 
+Auto-mode safety classifiers are one-off requests, deliberately not kept as
+idle conversations. They carry a growing `<transcript>` inside a user
+message, so the message-count history chunks do not help them. For these
+requests only, `cacheClaudeClassifier` splits rendered message text at stable
+64 KiB UTF-8 boundaries and moves the bridge's single 1h mark to the last
+complete chunk. The remaining tail, including the current action and closing
+tags, is sent whole and left to Claude Code's own tail mark. Later checks can
+reuse an unchanged prefix within the cache lookback instead of rewriting the
+whole transcript. No text is removed or rewritten, and images retain their
+position and contents. Short classifiers, ordinary conversations, requests
+with tools, and explicit client-placed cache marks are unchanged. Cache reuse
+still depends on the same account, model, prefix and an unexpired cache; this
+does not guarantee a particular subscription allowance saving.
+
 ## Client-placed cache marks (#1717)
 
 A client can send `X-Magpie-Cache-Marks: client` on a `/v1/messages`
@@ -635,6 +649,7 @@ it neither changes the requested effort nor replays visible output.
 ## Verification
 
 ```sh
+go test -tags nogui ./internal/gateway/ -run '^TestClaudeClassifierCache' -count=1
 go test -tags nogui ./internal/gateway/ -run '^TestClaudeClientCache' -count=1
 go test -tags nogui ./internal/gateway/ -run '^TestClaudeLeanPrompt' -count=1
 go test -tags nogui ./internal/claudecode/ -count=1
