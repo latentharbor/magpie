@@ -147,6 +147,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const TAB = engine === "webkit" ? "Alt+Tab" : "Tab";
         ed = await openEditor(page, w);
         row = ed.locator(".rt-rule").first();
+        // The German rule wraps its actions onto another line. Focusing
+        // its offscreen model with preventScroll, then Tab, queued a view
+        // scroll that arrived after Enter opened the menu and closed it.
+        // Start with the rule in sight, as for the mouse path above.
+        await reach(page, row.locator(".rt-rmore"));
         await row.locator(".rt-model").focus({ preventScroll: true });
         for (let i = 0; i < 6 && !(await row.locator(".rt-rmore").evaluate((b) => b === document.activeElement)); i++) await page.keyboard.press(TAB);
         assert(await row.locator(".rt-rmore").evaluate((b) => b === document.activeElement), "Tab reaches the rule's ⋯");
