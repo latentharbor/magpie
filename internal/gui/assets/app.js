@@ -23917,7 +23917,15 @@ const onScreen = (n, v) => n.getBoundingClientRect().top - v.getBoundingClientRe
 const MOVES = /^(transform|translate|rotate|scale|top|bottom|left|right|inset|margin|offset-|position)/;
 const moving = (a) => a.playState === "running" && (a.transitionProperty ? MOVES.test(a.transitionProperty)
   : !a.effect?.getKeyframes || a.effect.getKeyframes().some((k) => Object.keys(k).some((p) => MOVES.test(p.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase())))));
-const atRest = (n) => n.isConnected && n.offsetParent && !n.getAnimations().some(moving);
+const atRest = (n) => {
+  if (!n.isConnected || !n.offsetParent) return false;
+  // A card without its own animation can still ride an entering parent.
+  // Its current coordinates are not a stationary place to hold later.
+  for (let p = n; p && !p.classList.contains("view"); p = p.parentElement) {
+    if (p.getAnimations().some(moving)) return false;
+  }
+  return true;
+};
 // The room is an empty block last in the view (padding at its foot would
 // count in its height only a frame later), put back when a redraw of the
 // view takes it out.
@@ -24068,7 +24076,7 @@ addEventListener("click", (e) => {
   const chain = [];
   const from = at.closest?.("[data-unrolls]")?.parentElement || at;
   for (let n = from; n && n !== v; n = n.parentElement) {
-    for (const m of [n, n.previousElementSibling, n.nextElementSibling]) if (m instanceof HTMLElement && m.offsetParent) chain.push([m, onScreen(m, v), pathIn(v, m)]);
+    for (const m of [n, n.previousElementSibling, n.nextElementSibling]) if (m instanceof HTMLElement && atRest(m)) chain.push([m, onScreen(m, v), pathIn(v, m)]);
   }
   held = chain.length ? { v, chain, until: performance.now() + 4000, top: v.scrollTop < 1 } : null;
   heldSizes.disconnect();

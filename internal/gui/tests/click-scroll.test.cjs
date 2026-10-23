@@ -185,6 +185,32 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       }
     });
 
+    await t.test("a click during a parent's entrance does not hold its moving coordinates", async () => {
+      await reset();
+      await page.locator(view).evaluate((v) => {
+        const spacer = document.createElement("div");
+        spacer.style.cssText = "flex:none;height:1600px";
+        const part = document.createElement("div");
+        part.id = "entering"; part.style.flex = "none";
+        const button = document.createElement("button");
+        button.id = "entering-button"; button.textContent = "Open";
+        part.append(button);
+        v.append(spacer, part, Object.assign(document.createElement("div"), { style: "flex:none;height:600px" }));
+      });
+      await scrollTo("#entering-button");
+      await page.locator("#entering").evaluate((p) => {
+        // The child has no animation of its own. Its parent's long entrance
+        // remains in progress through the click; finish it explicitly below.
+        p.animate([{ transform: "translateY(8px)" }, { transform: "none" }], { duration: 60000 });
+      });
+      const was = await page.locator(view).evaluate((v) => v.scrollTop);
+      const b = await page.locator("#entering-button").boundingBox();
+      await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+      await page.locator("#entering").evaluate((p) => p.getAnimations().forEach((a) => a.finish()));
+      await settle(page);
+      assert.equal(await page.locator(view).evaluate((v) => v.scrollTop), was, "an entrance is not a request to scroll");
+    });
+
     // The browser tells of a scroll at the next frame. A scroll by code made
     // just before a click, and heard of only after it, was kept as where the
     // reader was (#1554: Playwright's click scrolled the skill picker's chip
