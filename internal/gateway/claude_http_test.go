@@ -240,6 +240,9 @@ func TestClaudeHTTPTeamLimitRetainsRequest(t *testing.T) {
 	if writes != 2 {
 		t.Fatalf("not one handoff: writes=%d", writes)
 	}
+	if d := lastUsage(t).ClaudeHTTP; d == nil || d.CacheSource != "generated" || len(d.Prefixes) == 0 {
+		t.Fatalf("HTTP handoff lost its ledger diagnostic: %+v", d)
+	}
 }
 
 func TestClaudeHTTPCancelDoesNotReplay(t *testing.T) {

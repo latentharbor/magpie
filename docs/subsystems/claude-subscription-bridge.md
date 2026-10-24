@@ -47,6 +47,29 @@ use the existing Anthropic translators. There is no hidden CLI tool harness or
 CLI session resume in this path; the caller must send its conversation history.
 The CLI-only lean-prompt preference is retained but hidden in HTTP mode.
 
+When HTTP replays older CLI-backed history, only assistant `thinking` blocks
+whose signature is missing, null or the empty string are removed from the
+outgoing copy (`claudeHTTPUnsignedHistory`). A message emptied by that removal
+is omitted. Signed thinking (including empty text), redacted thinking, calls,
+results and other message data remain unchanged. Session files are not edited;
+malformed non-string or nonempty invalid signatures still fail explicitly.
+Removing unsigned history does not promise to repair later prefix-bound
+signatures; no signature is forged and no generic retry hides such a refusal.
+
+HTTP rows in the local `usage.jsonl` carry `claude_http` diagnostics: native
+versus generated path, allow-listed request class (unspecified/other when not
+known), caller/generated/no cache policy, unsigned blocks removed, and cache
+positions with 5m/1h/unknown TTL. System, tools, configuration and cumulative
+cache-prefix fingerprints use a random per-process HMAC key, never saved or
+exported. A random `run_id` identifies that comparison window. Numeric request
+limits and message/tool counts help distinguish helper shapes without text.
+Fingerprints compare only within one process; billing attribution,
+metadata and cache TTL markers are excluded from content fingerprints.
+Positions are bounded to eight with an omitted count. This records no body,
+signature or raw header, does not alter cache policy, and does not infer an
+auxiliary task's purpose from its output length. Existing account/model/session
+and effort columns must be considered alongside these diagnostics.
+
 Native-request compatibility is selected only for Anthropic-format requests
 with CLI UA/x-app and attribution plus a recognized identity block, not UA alone.
 It preserves the caller's system/identity block attributes, SDK variants,
@@ -144,6 +167,32 @@ recorded in `internal/gateway/testdata/claude-2.1.309-hello-notes.txt`.
   verifies those two cache paths, not a long-term consumption comparison.
 - Allowance consumption equivalence, other native CLI versions/platforms and
   Claude Desktop feature restoration were not tested by this check.
+
+### Unsigned-history compatibility verification (2026-10-24)
+
+- Before the repair, `TestClaudeHTTPUnsignedHistory` failed on both generated
+  and native paths: six outgoing blocks instead of three. The unsigned-only
+  message test also failed. These are behavior failures, not compile failures.
+- The final `go test -race -tags nogui ./internal/gateway -run '^TestClaudeHTTP'
+  -count=5 -timeout=6m` passed. Coverage includes the wire copy, signed and
+  redacted thinking, tool calls/results, effort, caller-body immutability,
+  removal of emptied assistant messages, cache-policy ownership, diagnostic
+  privacy/bounds and the handoff's persisted ledger row. Two optional
+  native-capture checks are not enabled without their external fixture.
+- The sandboxed full `go test -tags nogui ./... -timeout=45m` passed again on
+  the final source, including the diagnostic allocation optimization and final
+  history guard. The native Darwin desktop build and all seven distribution
+  metadata tests plus five maintenance-notice tests also passed.
+- Final Darwin/Linux/Windows vet and nogui builds passed. Native Darwin and
+  Windows vet also passed without nogui. Darwin emitted the existing tray enum
+  conversion warning. `gofmt -l` and `git diff --check` printed nothing.
+- The 8 MiB diagnostic-only benchmark changed from approximately 229 ms / 42 MB
+  allocated to 29 ms / 17 MB on the local M4 Pro. These short local runs measure
+  diagnostic overhead, not subscription consumption or production latency.
+- No UI assets changed and no browser suite ran. No real upstream request,
+  live gateway replacement, account/seat change or session-file migration was
+  performed for this repair. Upstream acceptance of resumed legacy tool rounds
+  and later prefix-bound signatures remains to be checked in real use.
 
 ## Which Claude Code runs
 

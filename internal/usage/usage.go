@@ -24,14 +24,15 @@ import (
 
 // Record is one call.
 type Record struct {
-	Operation       string    `json:"operation,omitempty"`
-	RouteID         int64     `json:"route_id,omitempty"` // the gateway Route, shared by its attempts
-	Time            time.Time `json:"t"`
-	Agent           string    `json:"agent"` // magpie agent id, or the client's product name
-	Provider        string    `json:"provider"`
-	Host            string    `json:"host,omitempty"`          // where the call went: provider.Where then
-	ProviderKeyID   string    `json:"providerKeyId,omitempty"` // fingerprint of the API key actually used
-	ProviderKeyName string    `json:"providerKeyName,omitempty"`
+	ClaudeHTTP      *ClaudeHTTPDiagnostic `json:"claude_http,omitempty"`
+	Operation       string                `json:"operation,omitempty"`
+	RouteID         int64                 `json:"route_id,omitempty"` // the gateway Route, shared by its attempts
+	Time            time.Time             `json:"t"`
+	Agent           string                `json:"agent"` // magpie agent id, or the client's product name
+	Provider        string                `json:"provider"`
+	Host            string                `json:"host,omitempty"`          // where the call went: provider.Where then
+	ProviderKeyID   string                `json:"providerKeyId,omitempty"` // fingerprint of the API key actually used
+	ProviderKeyName string                `json:"providerKeyName,omitempty"`
 	// ProviderAccount is the subscription account that answered the call,
 	// as the Routing trace names it (provider.Account.User: an email, a
 	// login): the one that took over after a failover, the one pinned by

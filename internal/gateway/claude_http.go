@@ -23,6 +23,7 @@ import (
 	"github.com/tidwall/sjson"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/settings"
+	ledger "github.com/yetone/magpie/internal/usage"
 )
 
 const claudeHTTPVersion = "2.1.309"
@@ -31,13 +32,15 @@ type claudeTransportKey struct{}
 type claudeHTTPKey struct{}
 type claudeHTTPProbeKey struct{}
 type claudeHTTPCall struct {
-	auth    provider.ClaudeHTTPCredentials
-	session string
-	prompt  string
-	turn    int
-	native  bool
-	headers http.Header
-	probe   bool
+	auth        provider.ClaudeHTTPCredentials
+	session     string
+	prompt      string
+	turn        int
+	native      bool
+	headers     http.Header
+	probe       bool
+	diagnostic  *ledger.ClaudeHTTPDiagnostic
+	callerCache bool
 }
 
 var claudeHTTPAuth = provider.ClaudeHTTPAuth
@@ -75,6 +78,8 @@ func (s *Server) serveClaudeHTTP(w http.ResponseWriter, r *http.Request, from pr
 	}
 	prompt := uuid.NewSHA1(uuid.NameSpaceOID, []byte(session+"\x00"+string(body))).String()
 	c := claudeHTTPCall{auth: auth, session: session, prompt: prompt, turn: max(1, turn), headers: r.Header.Clone()}
+	c.diagnostic = &ledger.ClaudeHTTPDiagnostic{}
+	usage.claudeHTTP = c.diagnostic
 	c.probe, _ = r.Context().Value(claudeHTTPProbeKey{}).(bool)
 	if from == provider.Anthropic && nativeClaudeHTTPRequest(r.Header, body) {
 		c.native = true
@@ -108,6 +113,20 @@ func claudeHTTPBody(body []byte, c claudeHTTPCall) ([]byte, error) {
 	if !gjson.ValidBytes(body) {
 		return nil, fmt.Errorf("invalid Anthropic request")
 	}
+	callerCache := len(claudeHTTPCachePaths(body)) != 0
+	c.callerCache = callerCache
+	body, dropped, err := claudeHTTPUnsignedHistory(body)
+	if err != nil {
+		return nil, err
+	}
+	body, err = claudeHTTPPreparedBody(body, c)
+	if err == nil && c.diagnostic != nil {
+		*c.diagnostic = claudeHTTPDiagnostic(body, c, callerCache, dropped)
+	}
+	return body, err
+}
+
+func claudeHTTPPreparedBody(body []byte, c claudeHTTPCall) ([]byte, error) {
 	if c.native {
 		// Keep the caller's system blocks byte-for-byte, including cache marks,
 		// SDK identity variants, attribution and continuity tags. Only the

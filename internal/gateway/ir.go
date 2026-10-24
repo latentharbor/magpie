@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/usage"
 )
 
 // The APIs are close cousins; everything below is the shape they have
@@ -340,6 +341,7 @@ type Event struct {
 
 // Usage counts tokens.
 type Usage struct {
+	claudeHTTP *usage.ClaudeHTTPDiagnostic
 	Input      int `json:"input"`
 	Output     int `json:"output"`
 	CacheRead  int `json:"cache_read"`

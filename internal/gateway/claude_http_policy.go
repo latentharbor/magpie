@@ -91,7 +91,7 @@ func claudeHTTPCachePaths(body []byte) []string {
 // generated requests with no cache policy, subscription main turns use 1h,
 // subagents 5m. Any caller policy wins; no explicit TTL is silently upgraded.
 func claudeHTTPDefaultCache(body []byte, c claudeHTTPCall) ([]byte, error) {
-	if c.native || c.probe || len(claudeHTTPCachePaths(body)) != 0 {
+	if c.native || c.probe || c.callerCache || len(claudeHTTPCachePaths(body)) != 0 {
 		return body, nil
 	}
 	class := strings.ToLower(c.headers.Get("x-claude-code-request-class"))
