@@ -74,9 +74,27 @@ if the initiating GUI request disconnects.
 
 Candidates with known remaining global usage are preferred. Accounts whose
 recorded blocking windows elapsed are eligible probes, not fabricated zero
-usage. The normal routing strategy also chooses standby replacements: Smart
-uses the largest/weekly renewal first, then the 5-hour renewal when tied to the
-hour; explicit in-order, rotation and other policies retain their semantics.
+usage. The provider routing choice also chooses standby replacements. Team Smart
+spends the earliest weekly allowance first, then the 5-hour allowance when the
+weekly resets tie to the hour. Any account below the configured exhaustion
+threshold remains eligible: ordinary Smart's 90/98% bands do not push a
+nearly-expired, still-usable week behind a fresh week. The same order routes
+inference among multiple active Premium members; a genuinely full applicable
+window (including model-specific windows) still goes behind usable accounts.
+This changes neither other subscriptions' Smart nor explicit routing picks.
+Complete usable snapshots
+precede partial/unknown observations; unknown members are probes only when no
+known usable standby exists. Elapsed windows are eligible estimates, with their
+next expiry ranked one full window from now, without overwriting observations.
+
+Background Smart reconciliation also replaces a healthy active member when a
+known usable standby has an earlier expiry. It replaces the latest-expiring
+selected Premium member first, preserving other seats and outside-pool members.
+Equal reset hours retain the current assignment; unknown snapshots never evict a
+healthy member. Every voluntary transfer uses the same admission close, drain,
+fresh member verification and transaction recovery as exhaustion handoff. No
+request performs an administrator check. Explicit in-order, rotation and other
+policies retain their semantics and do not trigger voluntary expiry rebalancing.
 There is no preferred/current-CLI-login account or account-switch action in the
 Team UI. An unknown reset on a known exhausted account is not assumed reset.
 Quota reads for unassigned or draining accounts show only last-observed

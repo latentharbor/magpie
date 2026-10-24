@@ -1502,6 +1502,11 @@ func weighRouted(p provider.Provider, cs []candidate, model string, from provide
 		}
 	}
 	order := routes.Apply(st, p.ID, seats)
+	if p.Routing == "" && provider.ClaudeTeamOf(p) != "" {
+		// Multiple Premium seats use the same expiry-first rule as their
+		// controller's standby choice; no request moves a cloud seat.
+		order = provider.ClaudeTeamSmart(seats)
+	}
 	out := make([]candidate, 0, len(cs))
 	for _, i := range order {
 		out = append(out, cs[i])

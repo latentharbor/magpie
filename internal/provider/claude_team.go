@@ -983,13 +983,41 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 			pace = FreshPace
 		}
 		candidates = append(candidates, s.AccountID)
+		if c.Routing == "" {
+			known = claudeTeamQuotaKnown(t.disk.Limits[s.AccountID])
+		}
 		weights = append(weights, routes.Seat{Key: s.AccountID, Account: true, Known: known, Learns: !known, Used: used, Pace: pace, Soon: a.Renewal("", now), Weight: 1})
 	}
 	if len(candidates) > 0 {
 		to = candidates[0]
-		if strategy, ok := routes.Find(c.Routing); ok {
+		if c.Routing == "" {
+			to = candidates[ClaudeTeamSmart(weights)[0]]
+		} else if strategy, ok := routes.Find(c.Routing); ok {
 			if order := routes.Apply(strategy, claudeTeamPrefix+c.OrganizationID+"/standby", weights); len(order) > 0 {
 				to = candidates[order[0]]
+			}
+		}
+	}
+	// Smart also spends a parked account's expiring allowance before it is
+	// lost, rather than waiting for an unrelated active account to run dry.
+	// Only complete observations justify a voluntary transfer; threshold and
+	// manual handoffs above remain authoritative. The normal drain is reused.
+	if from == "" && to != "" && manual == "" && c.Routing == "" {
+		var latest routes.Seat
+		standby := weights[slices.Index(candidates, to)]
+		if standby.Known {
+			for _, s := range seats {
+				ls := t.disk.Limits[s.AccountID]
+				if s.SeatTier != "team_tier_1" || !slices.Contains(c.Members, s.AccountID) || identities[s.AccountID].Lapsed != "" || !claudeTeamQuotaKnown(ls) {
+					continue
+				}
+				active := routes.Seat{Key: s.AccountID, Known: true, Soon: allowanceOf(claudeLimitWindows(ls), now).Renewal("", now)}
+				if ClaudeTeamSmart([]routes.Seat{active, standby})[0] != 1 {
+					continue
+				}
+				if from == "" || ClaudeTeamSmart([]routes.Seat{active, latest})[0] == 1 {
+					from, latest = s.AccountID, active
+				}
 			}
 		}
 	}
