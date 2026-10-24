@@ -195,7 +195,12 @@ every transfer still requires fresh complete member verification.
 Build and distribution instructions are in [Distribution builds and
 updates](../fork-distribution.md). The application retains its normal name
 and configuration locations. Do not operate another automatic controller
-on the same pool.
+on the same pool. During an update handover the replacement controller waits
+for the previous process's exclusive file lock instead of exiting permanently
+after a single failed attempt. Waiting is cancellable and does not perform
+administration or quota collection. After acquiring ownership it reloads the
+configuration and recovery journal from disk. Filesystem/locking errors are
+reported separately from ordinary contention; the lock file is never deleted.
 
 Run tests under an isolated HOME with pinned Go caches. Provider tests cover
 switching, draining, multiple seats and organizations, outside-pool protection,

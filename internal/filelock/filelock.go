@@ -4,6 +4,7 @@
 package filelock
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"log"
@@ -22,6 +23,51 @@ const Wait = 10 * time.Second
 // mkdirAll makes a lock file's folder; a test counts the calls.
 var mkdirAll = os.MkdirAll
 
+// LockContext waits for exclusive ownership until ctx ends. Unlike Lock,
+// contention never permits proceeding without ownership. This is used by
+// long-lived controllers whose replacement can start before the old owner
+// finishes shutting down. The lock file is never removed.
+func LockContext(ctx context.Context, path string) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f, err := openLock(path)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			f.Close()
+			return nil, err
+		}
+		got, err := TryLock(f)
+		if err != nil {
+			f.Close()
+			return nil, err
+		}
+		if got {
+			return func() { Unlock(f); f.Close() }, nil
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			f.Close()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func openLock(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if errors.Is(err, fs.ErrNotExist) {
+		mkdirAll(filepath.Dir(path), 0o700)
+		f, err = os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	}
+	return f, err
+}
+
 // Lock takes the lock on the file at path, made if it isn't there, waiting
 // up to wait for another process to let it go. The system holds it on the
 // file and lets it go when the process holding it ends, however it ends,
@@ -34,11 +80,7 @@ func Lock(path string, wait time.Duration) (unlock func(), held bool) {
 	// it: made first, each lock asked the system for the folder too, on
 	// every take (#1665: ~190 times in a Windows start's first 25s, each
 	// an antivirus filter driver's work)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	if errors.Is(err, fs.ErrNotExist) {
-		mkdirAll(filepath.Dir(path), 0o700)
-		f, err = os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	}
+	f, err := openLock(path)
 	if err != nil {
 		return func() {}, false // no lock to be had here: no file to change either
 	}

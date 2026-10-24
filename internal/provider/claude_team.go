@@ -1102,14 +1102,26 @@ func (t *claudeTeamController) rotate(from string) error {
 // KeepClaudeTeam is owned by the gateway process. Neither GUI polls nor a
 // normal inference request call Members or change a seat.
 func (t *claudeTeamController) keep(ctx context.Context) {
-	unlock, held := filelock.Lock(t.configPath()+".controller.lock", 0)
-	if !held {
+	t.mu.Lock()
+	t.err = "waiting for the previous Claude Team controller to release this configuration"
+	t.signalLocked()
+	t.mu.Unlock()
+	unlock, lockErr := filelock.LockContext(ctx, t.configPath()+".controller.lock")
+	if lockErr != nil {
 		t.mu.Lock()
-		t.err = "another Claude Team controller holds this configuration"
+		if ctx.Err() == nil {
+			t.err = "Claude Team controller lock: " + lockErr.Error()
+		} else {
+			t.err = ""
+		}
+		t.signalLocked()
 		t.mu.Unlock()
 		return
 	}
 	defer unlock()
+	if ctx.Err() != nil {
+		return
+	}
 	t.op.Lock()
 	if err := t.selectPath(); err != nil {
 		t.op.Unlock()
@@ -1126,6 +1138,11 @@ func (t *claudeTeamController) keep(ctx context.Context) {
 	}
 	t.mu.Lock()
 	t.running, t.cfg = true, c
+	// Discovery may have cached a journal before the old owner finished its
+	// last transaction. Only state read under our process lock is authoritative.
+	t.loaded = false
+	t.seats = map[string]string{}
+	t.legacyRoutes = nil
 	if err != nil {
 		t.err, t.cfg.Enabled = err.Error(), false
 	}
@@ -1148,6 +1165,10 @@ func (t *claudeTeamController) keep(ctx context.Context) {
 		}
 		t.mu.Unlock()
 	}
+	t.mu.Lock()
+	t.err = ""
+	t.signalLocked()
+	t.mu.Unlock()
 	t.op.Unlock()
 	defer func() { t.mu.Lock(); t.running = false; t.signalLocked(); t.mu.Unlock() }()
 	timer := time.NewTimer(0)
@@ -1158,6 +1179,9 @@ func (t *claudeTeamController) keep(ctx context.Context) {
 			return
 		case <-timer.C:
 		case <-t.wake:
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		joinErr := t.adoptSavedLogins()
 		t.op.Lock()

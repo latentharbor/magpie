@@ -311,11 +311,26 @@ func TestClaudeTeamNativeNewRequestWaitsWithKeepalive(t *testing.T) {
 	var once sync.Once
 	finish := func() { once.Do(release) }
 	defer finish()
-	if err := provider.RotateClaudeTeam(nativeTeamID(2)); err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	// Changing the fixture's route order wakes background reconciliation.
+	// A manual rotation legitimately reports busy until that work finishes;
+	// wait for acceptance rather than racing that initial asynchronous pass.
+	for {
+		err := provider.RotateClaudeTeam(nativeTeamID(2))
+		if err == nil {
+			break
+		}
+		view := provider.ClaudeTeamStatus()
+		if !view.Running || !view.Config.Enabled {
+			t.Fatal(err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("controller never accepted fixture rotation:", err)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 	for {
 		view := provider.ClaudeTeamStatus()
 		if view.Rotating && view.InUse == 0 {
