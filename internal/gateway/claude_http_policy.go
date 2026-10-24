@@ -24,7 +24,16 @@ func claudeHTTPIdentityText(text string) bool {
 // This is a compatibility decision, never authorization. Gateway authentication
 // and the selected account's identity are checked separately.
 func nativeClaudeHTTPRequest(h http.Header, body []byte) bool {
-	if !fromClaudeCode(h) || h.Get("x-app") != "cli" || !gjson.GetBytes(body, "system").IsArray() {
+	if !fromClaudeCode(h) || h.Get("x-app") != "cli" {
+		return false
+	}
+	// Continuations inherit system/tools/cache policy from the stored Thread.
+	// Requiring identity blocks here misclassifies native deltas and injects
+	// a different fingerprint, defeating the caller's inherited-field protocol.
+	if gjson.GetBytes(body, "thread.type").String() == "continue" && gjson.GetBytes(body, "thread.previous_message_id").String() != "" {
+		return true
+	}
+	if !gjson.GetBytes(body, "system").IsArray() {
 		return false
 	}
 	billing := gjson.GetBytes(body, "system.0.text").String()

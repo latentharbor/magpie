@@ -1273,6 +1273,9 @@ func elsewhere(left []candidate, c candidate) []candidate {
 // that failed this way: the vendor was busy, out of quota or failing, or
 // this key or provider can't serve it — not the request itself at fault.
 func retryable(status int, body []byte) bool {
+	if claudeThreadErrorCode(status, body) != "" {
+		return false // the caller must replay full history, not another account
+	}
 	// the words are matched decoded, too (#1669)
 	body = wordsOf(body)
 	switch {
@@ -2122,6 +2125,9 @@ type keptAlive struct {
 	// Only opted-in Claude cache reporting can defer initial keepalives.
 	// Selection releases it before process startup; expiry keeps the stream alive.
 	cacheReportUntil time.Time
+	// Thread recovery needs the upstream HTTP 400/404, not a stream error
+	// behind a synthetic 200. Once upstream accepts, normal keepalives resume.
+	thread bool
 }
 
 // agentQuietMost is the longest a streaming Responses agent goes with no
@@ -2151,7 +2157,7 @@ func (h *holdWriter) keepAlive() {
 	a := h.alive
 	// a Gemini stream has none, as geminiEncoder.keepalive: agy fails on
 	// the comment ("invalid stream chunk: : keepalive", #934)
-	if a == nil || a.proto == provider.Gemini || time.Since(a.at) < keepaliveEvery {
+	if a == nil || a.proto == provider.Gemini || time.Since(a.at) < keepaliveEvery || a.thread && (h.status == 0 || h.status >= 400) {
 		return
 	}
 	if !a.sent {
@@ -2393,7 +2399,13 @@ func (h *holdWriter) release() {
 			streamError(h.w, h.alive.proto, h.failure, who+" "+h.failMsg)
 		case h.status >= 400:
 			// an error status, once the agent has a stream: told as its error
-			streamError(h.w, h.alive.proto, h.status, provider.APIError(h.held.Bytes(), http.StatusText(h.status)))
+			if code := claudeThreadErrorCode(h.status, h.held.Bytes()); h.alive.proto == provider.Anthropic && code != "" {
+				sw := newSSEWriter(h.w)
+				sw.begun = true
+				sw.event("error", claudeThreadErrorBody(h.status, provider.APIError(h.held.Bytes(), http.StatusText(h.status)), code))
+			} else {
+				streamError(h.w, h.alive.proto, h.status, provider.APIError(h.held.Bytes(), http.StatusText(h.status)))
+			}
 		default:
 			// a reply given whole by a vendor that ignored stream:true,
 			// after the agent was kept alive: sent as the stream it asked

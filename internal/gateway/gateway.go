@@ -2059,7 +2059,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	var group *GroupRef
 	// An empty Team route can be between seats. Keep only these waiting
 	// streams alive; normal routing never contacts or waits for the admin.
-	kept := &keptAlive{proto: from, told: start, streams: streamOf(body)}
+	kept := &keptAlive{proto: from, told: start, streams: streamOf(body), thread: from == provider.Anthropic && gjson.GetBytes(body, "thread.type").Exists()}
 	if k := handedOnOf(r); k != nil {
 		kept = k
 	}
@@ -7170,6 +7170,12 @@ func writeError(w http.ResponseWriter, proto provider.Protocol, status int, msg 
 // ChatGPT backend's invalid_access_program on access_programs.cyber
 // (magpie-releases#18) reaches the agent as the backend said it.
 func writeVendorError(w http.ResponseWriter, proto provider.Protocol, status int, msg string, body []byte) int {
+	if proto == provider.Anthropic {
+		if code := claudeThreadErrorCode(status, body); code != "" {
+			writeJSON(w, status, claudeThreadErrorBody(status, msg, code))
+			return status
+		}
+	}
 	var code, param any
 	if e := gjson.GetBytes(body, "error"); e.IsObject() {
 		if c := e.Get("code"); c.Type == gjson.String && c.String() != "" {

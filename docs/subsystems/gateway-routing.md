@@ -819,3 +819,25 @@ go test -tags nogui ./internal/provider -run 'TestGroup|TestCodexCreditsSwitch|T
 
 The gateway's `TestMain` gives the package a home of its own, so these tests
 never read real providers or accounts.
+
+## Native Anthropic Thread recovery
+
+A Thread continuation may carry only the new messages and inherit system/tools
+from its upstream anchor. Native CLI headers plus a continuation anchor identify
+this form even when the identity system blocks are omitted. It stays on the
+native HTTP path: the gateway does not inject a new identity, tools list, default
+cache policy or generated beta profile into its inherited fingerprint. A missing anchor (404) or fingerprint mismatch (400)
+must return to the caller that owns the complete conversation. The gateway
+preserves the known `error.details.error_code` recovery codes, and normalizes the
+unambiguous missing-anchor full-replay instruction to `thread_not_found` when
+upstream omitted its detail. Other vendor details are not copied. These are not
+model availability failures and do not trigger cross-account retries.
+
+For Anthropic requests carrying `thread.type`, initial held-response/queue
+keepalives wait for upstream acceptance: a synthetic HTTP 200 would hide the
+400/404 required by native Code's replay classifier. Once upstream accepts,
+normal streaming keepalives continue. The gateway never creates a new Thread
+from a continuation delta. The caller can retry with `thread: {"type":"create"}`,
+full history, and inherited fields restored. Tests cover the HTTP handler,
+delayed errors, caller replay, error details, and unchanged non-Thread fallback;
+they do not establish the original reason an upstream anchor disappeared.
