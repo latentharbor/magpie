@@ -133,7 +133,7 @@ func claudeDesktop(home string) *Agent {
 		},
 		Notice: func() string {
 			if slices.ContainsFunc(ps, desktopLoginApplied) {
-				return "Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings."
+				return noticeClaudedesktopLogin.String()
 			}
 			if desktopWiredAny(ps) {
 				return noticeClaudedesktop1.String()
@@ -738,6 +738,7 @@ func desktopEmpty(b []byte) bool {
 
 // what claudedesktop says after a change (notice.go)
 var (
-	noticeClaudedesktop1 = newNotice("Claude Desktop reads this at start-up — quit and reopen it to run on magpie (Code and Cowork, no Anthropic sign-in).")
-	noticeClaudedesktop2 = newNotice("Claude Desktop reads this at start-up — quit and reopen it to sign in with Anthropic again.")
+	noticeClaudedesktopLogin = newNotice("Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings.")
+	noticeClaudedesktop1     = newNotice("Claude Desktop reads this at start-up — quit and reopen it to run on magpie (Code and Cowork, no Anthropic sign-in).")
+	noticeClaudedesktop2     = newNotice("Claude Desktop reads this at start-up — quit and reopen it to sign in with Anthropic again.")
 )

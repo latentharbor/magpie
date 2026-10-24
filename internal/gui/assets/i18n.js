@@ -15796,6 +15796,7 @@ const I18N = {
 // internal/agent/notice.go), as tNotice matches them; each has its
 // translation above. TestEveryNoticeIsTranslated keeps the two the same.
 const NOTICES = [
+  "Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings.",
   "Air runs magpie's models through OpenCode's ACP server, and OpenCode isn't installed here: install OpenCode (npm i -g opencode-ai), then pick Magpie in a new Air task.",
   "Ante reads its catalog at start-up — restart open ante sessions to use this.",
   "AstrBot reads cmd_config.json at start-up and writes it back whole when its WebUI saves settings — restart AstrBot to use this, before saving anything in its WebUI.",

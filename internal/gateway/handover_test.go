@@ -264,6 +264,21 @@ func TestHandedOverGatewayFinishesItsStream(t *testing.T) {
 	}
 	old.HandOff()
 	stopOld()
+	// Cancellation stops the old accept loop asynchronously. Wait until its
+	// listener is closed before requiring every new request to reach next.
+	// The in-flight stream must remain alive throughout this transition.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f, err := old.ListenerFile()
+		if err != nil {
+			break
+		}
+		f.Close()
+		if time.Now().After(deadline) {
+			t.Fatal("the old listener kept accepting after cancellation")
+		}
+		time.Sleep(time.Millisecond)
+	}
 
 	// new requests reach the new one, through the same port, while the
 	// old one still streams

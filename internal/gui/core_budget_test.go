@@ -26,7 +26,9 @@ func TestCoreScriptBudget(t *testing.T) {
 	// asynchronous collection status/retry, and organization-scoped sign-in
 	// (two additional KB; account-to-organization selection lives outside app.js);
 	// keep the upstream budgets above unchanged.
-	appBudget, coreBudget := appScriptBudget+512, coreScriptBudget+16_000
+	// Native login adds only a Network-settings entry loader and the agent
+	// connection label (1 KB); its certificate/mapping editor stays lazy-loaded.
+	appBudget, coreBudget := appScriptBudget+512, coreScriptBudget+17_024
 	page, err := os.ReadFile("assets/index.html")
 	if err != nil {
 		t.Fatal(err)
