@@ -136,6 +136,9 @@ func TestRestartHandsTheGatewayOver(t *testing.T) {
 	defer close(release)
 	gw := handoverSandbox(t, up.URL)
 	addr := gw.Addr()
+	transport := &http.Transport{}
+	client := &http.Client{Transport: transport}
+	t.Cleanup(transport.CloseIdleConnections)
 
 	var child *exec.Cmd
 	startBeside = func(exe string, window bool, view string) error {
@@ -156,8 +159,17 @@ func TestRestartHandsTheGatewayOver(t *testing.T) {
 	}
 
 	// a reply streaming through the gateway
-	resp, err := http.Post("http://"+addr+"/v1/chat/completions", "application/json",
+	req, err := http.NewRequest("POST", "http://"+addr+"/v1/chat/completions",
 		strings.NewReader(`{"model":"plan/m1","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// This stream ends its connection. A keep-alive stream may reuse the
+	// old connection after its reply; that connection must finish or reach
+	// its idle timeout before the predecessor can quit.
+	req.Close = true
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +188,11 @@ func TestRestartHandsTheGatewayOver(t *testing.T) {
 	stopAsking := make(chan struct{})
 	asking := make(chan struct{})
 	var stopOnce sync.Once
-	stop := func() { stopOnce.Do(func() { close(stopAsking) }); <-asking }
+	stop := func() {
+		stopOnce.Do(func() { close(stopAsking) })
+		<-asking
+		transport.CloseIdleConnections()
+	}
 	t.Cleanup(stop)
 	go func() {
 		defer close(asking)
@@ -187,7 +203,7 @@ func TestRestartHandsTheGatewayOver(t *testing.T) {
 			default:
 			}
 			asked.Add(1)
-			r, err := http.Post("http://"+addr+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"plan/m1","messages":[{"role":"user","content":"hi"}]}`))
+			r, err := client.Post("http://"+addr+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"plan/m1","messages":[{"role":"user","content":"hi"}]}`))
 			if err != nil {
 				t.Errorf("a request during the restart: %v", err)
 				return
@@ -208,6 +224,16 @@ func TestRestartHandsTheGatewayOver(t *testing.T) {
 	}
 	quit := make(chan struct{})
 	leave(func() { close(quit) })
+	// Even a failed assertion must join the handover before the sandbox's
+	// WaitGroup and globals are reused by the next test. The deferred
+	// release/response close above lets the old stream drain first.
+	t.Cleanup(func() {
+		select {
+		case <-quit:
+		case <-time.After(10 * time.Second):
+			t.Error("the handover did not finish during cleanup")
+		}
+	})
 
 	eventually2(t, 30*time.Second, "the new magpie never served the gateway", func() bool {
 		return child != nil && child.Process != nil && servedByPid(addr) == child.Process.Pid

@@ -31,6 +31,55 @@ var handedOffDrain = 15 * time.Minute
 // nothing serves the port after it: a quit, or a restart that waits.
 var shortDrain = 2 * time.Second
 
+// handoverConnections keeps accepted connections alive through their last
+// request. http.Server.Shutdown can discard a request just read from one
+// when it marks the server shutting down, even with an unlimited timeout.
+// A handed-over server first stops accepting, lets these connections end
+// normally (responses started after handoff say Connection: close), and
+// only then calls Shutdown. Existing idle connections retain IdleTimeout.
+type handoverConnections struct {
+	sync.Mutex
+	open    map[net.Conn]struct{}
+	changed chan struct{}
+}
+
+func (d *handoverConnections) state(c net.Conn, state http.ConnState) {
+	if state != http.StateNew && state != http.StateClosed && state != http.StateHijacked {
+		return
+	}
+	d.Lock()
+	defer d.Unlock()
+	if d.open == nil {
+		d.open = make(map[net.Conn]struct{})
+	}
+	if state == http.StateNew {
+		d.open[c] = struct{}{}
+	} else {
+		delete(d.open, c)
+	}
+	if d.changed != nil {
+		close(d.changed)
+	}
+	d.changed = make(chan struct{})
+}
+
+func (d *handoverConnections) wait(ctx context.Context) {
+	for {
+		d.Lock()
+		if len(d.open) == 0 {
+			d.Unlock()
+			return
+		}
+		changed := d.changed
+		d.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 // inherited is the listener the magpie before this one handed over, taken
 // by the first Listen of its address; ack is called once this gateway
 // serves on it, which tells the one before to stop accepting.

@@ -92,17 +92,21 @@ async function open(engine, lang, width, t) {
 // click never moves the page, so Playwright's own scroll is put back), then
 // the mouse on it once it holds still
 async function press(page, x) {
-  const d = await x.evaluate((e) => { const v = document.querySelector("#view-routing");
-    return Math.round(e.getBoundingClientRect().top - v.getBoundingClientRect().top - v.clientHeight / 2); });
-  if (Math.abs(d) > 100) {
+  for (let i = 0; i < 12; i++) {
+    const d = await x.evaluate((e) => { const v = document.querySelector("#view-routing");
+      return Math.round(e.getBoundingClientRect().top - v.getBoundingClientRect().top - v.clientHeight / 2); });
+    if (Math.abs(d) <= 100) break;
     // over the view, not the sidebar beside it
     const v = await page.locator("#view-routing").boundingBox();
-    await page.mouse.move(v.x + 10, 300);
+    // The request log is itself scrollable. Wheel in the view's gutter,
+    // not over that log, or the control never comes into the viewport.
+    await page.mouse.move(v.x + v.width - 4, 300);
     await page.mouse.wheel(0, d);
     await page.waitForTimeout(400);
   }
   await page.waitForTimeout(300); // the page settled (WebKit's folds)
   const b = await x.boundingBox();
+  assert(b.y >= 0 && b.y + b.height <= page.viewportSize().height, "the control was wheeled into view before clicking");
   await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
 }
 // nothing in the rules runs past the editor's side

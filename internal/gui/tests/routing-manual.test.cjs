@@ -129,11 +129,17 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // the reader wheels the editor's routing into the middle (code that
       // scrolls is put back: only the reader moves the view)
       const wheelTo = async (x) => {
-        const d = await x.evaluate((e) => { const v = document.querySelector("#view-routing");
-          return Math.round(e.getBoundingClientRect().top - v.getBoundingClientRect().top - v.clientHeight / 2); });
-        await page.mouse.move(550, 400);
-        await page.mouse.wheel(0, d);
-        await page.waitForTimeout(400);
+        const v = await view.boundingBox();
+        await page.mouse.move(v.x + v.width - 4, v.y + 100);
+        for (let i = 0; i < 12; i++) {
+          const d = await x.evaluate((e) => { const v = document.querySelector("#view-routing");
+            return Math.round(e.getBoundingClientRect().top - v.getBoundingClientRect().top - v.clientHeight / 2); });
+          if (Math.abs(d) <= 100) break;
+          await page.mouse.wheel(0, d);
+          await page.waitForTimeout(400);
+        }
+        const b = await x.boundingBox();
+        assert(b.y >= 0 && b.y + b.height <= page.viewportSize().height, "the control is in view before clicking");
       };
       await wheelTo(row);
       // the routing's own hint is the first; a group-in-group note follows it

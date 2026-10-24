@@ -3,6 +3,7 @@ package gateway
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -10,12 +11,141 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/yetone/magpie/internal/provider"
 )
+
+// acceptOnClose holds an already accepted connection until the listener
+// closes: exactly the Accept/Shutdown overlap a handover must preserve.
+type acceptOnClose struct {
+	net.Listener
+	accepted chan struct{}
+	closed   chan struct{}
+	once     sync.Once
+}
+
+func (l *acceptOnClose) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err == nil {
+		close(l.accepted)
+		<-l.closed
+	}
+	return c, err
+}
+
+func (l *acceptOnClose) Close() error {
+	err := l.Listener.Close()
+	l.once.Do(func() { close(l.closed) })
+	return err
+}
+
+func TestHandoverKeepsAConnectionAcceptedAsItStops(t *testing.T) {
+	fresh(t)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"accepted"},"finish_reason":"stop"}]}`)
+	}))
+	defer up.Close()
+	if err := provider.Save(provider.Provider{ID: "plan", Name: "Plan", Key: "upstream", Chat: up.URL + "/v1", Models: []string{"m1"}}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &acceptOnClose{Listener: ln, accepted: make(chan struct{}), closed: make(chan struct{})}
+	defer l.Close()
+	t.Setenv("MAGPIE_ADDR", ln.Addr().String())
+	Inherit(l, nil)
+	s := New()
+	stop, done := listening(t, s)
+	defer func() {
+		stop()
+		l.Close()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	answer := make(chan error, 1)
+	go func() {
+		client := &http.Client{Timeout: 10 * time.Second}
+		r, err := client.Post("http://"+ln.Addr().String()+"/v1/chat/completions", "application/json", strings.NewReader(chatReq))
+		if err == nil {
+			defer r.Body.Close()
+			b, readErr := io.ReadAll(r.Body)
+			err = readErr
+			if err == nil && (r.StatusCode != 200 || !strings.Contains(string(b), "accepted")) {
+				err = fmt.Errorf("accepted request: %d %s", r.StatusCode, b)
+			}
+		}
+		answer <- err
+	}()
+	select {
+	case <-l.accepted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the request never reached Accept")
+	}
+	s.HandOff()
+	stop()
+	if err := <-answer; err != nil {
+		t.Fatalf("the connection accepted during handover was lost: %v", err)
+	}
+}
+
+func TestHandoverServesTheNextRequestOnAnOldConnection(t *testing.T) {
+	fresh(t)
+	t.Setenv("MAGPIE_ADDR", "127.0.0.1:0")
+	s := New()
+	stop, done := listening(t, s)
+	stopped := false
+	defer func() {
+		stop()
+		if !stopped {
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Error("the old server did not drain")
+			}
+		}
+	}()
+	c, err := net.DialTimeout("tcp", s.Addr(), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(10 * time.Second))
+	reader := bufio.NewReader(c)
+	ask := func() *http.Response {
+		t.Helper()
+		if _, err := io.WriteString(c, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+			t.Fatal(err)
+		}
+		r, err := http.ReadResponse(reader, nil)
+		if err != nil {
+			t.Fatalf("the old connection lost its next request: %v", err)
+		}
+		io.Copy(io.Discard, r.Body)
+		r.Body.Close()
+		return r
+	}
+	if r := ask(); r.StatusCode != 200 || r.Close {
+		t.Fatalf("the initial connection is not reusable: %d close=%v", r.StatusCode, r.Close)
+	}
+	s.HandOff()
+	stop()
+	select {
+	case <-done:
+		stopped = true
+		t.Fatal("the old server closed a reusable connection during handover")
+	default:
+	}
+	if r := ask(); r.StatusCode != 200 || !r.Close {
+		t.Fatalf("the final response must finish then retire the connection: %d close=%v", r.StatusCode, r.Close)
+	}
+}
 
 // serveOn starts s's ListenAndServe and waits for it to listen.
 func listening(t *testing.T, s *Server) (stop context.CancelFunc, done <-chan error) {
@@ -92,6 +222,7 @@ func TestHandedOverGatewayFinishesItsStream(t *testing.T) {
 	// a stream under way through the old one
 	req, _ := http.NewRequest("POST", "http://"+addr+"/v1/chat/completions", strings.NewReader(`{"model":"plan/m1","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Close = true
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

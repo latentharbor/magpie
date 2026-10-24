@@ -157,7 +157,15 @@ func TestSetPortServesWhenTheOldOneWasTaken(t *testing.T) {
 		t.Fatal(err)
 	}
 	served.Store(nil)
-	t.Cleanup(func() { served.Store(nil) })
+	t.Cleanup(func() {
+		gatewayMu.Lock()
+		defer gatewayMu.Unlock()
+		if served.Load() != nil && servedRun.stop != nil {
+			servedRun.stop()
+			<-servedRun.done
+		}
+		served.Store(nil)
+	})
 	if gateway.Running() {
 		t.Fatal("another program taken for magpie")
 	}

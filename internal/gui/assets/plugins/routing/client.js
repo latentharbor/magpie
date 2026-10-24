@@ -4299,17 +4299,46 @@ function routingPage(part) {
     const to = n.getBoundingClientRect().height;
     if (Math.abs(to - from) < 1) return false;
     const shape = opening ? { duration: 570, easing: SPRING } : { duration: 420, easing: IOS_EASE };
-    n.style.overflow = "hidden";
+    // Clip the opening slot without making it a scroll container. Focusing
+    // a control during the entrance must not scroll the editor internally:
+    // that moves the control under the pointer and dismisses its menu.
+    n.style.overflow = "clip";
     const grow = n.animate([{ height: from + "px" }, { height: to + "px" }], shape);
+    const entrance = [grow];
     grow.finished.then(() => { n.style.overflow = ""; }, () => { n.style.overflow = ""; });
+    // Once editing starts, the entrance no longer owns the controls'
+    // coordinates. This also handles keyboard focus before the slot has
+    // finished opening, without focusing a field in a clipped scroll box.
+    if (opening) {
+      const view = n.closest(".view");
+      const settle = (e) => {
+        const before = e.type === "focusin" ? e.target.getBoundingClientRect().top : null;
+        for (const a of entrance) a.finish();
+        n.style.overflow = "";
+        // Focus happens on the press, before its click. Keep the pressed
+        // control under the pointer when finishing the entrance.
+        if (view && before !== null) {
+          view.scrollTop += e.target.getBoundingClientRect().top - before;
+          readerLeaves(view);
+        }
+        clear();
+      };
+      const clear = () => {
+        n.removeEventListener("focusin", settle);
+        view?.removeEventListener("wheel", settle, true);
+      };
+      n.addEventListener("focusin", settle, { once: true });
+      view?.addEventListener("wheel", settle, { capture: true, passive: true, once: true });
+      grow.finished.finally(clear).catch(() => {});
+    }
     if (!opening && top < 0) foldInSight(n, grow, from, to, top);
     if (opening) {
       // its parts come in from just above, one after another; those past
       // the first dozen together
       let i = 0;
       for (const c of n.children) {
-        c.animate([{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "none" }],
-          { duration: 420, delay: 40 + Math.min(i++, 12) * 18, easing: IOS_EASE, fill: "backwards" });
+        entrance.push(c.animate([{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "none" }],
+          { duration: 420, delay: 40 + Math.min(i++, 12) * 18, easing: IOS_EASE, fill: "backwards" }));
       }
     } else {
       for (const c of n.children) c.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, delay: 90, easing: "ease-out", fill: "backwards" });

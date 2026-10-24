@@ -130,7 +130,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // the window, on the Overview
       const calls = { state: 0, overview: 0, requests: 0 }, cur = { v: 0 };
       const p = await open("http://magpie.test/?view=usage", { width: 1180, height: 760 }, calls, cur);
-      if (await p.locator("#usageTab .opt.on").evaluate((b) => b !== b.parentElement.firstElementChild)) await p.locator(":is(#usageTab .opt, .nav-s):visible").first().click();
+      await p.locator("#usageTab .opt.on").waitFor();
+      // The initial state read redraws the tabs. Read the selection and
+      // its position together, not from a handle to a replaced tab.
+      if (await p.evaluate(() => !!document.querySelector("#usageTab .opt.on:not(:first-child)"))) await p.locator(":is(#usageTab .opt, .nav-s):visible").first().click();
       const BAR = "#chart .bars .bar";
       await p.locator(BAR).first().waitFor();
       assert.equal(await p.locator(BAR).count(), DAYS);

@@ -581,14 +581,24 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	freshCtx, stopFresh := context.WithCancel(ctx)
 	defer stopFresh()
 	go pluginrt.KeepFresh(freshCtx, 2*time.Second, settings.Path(), provider.Path(), plugin.ListPath(), plugin.ToolsPath(), access.Path())
-	srv := &http.Server{Handler: lanGuard(s.Handler()), ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 5 * time.Minute}
+	var connections handoverConnections
+	handler := lanGuard(s.Handler())
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.handedOff.Load() && r.ProtoMajor == 1 {
+			w.Header().Set("Connection", "close")
+		}
+		handler.ServeHTTP(w, r)
+	}), ConnState: connections.state, ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 5 * time.Minute}
 	// the magpie serving the gateway, and only it, keeps the saved accounts
 	// signed in, so two never refresh one sign-in at once
 	go provider.KeepLoginsAlive(ctx)
 	// and signs Codex and Claude Code in to their next account when the
 	// one they are on is spent
 	go provider.KeepOnAnAccountWithRoom(ctx)
-	go provider.KeepClaudeTeam(ctx)
+	teamCtx, stopTeam := context.WithCancel(ctx)
+	teamDone := make(chan struct{})
+	go func() { defer close(teamDone); provider.KeepClaudeTeam(teamCtx) }()
+	defer func() { stopTeam(); <-teamDone }()
 	// and, when settings say to, starts its accounts' next windows as the last reset
 	go provider.KeepCodexWindowsWarm(ctx)
 	go provider.KeepClaudeWindowsWarm(ctx, warmClaude)
@@ -630,32 +640,54 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	for _, f := range WhileServing {
 		go f(ctx)
 	}
+	acceptStopped := make(chan struct{})
 	drained := make(chan struct{})
 	go func() {
 		defer close(drained)
 		<-ctx.Done()
 		c, cancel := context.WithTimeout(context.Background(), s.drainFor())
 		defer cancel()
+		if s.handedOff.Load() {
+			// Stop accepting before Shutdown marks the HTTP server closed.
+			// Otherwise an Accept already returning a connection can reach
+			// Serve after that mark and be reset without reading its request.
+			// The successor keeps the listening socket open meanwhile.
+			s.lnMu.Lock()
+			current := s.ln
+			s.lnMu.Unlock()
+			current.Close()
+			<-acceptStopped
+			connections.wait(c)
+		}
 		srv.Shutdown(c)
 		s.subscription.abortAll()
 		provider.FlushServed() // what answered last, kept for the next start and the CLI
 		flushSticks()          // who answered which conversation, for the next start or the magpie handed over to
 	}()
-	for {
-		err := srv.Serve(ln)
-		if err == nil || errors.Is(err, http.ErrServerClosed) {
-			<-drained
+	err = func() error {
+		defer close(acceptStopped)
+		for {
+			err := srv.Serve(ln)
+			if err == nil || errors.Is(err, http.ErrServerClosed) {
+				return nil
+			}
+			// Relisten closed it to move the gateway: serve the one it opened
+			s.lnMu.Lock()
+			next := s.ln
+			s.lnMu.Unlock()
+			if next == ln {
+				return err
+			}
+			ln = next
+		}
+	}()
+	if ctx.Err() != nil {
+		<-drained
+		if errors.Is(err, net.ErrClosed) {
 			return nil
 		}
-		// Relisten closed it to move the gateway: serve the one it opened
-		s.lnMu.Lock()
-		next := s.ln
-		s.lnMu.Unlock()
-		if next == ln {
-			return err
-		}
-		ln = next
 	}
+	return err
 }
 
 // Handler routes the client APIs.

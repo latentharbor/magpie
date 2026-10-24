@@ -64,13 +64,21 @@ function serve(lang, posts) {
 // wheel down to a control, as the reader would (the page keeps still for
 // any other scroll), then click it with the mouse
 async function press(page, loc, height) {
+  // This helper clicks a settled control. The separate entrance/focus
+  // regression covers deliberately interacting while the editor opens.
+  await loc.evaluate(async (e) => {
+    const playing = [];
+    for (let n = e; n; n = n.parentElement) playing.push(...n.getAnimations().filter((a) => a.playState === "running" && Number.isFinite(a.effect?.getComputedTiming().endTime)));
+    await Promise.all(playing.map((a) => a.finished.catch(() => {})));
+  });
   await page.mouse.move(Math.min(550, (page.viewportSize().width / 2) | 0), 300);
   for (let i = 0; i < 12 && (await loc.boundingBox()).y > height - 160; i++) {
     await page.mouse.wheel(0, 300);
     await page.waitForTimeout(150);
   }
   const b = await loc.boundingBox();
-  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+  assert(b.y >= 0 && b.y + b.height <= height, "the control is in view before clicking");
+  await loc.click();
 }
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {

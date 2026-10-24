@@ -138,6 +138,17 @@ filter only when that request is excluded. Usage's purpose picker remains a
 single choice sent to the ledger API. See `purpose-filter.test.cjs` and
 `routing-purpose-state.test.cjs`.
 
+### Routing editor entrance and menus
+
+Routing's group-slot entrance clips with `overflow: clip`, not a hidden
+scroll container. Starting to edit or wheel the page finishes the entrance
+before it can move a focused control or clamp the reader's scroll to a
+partly opened editor. A focus-driven finish keeps the pressed control at
+its screen position until the click. Ordinary outside scrolling still
+dismisses menus; no menu-dismissal guard is bypassed. The regression in
+`menu-input-scroll.test.cjs` covers a long focused field followed by each
+of the rule's menus in both engines and all five interface languages.
+
 ### Routing mode chip
 
 The stage's chip and the Accounts and keys heading in
@@ -501,6 +512,19 @@ then calls `beginHandover` instead of the relaunch-after-exit. The steps:
    minutes), since the restart was let go without waiting for them. A
    second restart click while a handover is under way does nothing
    (`pending`).
+
+Before HTTP shutdown, the old server closes only its listening handle and
+joins the accept loop. Accepted connections remain served until they
+finish: `http.Server.Shutdown` itself can discard a request just read
+during shutdown. HTTP/1 replies begun after handoff carry `Connection:
+close`, so those connections retire after their reply instead of losing a
+non-idempotent request on a reused connection. A response already streaming
+with keep-alive can leave its connection idle afterwards; the hidden
+predecessor stays alive until it is reused or reaches the ordinary
+five-minute idle timeout (within the same fifteen-minute drain bound).
+This does not delay the successor's UI. The deterministic gateway tests
+`TestHandoverKeepsAConnectionAcceptedAsItStops` and
+`TestHandoverServesTheNextRequestOnAnOldConnection` cover both cases.
 
 Two magpies never show at once. On a Mac the old one lets go of its
 instance lock before it gives the socket (`releaseInstance`), so the new
