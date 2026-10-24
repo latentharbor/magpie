@@ -17,7 +17,7 @@ for (const engine of ['chromium','webkit']) for (const lang of ['en','zh','zh-TW
    const req=route.request(),u=new URL(req.url()),json=data=>route.fulfill({json:data});
    if(u.pathname==='/boot.js')return route.fulfill({contentType:'text/javascript',body:`window.bootPrefs=${JSON.stringify({lang,theme:'light',web:true})};`});
    if(u.pathname==='/wails/runtime.js')return route.fulfill({contentType:'text/javascript',body:'export const Window={};'});
-   if(u.pathname==='/api/state')return json({agents:[],profiles:[],settings:{lang,theme:'light'}});
+   if(u.pathname==='/api/state')return json({agents:[{id:'claude-desktop',name:'Claude Desktop',icon:'claude-color',path:'/fixture/Claude',wired:true,loginProxy:true,fields:[{key:'provider',label:'provider',value:'magpie',options:[{value:'magpie',label:'magpie'}]}]}],profiles:[],settings:{lang,theme:'light'}});
    if(u.pathname==='/api/settings')return json({lang,theme:'light',tray:'panel',currency:'usd',textSize:100,proxy:'',proxyNow:'',proxySource:'none',visionModels:[],imageGenModels:[],workbuddyCheckins:[],fx:{rate:7.2,at:new Date().toISOString()}});
    if(u.pathname==='/api/claude-login/prepare-usage'){cur.usageCertificate={trusted:true,path:'/fixture/web-ca/ca.pem'};return json(cur);}
    if(u.pathname==='/api/claude-login/prepare'){cur.certificate={...cur.certificate,exists:true,sha256:'a'.repeat(64)};return json(cur);}
@@ -56,6 +56,11 @@ for (const engine of ['chromium','webkit']) for (const lang of ['en','zh','zh-TW
   await page.waitForTimeout(120);
   assert.equal(await modal.evaluate(e=>e.scrollWidth<=e.clientWidth+1),true);
   assert.equal(await modal.locator('select').count(),0);
+  await page.goto('http://magpie.test/?view=agents');
+  const row=page.locator('.row.agent[data-id="claude-desktop"]');
+  const expected=await page.evaluate(()=>t('Connected · official Claude login with selected models through the local proxy'));
+  await row.getByText(expected,{exact:true}).waitFor();
+  assert.equal(await row.locator('.ag-fix').count(),0);
   assert.deepEqual(errors,[]);
  });
 }

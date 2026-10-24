@@ -42,7 +42,9 @@ publish Desktop's third-party model capabilities. Native login routing is treate
 as a connection beside the official provider, not as an externally replaced
 third-party setup. The agent provider field reports magpie for this selected
 proxy profile, with an official-login notice. Native mode and proxy changes still
-produce drift warnings; the saved inactive third-party profile does not.
+produce drift warnings; the saved inactive third-party profile does not. The
+Agents page names this native proxy connection explicitly and omits the inactive
+third-party model-menu count.
 
 `claude-login-wiring.json` records the four original JSON values durably before
 any native write. All files are validated before mutation. Disabling restores
@@ -170,7 +172,9 @@ certificate, subscribed Code displayed 0% used in both Session and Weekly window
 and kept official reset times. A minimal `QUOTA_UI_OK` turn completed through the
 Magpie Team route. Temporary trust and test proxy were removed afterwards. This
 does not prove behavior of a genuinely exhausted official account; that case
-remains untested. The permanent implementation is gated on separate CA trust.
+remains untested. The permanent implementation is gated on separate CA trust. With that trust
+explicitly granted, the built-in Go proxy was also verified with both native
+usage windows at zero and a real High Code response through Magpie (HTTP 200).
 
 **Still pending before production use:** local Cowork guest inference and CA trust,
 Thread-state retry behavior, tool-heavy Code turns, Dynamic Workflows and long-running tasks. The VM has a native

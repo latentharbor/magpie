@@ -1080,6 +1080,7 @@ function connectable(a) {
 const PICKS_IN = { codex: "/model", claude: "/model", opencode: "/models", pi: "/model", droid: "/model", kimi: "/model", grok: "/model", "minimax-code": "/model", dsh: "/model", crush: "ctrl+p", omp: "/model", qwen: "/model", mimocode: "/model", deveco: "/models" };
 
 function connectSaid(a) {
+  if (a.wired && a.loginProxy) return t("Connected · official Claude login with selected models through the local proxy");
   if (!a.wired) return t("Not connected · {agent} uses its own settings", { agent: a.name });
   if (menuFromList(a)) return t("Connected · {n} models in {agent}'s model menu", { n: a.models.shown, agent: a.name });
   const at = PICKS_IN[a.id];
@@ -1342,6 +1343,7 @@ function connectLine(a, kind) {
     return line;
   }
   line.classList.add("on");
+  if (a.loginProxy) { say(connectSaid(a)); return line; }
   if (staleNow(a)) {
     if (a.id === "claude") say(t("Connected · new sessions take it"));
     else {
