@@ -71,9 +71,12 @@ async function press(page, loc, height) {
     for (let n = e; n; n = n.parentElement) playing.push(...n.getAnimations().filter((a) => a.playState === "running" && Number.isFinite(a.effect?.getComputedTiming().endTime)));
     await Promise.all(playing.map((a) => a.finished.catch(() => {})));
   });
-  await page.mouse.move(Math.min(550, (page.viewportSize().width / 2) | 0), 300);
-  for (let i = 0; i < 12 && (await loc.boundingBox()).y > height - 160; i++) {
-    await page.mouse.wheel(0, 300);
+  const view = await page.locator("#view-routing").boundingBox();
+  await page.mouse.move(view.x + view.width - 4, view.y + 100);
+  for (let i = 0; i < 20; i++) {
+    const y = (await loc.boundingBox()).y;
+    if (y > view.y + 20 && y < height - 160) break;
+    await page.mouse.wheel(0, y <= view.y + 20 ? -300 : 300);
     await page.waitForTimeout(150);
   }
   const b = await loc.boundingBox();
