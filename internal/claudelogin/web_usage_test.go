@@ -16,7 +16,7 @@ import (
 const usageFixture = `{"five_hour":{"utilization":100,"resets_at":"fixture-reset"},"seven_day":{"utilization":100},"seat_tier":"unassigned","verification_required":true,"extra_usage":{"is_enabled":false},"limits":[{"kind":"session","percent":100,"severity":"critical"},{"kind":"weekly_all","percent":100,"severity":"critical"},{"kind":"weekly_scoped","percent":100,"severity":"critical"},{"kind":"future-unknown","percent":90}]}`
 
 func TestOrganizationUsageScopeAndPreservedControls(t *testing.T) {
-	const org = "49cd3c7d-fb4e-4cbc-8f73-aacdf1e4b8f7"
+	const org = "11111111-2222-4333-8444-555555555555"
 	for _, tc := range []struct {
 		name, method, path string
 		enabled, managed   bool
@@ -98,7 +98,7 @@ func TestWebUsageRejectsInvalidJSON(t *testing.T) {
 }
 
 func TestOrganizationUsageRealCONNECTAndRestrictedCA(t *testing.T) {
-	const org = "49cd3c7d-fb4e-4cbc-8f73-aacdf1e4b8f7"
+	const org = "11111111-2222-4333-8444-555555555555"
 	client, p := fixture(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(usageFixture))}, nil
 	}), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("web usage reached inference gateway") }))

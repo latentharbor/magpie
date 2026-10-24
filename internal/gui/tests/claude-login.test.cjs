@@ -38,7 +38,7 @@ for (const engine of ['chromium','webkit']) for (const lang of ['en','zh','zh-TW
   const check=modal.locator('input[type=checkbox]').first();
   const usage=modal.locator('input[type=checkbox]').nth(1); await usage.check();await assert.doesNotReject(()=>check.waitFor());
   await page.waitForFunction(()=>document.querySelector('.claude-login input[type=checkbox]').disabled);
-  const org=modal.locator('input[placeholder="00000000-0000-0000-0000-000000000000"]'); await org.fill('49cd3c7d-fb4e-4cbc-8f73-aacdf1e4b8f7');
+  const org=modal.locator('input[placeholder="00000000-0000-0000-0000-000000000000"]'); await org.fill('11111111-2222-4333-8444-555555555555');
   const inputs=modal.locator('.login-mapping input');
   await inputs.nth(0).fill('claude-opus-5-5');await inputs.nth(1).fill('group/opus');
   // Preparing a certificate never silently trusts it or discards model edits.
@@ -48,10 +48,10 @@ for (const engine of ['chromium','webkit']) for (const lang of ['en','zh','zh-TW
   await modal.locator('.bar button').nth(1).click();
   assert.equal(await inputs.nth(1).inputValue(),'group/opus'); assert.equal(await usage.isChecked(),true);
   await modal.locator('.bar button').nth(2).click();
-  assert.equal(await org.inputValue(),'49cd3c7d-fb4e-4cbc-8f73-aacdf1e4b8f7');
+  assert.equal(await org.inputValue(),'11111111-2222-4333-8444-555555555555');
   await modal.locator('.bar button').last().click();
   await page.waitForFunction(()=>document.querySelector('.claude-login .bar button:last-child').disabled===false);
-  assert.deepEqual(posts,[{enabled:false,gatewayUsage:true,usageOrganization:'49cd3c7d-fb4e-4cbc-8f73-aacdf1e4b8f7',listen:'127.0.0.1:3426',models:{'claude-opus-5-5':'group/opus'}}]);
+  assert.deepEqual(posts,[{enabled:false,gatewayUsage:true,usageOrganization:'11111111-2222-4333-8444-555555555555',listen:'127.0.0.1:3426',models:{'claude-opus-5-5':'group/opus'}}]);
   await page.setViewportSize({width:420,height:760});
   await page.waitForTimeout(120);
   assert.equal(await modal.evaluate(e=>e.scrollWidth<=e.clientWidth+1),true);
