@@ -13,6 +13,17 @@ function claudeTeamTile() {
   return b;
 }
 
+function claudeTeamSignedInProvider(st) {
+  return st.agent === "claude" && providers.providers.find((p) => p.team?.members?.some((m) => m.selected && m.user === st.user));
+}
+
+async function addClaudeTeamAccount(organizationId) {
+  editing = null; draft = null; adding = false;
+  await closeModal();
+  editing = "claude-team-" + organizationId;
+  await startSignIn("claude", false, undefined, { organizationId });
+}
+
 function renderTeamAccounts(a, p) {
   const list = el("div", "accts team-accts"), settings = el("button", "text", "Claude Team");
   settings.onclick = async () => { editing = null; draft = null; await closeModal(); openClaudeTeam(p.teamOrganization); };
@@ -30,6 +41,14 @@ function renderTeamAccounts(a, p) {
     if (m.quotaError || m.quotaPending) quota.append(el("span", "aq-asof", t(m.quotaPending ? "Collecting usage…" : m.quotaError)));
     row.append(quota);
     list.append(row);
+  }
+  if (signing?.agent === "claude" && signing.organizationId === p.teamOrganization) list.append(renderSigning(subOf("claude")));
+  else {
+    const add = el("button", "acc add team-add-account");
+    const dot = el("span", "dot"); dot.append(svg(PLUS, 10, 1.8));
+    add.append(dot, el("span", "n", t("Add another {name} account", { name: "Claude" })));
+    add.onclick = () => addClaudeTeamAccount(p.teamOrganization);
+    list.append(add);
   }
   return list;
 }
@@ -61,7 +80,7 @@ async function openClaudeTeam(organizationId = "") {
   bar.append(refresh, el("span", "grow"), cancel, save);
   ed.append(head, el("p", "hint team-intro", t("Premium accounts are on; standby accounts stay off. Existing replies finish before a seat moves.")), fields, chooseOrg, panel, message, pool, bar);
   openModal(ed);
-  let view, selected = new Set(), pending = false, timer;
+  let view, selected = new Set(), changed = new Set(), pending = false, timer;
   const date = (x) => new Date(x).toLocaleString(intlLang());
   const fail = (e) => { message.textContent = e.message; };
   const draw = () => {
@@ -76,7 +95,7 @@ async function openClaudeTeam(organizationId = "") {
     for (const m of members) {
       const row = el("div", "team-member"), label = el("label", "team-check"), box = el("input");
       row.dataset.account = m.accountId; box.type = "checkbox"; box.checked = selected.has(m.accountId);
-      box.onchange = () => { box.checked ? selected.add(m.accountId) : selected.delete(m.accountId); };
+      box.onchange = () => { changed.add(m.accountId); box.checked ? selected.add(m.accountId) : selected.delete(m.accountId); };
       const user = el("span", "team-user", m.user); user.title = m.user;
       label.append(box, user);
       const top = el("div", "team-member-head"); top.append(label);
@@ -126,6 +145,12 @@ async function openClaudeTeam(organizationId = "") {
       }
       row.append(foot); pool.append(row);
     }
+    if (organizationId) {
+      const add = el("button", "text team-add-account", t("Add another {name} account", { name: "Claude" }));
+      add.disabled = pending;
+      add.onclick = () => addClaudeTeamAccount(organizationId);
+      pool.append(add);
+    }
     if (view.history?.length) {
       const history = el("details", "team-history"); history.append(el("summary", "", t("Recent seat changes")));
       const who = (id) => view.members.find((m) => m.accountId === id)?.user || id;
@@ -139,6 +164,7 @@ async function openClaudeTeam(organizationId = "") {
       const next = await api("claude-team/members?" + (organizationId ? "organizationId=" + encodeURIComponent(organizationId) : "new=1"));
       if (!ed.isConnected) return;
       view = next;
+      for (const id of view.config.members || []) if (!changed.has(id)) selected.add(id);
       if (initial) {
         name.value = view.config.name || ""; org.value = view.config.organizationId || organizationId;
         threshold.value = view.config.threshold || 100; enabled.checked = !!view.config.enabled;
@@ -172,6 +198,7 @@ async function openClaudeTeam(organizationId = "") {
       view = await api("claude-team/config", { name: name.value.trim(), routing, enabled: enabled.checked, organizationId: org.value.trim(), sessionKey: key.value,
         threshold: value, members: [...selected].filter((id) => (view.members || []).some((m) => m.accountId === id && m.organizationId.toLowerCase() === org.value.trim().toLowerCase())) });
       key.value = "";
+      changed.clear(); selected = new Set(view.config.members || []);
       organizationId = view.config.organizationId;
       if (view.members?.some((m) => m.selected && (m.quotaPending || m.quotaError))) { draw(); poll(); }
       else await closeModal();

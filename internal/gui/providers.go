@@ -2181,7 +2181,8 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 	// browser and the window follows it until the account is in.
 	mux.HandleFunc("POST /api/signin", func(rw http.ResponseWriter, r *http.Request) {
 		var in struct {
-			Agent, Site string // Site: ZCode's "zai" or "bigmodel"
+			Agent, Site    string // Site: ZCode's "zai" or "bigmodel"
+			OrganizationID string `json:"organizationId"`
 			// Proxy is the one picked to sign in through, kept as the
 			// account's (#1663); none picked, the one its requests go through
 			Proxy *string
@@ -2191,7 +2192,7 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			fail(rw, err)
 			return
 		}
-		st, err := provider.StartSignInWith(in.Agent, provider.SignInOptions{Site: in.Site, Proxy: in.Proxy, User: in.User})
+		st, err := provider.StartSignInWith(in.Agent, provider.SignInOptions{Site: in.Site, Proxy: in.Proxy, User: in.User, OrganizationID: in.OrganizationID})
 		if err != nil {
 			fail(rw, err)
 			return

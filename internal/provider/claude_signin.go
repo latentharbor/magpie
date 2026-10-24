@@ -231,6 +231,12 @@ func startClaudeSignIn(s *signInFlow) error {
 		}
 		if err == nil {
 			l, lerr := claudeSignedIn(cli, dir, s.proxy)
+			if lerr == nil && s.teamOrganization != "" {
+				id, ok := savedSessionIdentity(l)
+				if !ok || !strings.EqualFold(id.OrganizationID, s.teamOrganization) {
+					lerr = errors.New("this Claude account does not belong to the selected organization; sign in to an account in that organization")
+				}
+			}
 			if lerr == nil {
 				var using bool
 				if lerr = s.keep(func() (err error) { using, err = addLogin(l); return err }); lerr == nil {

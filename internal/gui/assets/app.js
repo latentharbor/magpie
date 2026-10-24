@@ -12109,7 +12109,7 @@ async function startSignIn(agent, risky, site, o = {}) {
   if (signingOpen()) api("signin/" + signing.id + "/cancel", {}).catch(() => {});
   // an account Google may suspend is added only once that is said
   if (subOf(agent)?.risk && !risky) {
-    signing = { agent, state: "risk", forUser: o.user, picked: o.proxy };
+    signing = { agent, state: "risk", forUser: o.user, picked: o.proxy, organizationId: o.organizationId };
     renderProviders();
     return;
   }
@@ -12120,13 +12120,14 @@ async function startSignIn(agent, risky, site, o = {}) {
     return;
   }
   if (subOf(agent)?.plugin) return startPluginSignIn(subOf(agent), pluginMethod(subOf(agent), site), {}, o);
-  const keep = { site, forUser: o.user, picked: o.proxy };
+  const keep = { site, forUser: o.user, picked: o.proxy, organizationId: o.organizationId };
   signing = { agent, ...keep, proxy: o.proxy ?? signInProxyOf(agent, o.user), state: "starting" };
   renderProviders();
   try {
     const body = { agent };
     if (site) body.site = site;
     if (o.user) body.user = o.user;
+    if (o.organizationId) body.organizationId = o.organizationId;
     if (o.proxy != null) body.proxy = o.proxy;
     signing = { ...(await api("signin", body)), ...keep };
     if (web && signing.url) api("open", { url: signing.url });
@@ -12165,7 +12166,7 @@ async function followSignIn(id) {
 // again and a proxy picked for it — its site and way, the account signed
 // in to again, the proxy picked
 function signingKept() {
-  return { site: signing.site, method: signing.method, inputs: signing.inputs, forUser: signing.forUser, picked: signing.picked, askProxy: signing.askProxy, customProxy: signing.customProxy, openError: signing.openError };
+  return { site: signing.site, method: signing.method, inputs: signing.inputs, forUser: signing.forUser, picked: signing.picked, organizationId: signing.organizationId, askProxy: signing.askProxy, customProxy: signing.customProxy, openError: signing.openError };
 }
 
 // signInProxyOf: the proxy an account's sign-in goes through when none is
@@ -12183,7 +12184,7 @@ async function signedIn(st) {
   justAdded = st.user;
   delete loginUsage[st.agent]; // what was fetched before has nothing on the new account
   providers = await api("providers?wait=1"); // with its vendor's list (#204)
-  const p = providers.providers.find((x) => x.account?.agent === st.agent);
+  const p = claudeTeamSignedInProvider(st) || providers.providers.find((x) => x.account?.agent === st.agent);
   if (p) { editing = p.id; draft = null; adding = false; presetQuery = ""; }
   renderProviders();
   const who = st.user || subOf(st.agent)?.name || st.agent;
@@ -12422,7 +12423,7 @@ function proxyName(v) {
 // signInThrough: the sign-in under way started again through proxy v.
 function signInThrough(sub, v) {
   const f = signing;
-  const o = { user: f?.forUser, proxy: v };
+  const o = { user: f?.forUser, proxy: v, organizationId: f?.organizationId };
   if (!sub.plugin) return startSignIn(sub.agent, true, f?.site, o); // which ends this one
   if (f?.id && signingOpen()) api("signin/" + f.id + "/cancel", {}).catch(() => {});
   startPluginSignIn(sub, f?.method, f?.inputs || {}, o);
@@ -12583,7 +12584,7 @@ function renderSigning(sub) {
     tt.append(el("span", "s", t(sub.riskNote || "Google may suspend an Antigravity account it sees used outside Antigravity. Use one you can afford to lose.")));
     box.append(tt);
     const go = el("button", "text primary", t("Sign in anyway"));
-    const o = { user: signing.forUser, proxy: signing.picked };
+    const o = { user: signing.forUser, proxy: signing.picked, organizationId: signing.organizationId };
     go.onclick = () => startSignIn(sub.agent, true, undefined, o);
     const close = el("button", "text", t("Cancel"));
     close.onclick = cancelSignIn;
@@ -12642,7 +12643,7 @@ function renderSigning(sub) {
     tt.append(el("span", "n", t("Sign-in didn't finish")), el("span", "s", signing.error || ""));
     box.append(tt);
     const again = el("button", "text primary", t("Try again"));
-    const o = { user: signing.forUser, proxy: signing.picked };
+    const o = { user: signing.forUser, proxy: signing.picked, organizationId: signing.organizationId };
     again.onclick = () => sub.plugin ? startPluginSignIn(sub, signing.method, signing.inputs || {}, o) : startSignIn(sub.agent, true, signing.site, o);
     const close = el("button", "text", t("Cancel"));
     close.onclick = cancelSignIn;

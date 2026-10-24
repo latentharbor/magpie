@@ -137,12 +137,14 @@ type signInFlow struct {
 	proxy  string
 	chosen bool
 	// user is the account signed in to again, "" for a new one
-	user string
+	user             string
+	teamOrganization string // optional Claude organization the login must belong to
 }
 
 // SignInOptions are a sign-in's choices beyond its subscription.
 type SignInOptions struct {
-	Site string // where to sign in, for one with more than one (StartSignInAt)
+	OrganizationID string // an existing Claude Team, empty for ordinary sign-in
+	Site           string // where to sign in, for one with more than one (StartSignInAt)
 	// Proxy is the one to sign in through, as netproxy.With takes it ("" the
 	// global one, "direct" none, or its address); nil for the one the
 	// account's requests would go through. Picked, it is kept as the
@@ -245,12 +247,20 @@ func StartSignInWith(agent string, o SignInOptions) (SignInState, error) {
 	if settings.AccountDiscoveryOff() {
 		return SignInState{}, errAccountDiscoveryOff
 	}
+	if o.OrganizationID != "" {
+		if agent != "claude" {
+			return SignInState{}, errors.New("organization sign-in requires Claude")
+		}
+		if _, err := claudeTeamForOrg(o.OrganizationID, false); err != nil {
+			return SignInState{}, err
+		}
+	}
 	// one moved onto its plugin signs in there: an account signed in to
 	// here would be the built-in's, which nothing serves now
 	if PluginServes(agent) {
 		return SignInState{}, fmt.Errorf("%s runs on its plugin: sign in through the plugin (magpie plugin login %s)", agent, agent)
 	}
-	s := &signInFlow{verifier: randomToken(48), state: randomToken(24), done: make(chan struct{}), site: site}
+	s := &signInFlow{verifier: randomToken(48), state: randomToken(24), done: make(chan struct{}), site: site, teamOrganization: strings.ToLower(strings.TrimSpace(o.OrganizationID))}
 	if err := s.pickProxy(agent, o); err != nil {
 		return SignInState{}, err
 	}
@@ -873,7 +883,9 @@ func addLogin(l savedLogin) (using bool, err error) {
 		if err == nil {
 			StaleAllowance(l.Agent, l.User)
 			if l.Agent == "claude" {
-				captureClaudeTeamLogin(l)
+				if joinErr := joinClaudeTeamLogin(l); joinErr != nil {
+					err = fmt.Errorf("signed in, but could not add the account to Claude Team: %w", joinErr)
+				}
 			}
 		}
 	}()

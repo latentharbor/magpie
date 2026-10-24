@@ -71,14 +71,15 @@ type claudeTeamPending struct {
 	Baseline       []string
 }
 type claudeTeamDisk struct {
-	OrganizationID string                     `json:"organizationId"`
-	Seats          map[string]string          `json:"seats,omitempty"`
-	Limits         map[string][]ClaudeLimit   `json:"limits"`
-	Observed       map[string]time.Time       `json:"observed,omitempty"`
-	QuotaErrors    map[string]string          `json:"quotaErrors,omitempty"`
-	Original       map[string]claudeTeamFlags `json:"original"`
-	Pending        *claudeTeamPending         `json:"pending,omitempty"`
-	History        []ClaudeTeamEvent          `json:"history"`
+	MembershipInitialized bool                       `json:"membershipInitialized,omitempty"`
+	OrganizationID        string                     `json:"organizationId"`
+	Seats                 map[string]string          `json:"seats,omitempty"`
+	Limits                map[string][]ClaudeLimit   `json:"limits"`
+	Observed              map[string]time.Time       `json:"observed,omitempty"`
+	QuotaErrors           map[string]string          `json:"quotaErrors,omitempty"`
+	Original              map[string]claudeTeamFlags `json:"original"`
+	Pending               *claudeTeamPending         `json:"pending,omitempty"`
+	History               []ClaudeTeamEvent          `json:"history"`
 }
 
 type claudeTeamController struct {
@@ -328,6 +329,18 @@ func SaveClaudeTeam(ctx context.Context, c ClaudeTeamConfig) error {
 	t, err := claudeTeamForOrg(c.OrganizationID, true)
 	if err != nil {
 		return err
+	}
+	// Creating an organization adopts its already saved accounts as well as
+	// those selected by an older editor. Editing an existing pool still keeps
+	// deliberate exclusions; new logins join from addLogin.
+	if old, err := t.readConfig(); err == nil && old.OrganizationID == "" {
+		c.Members = slices.Clone(c.Members)
+		for _, l := range readLogins() {
+			id, ok := savedSessionIdentity(l)
+			if ok && id.Agent == "claude" && strings.EqualFold(id.OrganizationID, strings.TrimSpace(c.OrganizationID)) && claudeTeamUUID.MatchString(id.AccountID) && !slices.Contains(c.Members, strings.ToLower(id.AccountID)) {
+				c.Members = append(c.Members, strings.ToLower(id.AccountID))
+			}
+		}
 	}
 	if err := t.save(ctx, c); err != nil {
 		return err
@@ -1146,6 +1159,7 @@ func (t *claudeTeamController) keep(ctx context.Context) {
 		case <-timer.C:
 		case <-t.wake:
 		}
+		joinErr := t.adoptSavedLogins()
 		t.op.Lock()
 		t.mu.Lock()
 		manual := t.manual
@@ -1157,6 +1171,9 @@ func (t *claudeTeamController) keep(ctx context.Context) {
 		work, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		err := t.reconcile(work, manual)
 		cancel()
+		if err == nil {
+			err = joinErr
+		}
 		// New logins/members and externally observed assignments share the
 		// same capture queue as internal assignments, independent of history.
 		t.collectQuotaDue(ctx)

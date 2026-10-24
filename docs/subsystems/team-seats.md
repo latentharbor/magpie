@@ -129,6 +129,26 @@ second automatic seat controller on the same pool.
 
 ## GUI and API
 
+An existing organization's ordinary account list and its Team settings both
+offer Add another Claude account at the bottom. They run the existing Claude
+Code browser sign-in with an organization UUID constraint, retained through
+retry and proxy changes. A foreign profile fails before being saved. Successful
+login or file import automatically joins the matching configured organization,
+persists membership locally, queues quota collection and returns the editor to
+that organization. Joining does not need an administrator network request or
+allocate a seat; a new member stays closed until its seat is verified. A quota
+failure retains prior data and the existing retry action. A local membership
+write failure reports that sign-in succeeded but joining failed, retaining the
+credential rather than pretending the account was joined.
+
+Creating an organization also adopts matching accounts already saved. On the
+first controller run after upgrade, matching standalone accounts are adopted
+once, recorded by `membershipInitialized` in the private journal. Later pool
+exclusions survive restart; explicitly signing the account in again joins it
+again. Only newly joined members are queued, not the entire saved pool.
+Refreshing an open form incorporates automatic membership without overwriting
+checkbox choices the user changed in that form.
+
 Providers → Add → Claude Team, or the Claude account editor's Claude Team
 button, opens the organization settings. Add may create multiple subscriptions;
 each appears in the ordinary provider list and uses its standard editor,

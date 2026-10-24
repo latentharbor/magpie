@@ -30,27 +30,6 @@ func (t *claudeTeamController) queueQuotaLocked(id string) {
 	t.quotaDue[id], t.quotaAttempted[id] = true, true
 }
 
-// New/re-authenticated accounts already selected in a Team are captured as
-// soon as login succeeds. An account selected later is queued by config save.
-func captureClaudeTeamLogin(l savedLogin) {
-	id, ok := savedSessionIdentity(l)
-	if !ok || id.Agent != "claude" {
-		return
-	}
-	for _, t := range claudeTeamControllers() {
-		t.mu.Lock()
-		selected := strings.EqualFold(t.cfg.OrganizationID, id.OrganizationID) && slices.Contains(t.cfg.Members, strings.ToLower(id.AccountID))
-		if selected {
-			t.users[strings.ToLower(l.User)] = strings.ToLower(id.AccountID)
-			t.queueQuotaLocked(strings.ToLower(id.AccountID))
-		}
-		t.mu.Unlock()
-		if selected {
-			t.notify()
-		}
-	}
-}
-
 func (t *claudeTeamController) collectQuotaDue(ctx context.Context) {
 	t.mu.Lock()
 	ids := make([]string, 0, len(t.quotaDue))

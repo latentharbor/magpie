@@ -29,7 +29,7 @@ function fixture(lang) {
         logins:v.members.map(m=>({agent:"claude",user:m.user,on:m.on,active:false,plan:"Team"}))}};
   }
   providers.push(provider(views.get(org)));
-  const f = {posts,views,providers};
+  const f = {posts,views,providers, starts:[]};
   f.route = async route => {
     const req=route.request(), url=new URL(req.url()), json=data=>route.fulfill({json:data});
     if(url.pathname==="/boot.js") return route.fulfill({contentType:"text/javascript",body:"window.bootPrefs="+JSON.stringify({lang,theme:"light",web:true})+";"});
@@ -37,6 +37,12 @@ function fixture(lang) {
     if(url.pathname==="/api/state") return json({agents:[],profiles:[],settings:{lang,theme:"light"}});
     if(url.pathname==="/api/providers") return json({providers,presets:[],excluded:[],gateway:{running:true,window:true}});
     if(url.pathname==="/api/groups") return json({groups:[]});
+    if(url.pathname==="/api/signin") {
+      const body=req.postDataJSON(); f.starts.push(body);
+      f.signing={id:"team-login-"+f.starts.length,agent:"claude",state:"waiting",url:"https://example.test/login",pasteCode:true};
+      return json(f.signing);
+    }
+    if(url.pathname.startsWith("/api/signin/")) return json(f.signing);
     if(url.pathname.startsWith("/api/claude-team/")) {
       if(req.method()==="POST") {
         const body=req.postDataJSON(); posts.push({path:url.pathname,body});
@@ -64,6 +70,46 @@ function fixture(lang) {
 }
 for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webkit"])) {
   for(const lang of (process.env.LANG_ONLY?[process.env.LANG_ONLY]:["en","zh","zh-TW","ja","de"])) {
+    test(engine+" "+lang+": add inside an organization, retry and return to its account list", {timeout:30000}, async t=>{
+      const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
+      t.after(()=>browser.close());
+      const page=await(await browser.newContext({viewport:{width:1000,height:850},reducedMotion:"reduce"})).newPage();
+      page.setDefaultTimeout(7000);
+      const words=strings().I18N[lang]||{}, tr=s=>words[s]||s, f=fixture(lang), errors=[];
+      page.on("pageerror",e=>errors.push(e.message));
+      await page.route("**/*",f.route);
+      await page.goto("http://magpie.test/?view=providers&edit=claude-team-"+org);
+      const native=page.locator(".editor:not(.claude-team)");
+      await native.locator(".team-add-account").click();
+      await page.getByRole("button",{name:tr("Sign in anyway"),exact:true}).click();
+      await page.locator(".signing .signlink").waitFor();
+      assert.deepEqual(f.starts,[{agent:"claude",organizationId:org}]);
+      f.signing.state="failed"; f.signing.error="fixture failure";
+      await page.getByRole("button",{name:tr("Try again"),exact:true}).click();
+      await page.locator(".signing .signlink").waitFor();
+      assert.deepEqual(f.starts[1],f.starts[0],"retry lost the organization");
+      const v=f.views.get(org), m={...v.members[0],accountId:id(60),user:"new@example.test",quotaPending:true};
+      v.members.push(m); v.config.members.push(m.accountId);
+      // A provider refresh, not a manual Team save, delivers the joined login.
+      f.providers[0].account.logins.push({agent:"claude",user:m.user,on:true,plan:"Team"});
+      f.signing={...f.signing,state:"done",user:m.user};
+      await native.locator(".team-accts .acc").nth(13).waitFor();
+      assert((await native.innerText()).includes(m.user));
+      assert.equal(f.posts.length,0,"login required a separate Team save");
+      await native.locator(".team-accts > button").first().click();
+      const dialog=page.locator(".claude-team");
+      await dialog.locator(".team-add-account").waitFor();
+      const extra={...m,accountId:id(61),user:"outside-login@example.test"};
+      v.members.push(extra); v.config.members.push(extra.accountId);
+      await dialog.getByRole("button",{name:tr("Refresh"),exact:true}).click();
+      const row=dialog.locator('.team-member[data-account="'+extra.accountId+'"]');
+      assert(await row.locator('input[type="checkbox"]').isChecked(),"refresh lost server-side automatic membership");
+      await dialog.locator(".team-add-account").click();
+      await page.getByRole("button",{name:tr("Sign in anyway"),exact:true}).click();
+      await page.locator(".signing .signlink").waitFor();
+      assert.equal(f.starts[2].organizationId,org,"settings entry lost the organization");
+      assert.deepEqual(errors,[]);
+    });
     test(engine+" "+lang+": normal subscriptions, cached quotas, multi-org forms and no preferred account", {timeout:60000}, async t=>{
       const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
       t.after(()=>browser.close());
@@ -85,7 +131,7 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
         await page.evaluate(async()=>{ await Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>{}))); });
         await page.screenshot({path:path.join(process.env.SCREENSHOT_DIR,engine+"-team-provider.png")});
       }
-      await native.locator(".team-accts > button").click();
+      await native.locator(".team-accts > button").first().click();
       const dialog=page.locator(".claude-team");
       await dialog.locator(".team-member").nth(12).waitFor();
       const geometry=await dialog.evaluate(e=>({
@@ -103,7 +149,7 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       await dialog.waitFor({state:"detached"});
       assert.deepEqual(f.posts[0].body,{name:"Glac Team",routing:"",enabled:true,organizationId:org,sessionKey:"fixture-secret-value",threshold:95,members:f.views.get(org).members.map(m=>m.accountId)});
       await page.locator('#providers .row[data-id="claude-team-'+org+'"]').click();
-      await page.locator(".team-accts > button").click();
+      await page.locator(".team-accts > button").first().click();
       await dialog.locator(".team-member").nth(12).waitFor();
       assert(!(await dialog.innerText()).includes("fixture-secret-value"));
       await dialog.getByRole("button",{name:tr("Rotate seat now"),exact:true}).click();
@@ -160,7 +206,7 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       f.failCaptureOnSave=true;
       await page.route("**/*",f.route);
       await page.goto("http://magpie.test/?view=providers&edit=claude-team-"+org);
-      await page.locator(".team-accts > button").click();
+      await page.locator(".team-accts > button").first().click();
       const dialog=page.locator(".claude-team");
       await dialog.locator(".team-member").nth(12).waitFor();
       await dialog.getByRole("button",{name:tr("Save"),exact:true}).click();
