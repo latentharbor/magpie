@@ -31,6 +31,7 @@ import (
 
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/awake"
+	"github.com/yetone/magpie/internal/claudelogin"
 	"github.com/yetone/magpie/internal/gwbudget"
 	"github.com/yetone/magpie/internal/gwmw"
 	"github.com/yetone/magpie/internal/gwtool"
@@ -592,6 +593,12 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	// the magpie serving the gateway, and only it, keeps the saved accounts
 	// signed in, so two never refresh one sign-in at once
 	go provider.KeepLoginsAlive(ctx)
+	// Optional explicit HTTPS proxy: Desktop keeps its official sign-in.
+	// Disabled installations create neither a listener nor a certificate.
+	loginCtx, stopLogin := context.WithCancel(ctx)
+	loginDone := make(chan struct{})
+	go func() { defer close(loginDone); claudelogin.Keep(loginCtx, URL(), http.DefaultTransport) }()
+	defer func() { stopLogin(); <-loginDone }()
 	// and signs Codex and Claude Code in to their next account when the
 	// one they are on is spent
 	go provider.KeepOnAnAccountWithRoom(ctx)

@@ -1142,6 +1142,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	updateRoutes(mux, w)
 	whatsNewRoutes(mux)
 	cliBehindRoutes(mux)
+	claudeLoginRoutes(mux)
 	gatewayFixRoutes(mux)
 	gatewayModeRoutes(mux)
 	privacyModelRoutes(mux)

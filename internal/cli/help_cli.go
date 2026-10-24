@@ -72,6 +72,8 @@ func helpFor(args []string) string {
 		return githubUsage
 	case "claude-code":
 		return claudeCodeUsage
+	case "claude-login":
+		return claudeLoginUsage
 	case "list":
 		cmd = "ls"
 	case "account":

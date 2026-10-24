@@ -117,6 +117,7 @@ func claudeDesktop(home string) *Agent {
 	return &Agent{
 		ID: "claude-desktop", Name: "Claude Desktop", Icon: "claude-color", Aliases: []string{"claude-app"},
 		Dir: p.dir, Path: p.config,
+		Beside: func() bool { return slices.ContainsFunc(ps, desktopLoginApplied) },
 		detect: func() bool {
 			// its own data (%APPDATA%\Claude on Windows, or the MSIX
 			// package's), the folder magpie writes or Claude-3p
@@ -131,12 +132,20 @@ func claudeDesktop(home string) *Agent {
 			return desktopdir.Installed(desktopdir.OS, home, os.Getenv)
 		},
 		Notice: func() string {
+			if slices.ContainsFunc(ps, desktopLoginApplied) {
+				return "Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings."
+			}
 			if desktopWiredAny(ps) {
 				return noticeClaudedesktop1.String()
 			}
 			return noticeClaudedesktop2.String()
 		},
 		Check: func() string {
+			for _, p := range ps {
+				if desktopLoginApplied(p) {
+					return desktopLoginCheck(p)
+				}
+			}
 			if !desktopWiredAny(ps) {
 				return ""
 			}
@@ -153,12 +162,15 @@ func claudeDesktop(home string) *Agent {
 		Fields: append([]Field{{
 			Key: "provider", Label: "provider",
 			Get: func() string {
-				if desktopWiredAny(ps) {
+				if desktopWiredAny(ps) || slices.ContainsFunc(ps, desktopLoginApplied) {
 					return magpieID
 				}
 				return ""
 			},
 			Set: func(v string) error {
+				if DesktopLoginWired() {
+					return fmt.Errorf("disable Keep Claude signed in in Settings before changing Desktop's provider")
+				}
 				on := desktopOn
 				if v == "" {
 					on = desktopOff
@@ -179,6 +191,9 @@ func claudeDesktop(home string) *Agent {
 				return nil
 			},
 			Options: func(map[string]string) []Option {
+				if slices.ContainsFunc(ps, desktopLoginApplied) {
+					return []Option{{Value: magpieID, Label: "magpie", Icon: "magpie", Note: "Official Claude login with selected models through magpie’s local HTTPS proxy"}}
+				}
 				return []Option{{Value: magpieID, Label: "magpie", Icon: "magpie",
 					Note: "Desktop's third-party gateway: Code and Cowork on magpie's models, no Anthropic sign-in (restart Desktop)"}}
 			},
@@ -318,6 +333,9 @@ func desktopSubagentEffortField(ps []desktopPaths) Field {
 
 // desktopWired: _meta.json lists magpie's profile.
 func desktopWired(p desktopPaths) bool {
+	if desktopLoginApplied(p) {
+		return false // the saved 3p profile is inactive; don't publish its capabilities
+	}
 	entries, _, err := desktopEntries(p.meta)
 	return err == nil && slices.ContainsFunc(entries, desktopOurs)
 }

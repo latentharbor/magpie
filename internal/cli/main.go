@@ -99,6 +99,7 @@ const usage = `magpie — one place to pick every agent's model
   magpie accounts alias <agent> <email> [<name>|--clear]   a name of your own for an account, shown on its card, in the menu bar and in magpie quota
   magpie accounts switch-only codex [on|off]   only switch Codex's own sign-in to an account with room; its requests go straight to OpenAI, never through magpie
   magpie claude-code [install [--yes]|remove]   the Claude Code a Claude subscription runs; install downloads Anthropic's own build, checked against its manifest, for a server or container without one
+  magpie claude-login [prepare|map|unmap|on|off]  keep Claude Desktop's official login; route selected inference through a local HTTPS proxy (experimental)
   magpie plugin [add <package>|rm|update|on|off|login <provider>|logout <provider>]
                                   OpenCode provider plugins and pi packages: subscriptions signed in to, and served, through a plugin
   magpie plugin move|migrate <subscription>   run a built-in subscription's accounts on its community plugin
@@ -413,6 +414,8 @@ func run(args []string) error {
 		return imagemcp.Run(args[1:])
 	case "claude-code":
 		return claudeCodeCmd(args[1:])
+	case "claude-login":
+		return claudeLoginCmd(args[1:])
 	case "claude-mcp-helper": // internal: stdio MCP subprocess spawned by Claude Code
 		return claudebridge.RunMCP(args[1:])
 	}

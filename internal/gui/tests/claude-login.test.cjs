@@ -1,0 +1,61 @@
+// Isolated real-page tests; no live gateway, credentials or certificate trust.
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const { test } = require('node:test');
+const { chromium, webkit } = require('playwright');
+const assets = path.resolve(__dirname, '../assets');
+for (const engine of ['chromium','webkit']) for (const lang of ['en','zh','zh-TW','ja','de']) {
+ test(`${engine} ${lang}: Claude login mapping, trust gate, drafts and narrow layout`, async t => {
+  const browser = await (engine === 'webkit' ? webkit.launch() : chromium.launch());
+  t.after(()=>browser.close());
+  const page = await browser.newPage({ viewport:{width:1000,height:760},reducedMotion:'reduce' });
+  page.setDefaultTimeout(5000);
+  const errors=[],posts=[];page.on('pageerror',e=>errors.push(e.message));
+  let cur={config:{enabled:false,listen:'127.0.0.1:3426',models:{}},runtime:{running:false},certificate:{trusted:false,path:'/fixture/magpie/claude-login-ca/ca.pem'},supported:true};
+  await page.route('**/*',async route=>{
+   const req=route.request(),u=new URL(req.url()),json=data=>route.fulfill({json:data});
+   if(u.pathname==='/boot.js')return route.fulfill({contentType:'text/javascript',body:`window.bootPrefs=${JSON.stringify({lang,theme:'light',web:true})};`});
+   if(u.pathname==='/wails/runtime.js')return route.fulfill({contentType:'text/javascript',body:'export const Window={};'});
+   if(u.pathname==='/api/state')return json({agents:[],profiles:[],settings:{lang,theme:'light'}});
+   if(u.pathname==='/api/settings')return json({lang,theme:'light',tray:'panel',currency:'usd',textSize:100,proxy:'',proxyNow:'',proxySource:'none',visionModels:[],imageGenModels:[],workbuddyCheckins:[],fx:{rate:7.2,at:new Date().toISOString()}});
+   if(u.pathname==='/api/claude-login/prepare-usage'){cur.usageCertificate={trusted:true,path:'/fixture/web-ca/ca.pem'};return json(cur);}
+   if(u.pathname==='/api/claude-login/prepare'){cur.certificate={...cur.certificate,exists:true,sha256:'a'.repeat(64)};return json(cur);}
+   if(u.pathname==='/api/claude-login'){
+    if(req.method()==='POST'){posts.push(req.postDataJSON());cur={...cur,config:posts.at(-1)};}
+    return json(cur);
+   }
+   if(u.pathname==='/api/plugins')return json({plugins:[]});
+   if(u.pathname==='/api/usage/quotas')return json([]);
+   if(u.pathname==='/api/groups')return json({groups:[],models:[]});
+   if(u.pathname.startsWith('/api/'))return json({});
+   const f=path.join(assets,u.pathname==='/'?'index.html':u.pathname);
+   return route.fulfill({body:await fs.readFile(f),contentType:{'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml'}[path.extname(f)]});
+  });
+  await page.goto('http://magpie.test/?view=settings&tab=network');
+  await page.locator('#claudeLoginOpen').click();
+  const modal=page.locator('.claude-login');await modal.waitFor();
+  const check=modal.locator('input[type=checkbox]').first();
+  const usage=modal.locator('input[type=checkbox]').nth(1); await usage.check();await assert.doesNotReject(()=>check.waitFor());
+  await page.waitForFunction(()=>document.querySelector('.claude-login input[type=checkbox]').disabled);
+  const org=modal.locator('input[placeholder="00000000-0000-0000-0000-000000000000"]'); await org.fill('49cd3c7d-fb4e-4cbc-8f73-aacdf1e4b8f7');
+  const inputs=modal.locator('.login-mapping input');
+  await inputs.nth(0).fill('claude-opus-5-5');await inputs.nth(1).fill('group/opus');
+  // Preparing a certificate never silently trusts it or discards model edits.
+  await modal.locator('.bar button').nth(0).click();
+  await modal.locator('.login-certificate').getByText('SHA-256:',{exact:false}).waitFor();
+  assert.equal(await inputs.nth(0).inputValue(),'claude-opus-5-5');assert.equal(await check.isDisabled(),true);
+  await modal.locator('.bar button').nth(1).click();
+  assert.equal(await inputs.nth(1).inputValue(),'group/opus'); assert.equal(await usage.isChecked(),true);
+  await modal.locator('.bar button').nth(2).click();
+  assert.equal(await org.inputValue(),'49cd3c7d-fb4e-4cbc-8f73-aacdf1e4b8f7');
+  await modal.locator('.bar button').last().click();
+  await page.waitForFunction(()=>document.querySelector('.claude-login .bar button:last-child').disabled===false);
+  assert.deepEqual(posts,[{enabled:false,gatewayUsage:true,usageOrganization:'49cd3c7d-fb4e-4cbc-8f73-aacdf1e4b8f7',listen:'127.0.0.1:3426',models:{'claude-opus-5-5':'group/opus'}}]);
+  await page.setViewportSize({width:420,height:760});
+  await page.waitForTimeout(120);
+  assert.equal(await modal.evaluate(e=>e.scrollWidth<=e.clientWidth+1),true);
+  assert.equal(await modal.locator('select').count(),0);
+  assert.deepEqual(errors,[]);
+ });
+}

@@ -343,6 +343,10 @@
   <section class="set-page" id="setPage-network" role="tabpanel" aria-labelledby="setTab-network">
     <div class="list prefs">
       <div class="row pref">
+        <div class="who"><div class="name" data-t>Keep Claude signed in</div><div class="sub" data-t>Official login with selected inference routed through magpie. Experimental.</div></div>
+        <button type="button" class="text" id="claudeLoginOpen" data-t>Configure</button>
+      </div>
+      <div class="row pref">
         <div class="who"><div class="name" data-t>Proxy</div><div class="sub" id="proxySub"></div></div>
         <div id="proxySegs" class="proxy-segs"></div>
       </div>
@@ -486,6 +490,8 @@
 <link rel="stylesheet" href="claude-team.css">
 <script src="claude-team.js"></script>
 <script src="claude-transport.js"></script>
+<link rel="stylesheet" href="claude-login.css">
+<script src="claude-login.js"></script>
 <script src="plugins.js"></script>
 <script src="pluginpages.js"></script>
 <script src="context.js"></script>
