@@ -538,7 +538,7 @@ func Run(version string, showMain bool, link string) error {
 	if runtime.GOOS == "darwin" {
 		onHandedOver = func() {
 			application.InvokeSync(func() {
-				h.tray.Hide()
+				h.retireTray()
 				if h.panel != nil {
 					h.panel.Hide()
 				}
@@ -586,6 +586,7 @@ func Run(version string, showMain bool, link string) error {
 		h.main.OnWindowEvent(events.Windows.WebViewNavigationCompleted, func(*application.WindowEvent) { markReady() })
 	} else {
 		h.app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+			h.restoreTray()
 			plainTitlebar(h.main) // Linux: the page's header is the title bar; the Mac: a plain one's corners
 			nameWindow(h.panel, panelTitle)
 			ownFrame(h.panel) // KDE: no title bar of KWin's on it (#1283)

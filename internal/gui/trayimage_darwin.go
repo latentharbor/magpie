@@ -293,6 +293,48 @@ static NSStatusBarButton *mpButton(void) {
 	return nil;
 }
 
+// Wails' action target owns the status item (StatusItemController).
+@protocol MPStatusItemOwner
+@property (assign, readonly) NSStatusItem *statusItem;
+@end
+
+static NSStatusItem *mpStatusItem(void) {
+	NSStatusBarButton *b = mpButton();
+	id owner = b.target;
+	if (![owner respondsToSelector:@selector(statusItem)]) return nil;
+	NSStatusItem *item = [(id<MPStatusItemOwner>)owner statusItem];
+	return [item isKindOfClass:[NSStatusItem class]] && item.button == b ? item : nil;
+}
+
+// Setting visible=NO persists across processes sharing the bundle. The old
+// process only gives up its space while it drains, not the user's visibility.
+static int mpRetireTray(void) {
+	__block int ok = 0;
+	void (^retire)(void) = ^{
+		NSStatusItem *item = mpStatusItem();
+		if (item == nil) return;
+		item.length = 0;
+		ok = 1;
+	};
+	if ([NSThread isMainThread]) retire();
+	else dispatch_sync(dispatch_get_main_queue(), retire);
+	return ok;
+}
+
+static int mpTrayState(int *visible, double *length) {
+	__block int ok = 0;
+	void (^read)(void) = ^{
+		NSStatusItem *item = mpStatusItem();
+		if (item == nil) return;
+		*visible = item.visible;
+		*length = item.length;
+		ok = 1;
+	};
+	if ([NSThread isMainThread]) read();
+	else dispatch_sync(dispatch_get_main_queue(), read);
+	return ok;
+}
+
 // What the item shows while the cells are up; the bird changes as it flaps.
 static NSArray *mpShown;
 static NSImage *mpBird;
@@ -532,6 +574,15 @@ import (
 // light or dark and sharp at any scale. Wails sizes an icon it is given to
 // a square, so the image is set on the status item's button here; the
 // bird's flap goes through it while it is up (trayImageFrame).
+
+func trayRetire() bool { return C.mpRetireTray() != 0 }
+
+func trayNativeState() (visible bool, length float64, ok bool) {
+	var v C.int
+	var n C.double
+	ok = C.mpTrayState(&v, &n) != 0
+	return v != 0, float64(n), ok
+}
 
 // withCells hands the cells to C for the length of f.
 func withCells(cells []trayCell, f func(*C.mpTrayCell, C.int)) {

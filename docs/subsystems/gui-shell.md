@@ -530,6 +530,15 @@ Two magpies never show at once. On a Mac the old one lets go of its
 instance lock before it gives the socket (`releaseInstance`), so the new
 one's `runningAlready` takes it, and once the ack comes the old one hides
 its menu bar icon, panel and window and leaves the Dock (`onHandedOver`).
+The predecessor's status item has zero length while it drains, rather
+than `visible=false`: AppKit persists visibility by its autosave name,
+shared by successive processes of the same bundle, so hiding the old
+item also hid the replacement after an update. The item stays alive for
+already queued quota/image callbacks. Once the new app has started, it
+explicitly shows its tray to recover visibility saved by older versions
+(`restoreTray`, `retireTray` in
+[`tray_lifecycle.go`](../../internal/gui/tray_lifecycle.go);
+`TestUpdateHandoverDoesNotPersistHiddenTray`).
 On Linux the D-Bus name Wails holds can't be let go, so the new one serves
 the gateway at once but waits for the old pid to end (`awaitExit`, at most
 `handedOffWait`, 16 minutes) before it makes its app and tray; the old one
