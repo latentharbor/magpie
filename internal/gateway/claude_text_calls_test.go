@@ -1,9 +1,7 @@
 package gateway
 
 import (
-	"bufio"
 	"encoding/json"
-	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -50,27 +48,40 @@ var realCallTurn = []string{
 // stdinOf gives run an input that records each line it is told.
 func stdinOf(t *testing.T, run *subscriptionRun) func() []string {
 	t.Helper()
-	pr, pw := io.Pipe()
-	run.stdin = pw
-	var mu sync.Mutex
-	var told []string
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		s := bufio.NewScanner(pr)
-		s.Buffer(make([]byte, 64<<10), 1<<20)
-		for s.Scan() {
-			mu.Lock()
-			told = append(told, s.Text())
-			mu.Unlock()
+	w := &linesTold{}
+	run.stdin = w
+	return w.lines
+}
+
+// linesTold keeps what a run is told as each write is made, so a test reads
+// it the moment the reply is in. A pipe's write returned before its reader
+// had kept the line, and the check could come first (CI, 843417957).
+type linesTold struct {
+	mu   sync.Mutex
+	part string
+	told []string
+}
+
+func (w *linesTold) Write(b []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.part += string(b)
+	for {
+		i := strings.IndexByte(w.part, '\n')
+		if i < 0 {
+			return len(b), nil
 		}
-	}()
-	t.Cleanup(func() { pw.Close(); pr.Close(); <-done })
-	return func() []string {
-		mu.Lock()
-		defer mu.Unlock()
-		return append([]string(nil), told...)
+		w.told = append(w.told, w.part[:i])
+		w.part = w.part[i+1:]
 	}
+}
+
+func (w *linesTold) Close() error { return nil }
+
+func (w *linesTold) lines() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]string(nil), w.told...)
 }
 
 // A reply that writes its tool calls as "[tool call …]" text shows the

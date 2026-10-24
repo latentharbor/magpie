@@ -777,6 +777,19 @@ model-specific refusals and sign-in failures do not infer global exhaustion.
 This feeds the existing background handoff and uncommitted-request replay;
 it neither changes the requested effort nor replays visible output.
 
+## A restart to update
+
+A run is a Claude Code process of this magpie's, so a restart to update
+that hands the gateway to the new version ([GUI shell](gui-shell.md#a-restart-to-update-hands-the-gateway-over))
+waits for the bridge's turns, and for none of the gateway's other requests
+(`restartBusy` in [`handover.go`](../../internal/gui/handover.go): `Busy.Bridge`,
+`Tools`, `BridgeLast`). A run's tool calls go to the gateway's port, which
+the new one serves once it has the socket; a `claude-mcp` token the new one
+doesn't know is forwarded to the old one's callback socket
+(`ForwardCallbacks`, `forwardCallback`), which serves it until it quits
+(`ServeCallbacks`). A run idle between turns ends with the old process,
+and the next turn starts a run in the new one, as after any restart.
+
 ## Verification
 
 ```sh
