@@ -94,7 +94,7 @@ func TestClaudeHTTPNativeAndTranslated(t *testing.T) {
 				if json.Unmarshal([]byte(gjson.GetBytes(*sent, "metadata.user_id").String()), &identity) != nil || identity["account_uuid"] != "account-a" || identity["session_id"] != head.Get("x-claude-code-session-id") {
 					t.Fatal("HTTP identity/header drift")
 				}
-				if head.Get("User-Agent") != "claude-cli/2.1.309 (external, cli)" || head.Get("x-claude-code-prompt-id") == "" {
+				if head.Get("User-Agent") != "claude-cli/2.1.310 (external, cli)" || head.Get("x-claude-code-prompt-id") == "" {
 					t.Fatal("missing native application profile")
 				}
 			})
@@ -132,7 +132,7 @@ func TestClaudeHTTPPreservesNativeProtocol(t *testing.T) {
 			t.Fatalf("missing %s", beta)
 		}
 	}
-	if !strings.Contains(gjson.GetBytes(got, "system.0.text").String(), "2.1.309.c22;") {
+	if !strings.Contains(gjson.GetBytes(got, "system.0.text").String(), "2.1.310.efb;") {
 		t.Fatal("fingerprint differs from the observed local native CLI")
 	}
 }
@@ -275,13 +275,24 @@ func TestClaudeHTTPCCHKnownVector(t *testing.T) {
 	}
 }
 
-// Optional local offline capture comparison. No native CLI or credentials are
-// read by the ordinary test suite; point this only at a fake-token capture.
-func TestClaudeHTTPNativeCCHCapture(t *testing.T) {
-	path := os.Getenv("MAGPIE_CLAUDE_HTTP_CAPTURE")
-	if path == "" {
-		t.Skip("offline native capture not supplied")
+// Captures use fake tokens and a loopback-only mock. Never load live CLI
+// credentials; an optional extra capture is admitted in the same format.
+func claudeHTTPCapturePaths() []string {
+	paths := []string{"testdata/claude-310-cli-request.json", "testdata/claude-310-sdk-request.json", "testdata/claude-308-desktop-entrypoint-request.json"}
+	if path := os.Getenv("MAGPIE_CLAUDE_HTTP_CAPTURE"); path != "" {
+		paths = append(paths, path)
 	}
+	return paths
+}
+
+func TestClaudeHTTPNativeCCHCapture(t *testing.T) {
+	for _, path := range claudeHTTPCapturePaths() {
+		t.Run(path, func(t *testing.T) { checkClaudeHTTPNativeCCHCapture(t, path) })
+	}
+}
+
+func checkClaudeHTTPNativeCCHCapture(t *testing.T, path string) {
+	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -319,10 +330,13 @@ func TestClaudeHTTPNativeCCHCapture(t *testing.T) {
 // Run the real CLI's fake-token capture through request admission and the
 // ordinary upstream builder, not only the body helper.
 func TestClaudeHTTPNativeCaptureThroughGateway(t *testing.T) {
-	path := os.Getenv("MAGPIE_CLAUDE_HTTP_CAPTURE")
-	if path == "" {
-		t.Skip("offline native capture not supplied")
+	for _, path := range claudeHTTPCapturePaths() {
+		t.Run(path, func(t *testing.T) { checkClaudeHTTPNativeCaptureThroughGateway(t, path) })
 	}
+}
+
+func checkClaudeHTTPNativeCaptureThroughGateway(t *testing.T, path string) {
+	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -367,6 +381,11 @@ func TestClaudeHTTPNativeCaptureThroughGateway(t *testing.T) {
 		}
 		if head.Get("x-claude-code-session-id") != r.Header.Get("x-claude-code-session-id") {
 			t.Error("changed captured native session")
+		}
+		for _, field := range []string{"User-Agent", "Accept", "Accept-Encoding", "x-client-request-id", "x-stainless-package-version", "x-stainless-runtime-version"} {
+			if head.Get(field) != r.Header.Get(field) {
+				t.Errorf("changed captured native %s: %q", field, head.Get(field))
+			}
 		}
 		checked++
 	}

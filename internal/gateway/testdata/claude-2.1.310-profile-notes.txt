@@ -1,0 +1,56 @@
+Captured 2026-10-25 UTC+08. Fake OAuth token, isolated HOME, loopback
+HTTP CONNECT proxy and locally trusted HTTPS mock only. Other CONNECT hosts
+were rejected. No real account, external inference or system trust change.
+Ephemeral local TLS private keys were deleted at the end of each probe.
+
+Official latest:
+https://downloads.claude.ai/claude-code-releases/latest
+https://github.com/anthropics/claude-code/releases/tag/v2.1.310
+Release published 2026-10-23T23:39:00Z.
+
+Manifest-verified standalone Darwin arm64 binaries:
+2.1.310: ffb64331bc0ee1b69efb7c2c428bd3ab516bc31b75bf60886b356c97c1c25ffd
+2.1.308: ca923c86ac84b30574a82331a05b6e066c27477a926ceaffe46a845a33e4dd37
+Desktop's pinned 2.1.308 claude.zst:
+e4d214226582e2f52eafa3de4b2f55469677974e49e6e96376aad740c37d2557
+This matched the ASAR embedded compressed-manifest digest. Decompression
+yielded 274675680 bytes with the same ca923c86... SHA-256 above, establishing
+that the controlled Desktop-entrypoint probe uses the pinned binary's bytes.
+
+Normalized inference hellos matched claude-2.1.309-darwin-arm64-hello.json:
+2.1.310 native interactive cli: 2 connections (high and max).
+2.1.310 SDK mode: 3 connections (low, high and max).
+2.1.308 controlled claude-desktop entrypoint: 3 connections (low, high, max).
+Requests were linked to CONNECT sockets by the loopback upstream port,
+not merely selected by record length. Random/session/key bytes were removed;
+lengths, ciphers, extension order/data, share groups/sizes and ALPN survived.
+The original native 2.1.309 fixture and its provenance remain unchanged.
+
+Three committed request fixtures contain one actual request per mode:
+claude-310-cli-request.json (native interactive)
+claude-310-sdk-request.json (-p, SDK entrypoint)
+claude-308-desktop-entrypoint-request.json (-p, controlled Desktop entrypoint)
+They contain no Authorization or API key. Temporary paths and generated
+session/device IDs belong to isolated test homes, not real user data.
+Custom system instruction: You are a helpful assistant.
+User instruction: Reply OK.
+The interactive harness terminated after receiving the mock reply; terminal
+UI exit status is not asserted as CLI success. The first low-effort interactive
+attempt stopped at onboarding and yielded no inference; it is not counted.
+
+Installed Desktop package evidence:
+3.6556.2, app.asar SHA-256
+b2dfbbb40325d978dcb7561ad12a6f9bc199f8f46b7d3d2897af74ce8965d68a
+.vite/build/index.chunk-jPKPzV-P.js: m_ pins CLI2.1.308;
+qQi chooses claude-desktop / claude-desktop-3p; P2i builds environment.
+.vite/build/index.chunk-gMUTWD54.js: SDK wrapper0.3.308.
+REA package parent:
+ev_85ce79930a1f3614b4a2b14ad4978e82975ea868cd750e4dc86df385432fcc6d
+REA SDK parent:
+ev_9e1ab24af9f1ea276ea82c476e6b761b4b63adad2ba5aa5cc70d1118bbaf65ca
+REA SDK semantic coverage was partial under a bounded analysis. Eight unpacked
+native entries contradicted ASAR declared hashes; record-and-continue was used.
+REA therefore did not certify whole-package integrity or runtime behavior.
+
+No real Desktop inference, Cowork VM inference, production framing,
+allowance equivalence, or risk-control behavior was established by this probe.

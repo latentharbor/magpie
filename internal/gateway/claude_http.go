@@ -26,7 +26,7 @@ import (
 	ledger "github.com/yetone/magpie/internal/usage"
 )
 
-const claudeHTTPVersion = "2.1.309"
+const claudeHTTPVersion = "2.1.310"
 
 type claudeTransportKey struct{}
 type claudeHTTPKey struct{}
@@ -248,9 +248,10 @@ const claudeHTTPIdentity = "You are Claude Code, Anthropic's official CLI for Cl
 
 func claudeHTTPHeaders(req *http.Request, body []byte, c claudeHTTPCall) {
 	h := req.Header
+	h.Set("Accept-Encoding", claudeHTTPAcceptEncoding)
 	if c.native {
 		for k, values := range c.headers {
-			if claudeCodeHeader(k) || strings.EqualFold(k, "x-client-request-id") || strings.EqualFold(k, "Accept") {
+			if claudeCodeHeader(k) || strings.EqualFold(k, "x-client-request-id") || strings.EqualFold(k, "Accept") || strings.EqualFold(k, "Accept-Encoding") {
 				h[k] = append([]string(nil), values...)
 			}
 		}

@@ -18,8 +18,8 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// Captured twice from the local native Claude Code 2.1.309/macOS arm64 through
-// a loopback CONNECT sink. Unlike CLIProxyAPI's older 2.1.220 profile, this
+// Captured from native Claude Code 2.1.309 and reverified on 2.1.310/macOS
+// arm64 through a loopback CONNECT mock. Unlike CLIProxyAPI's older 2.1.220 profile, this
 // offers X25519MLKEM768 and Ed25519. The inference plane offers HTTP/1.1 ALPN,
 // status_request and SCT, unlike the same CLI's settings/policy control plane.
 // Randoms, session IDs and ephemeral keys must remain freshly generated.
@@ -85,7 +85,20 @@ func (t *claudeHTTPWire) RoundTrip(r *http.Request) (*http.Response, error) {
 		t.pools[key] = pool
 	}
 	t.mu.Unlock()
-	return pool.RoundTrip(r)
+	// Clone before supplying a default: RoundTripper must not mutate the
+	// caller's request, which can be reused on a retry.
+	if r.Header.Get("Accept-Encoding") == "" {
+		r = r.Clone(r.Context())
+		r.Header.Set("Accept-Encoding", claudeHTTPAcceptEncoding)
+	}
+	res, err := pool.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+	if err := decodeClaudeHTTPResponse(res); err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 func (t *claudeHTTPWire) CloseIdleConnections() {
@@ -103,6 +116,7 @@ func newClaudeHTTPPool(p *url.URL, roots *x509.CertPool) *http.Transport {
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	return &http.Transport{
+		DisableCompression:    true, // All advertised codecs are decoded above.
 		Protocols:             &protocols,
 		MaxIdleConnsPerHost:   8,
 		IdleConnTimeout:       90 * time.Second,

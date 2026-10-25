@@ -89,7 +89,7 @@ existing standalone identity is reused, not duplicated or stripped of cache
 attributes. Existing provider refusal learning still filters final betas.
 
 The generated application-level compatibility profile is pinned to locally
-observed Claude Code **2.1.309**: CLI headers, OAuth betas, account/device/session
+observed Claude Code **2.1.310**: CLI headers, OAuth betas, account/device/session
 metadata, billing prompt fields and the final-body CCH checksum. The checksum
 compatibility implementation is adapted from
 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), under its retained
@@ -99,7 +99,7 @@ hostname-dependent fields.
 
 HTTP inference has its own uTLS transport (`claude_http_tls.go`), selected by
 the request's admitted HTTP-subscription context and fixed HTTPS origin. Its
-ClientHello matches local **2.1.309/macOS arm64** `/v1/messages` captures:
+ClientHello matches local **2.1.309 and 2.1.310/macOS arm64** `/v1/messages` captures:
 ciphers and extension order, X25519MLKEM768 + X25519 shares, HTTP/1.1 ALPN,
 signature algorithms, session ID/key-share lengths and record size (1508 bytes
 for api.anthropic.com). Randoms and ephemeral keys are generated afresh. The
@@ -112,6 +112,15 @@ session resumption. Pools are bounded and partitioned by selected account and
 effective proxy. Direct, HTTP/HTTPS CONNECT and SOCKS paths retain cancellation
 and certificate verification; other vendors keep the normal transport. No
 fallback to ordinary Go TLS occurs on a failed Claude handshake.
+
+The subscription transport advertises native fetch's `gzip, deflate, br, zstd`
+response encodings and lazily decodes them, including stacked encodings.
+Decoder creation waits until the caller reads, not while receiving headers;
+SSE events remain streaming. Decoded replies lose compressed content-length
+and encoding metadata. Unsupported and malformed encodings fail explicitly,
+and closing a reply interrupts a blocked decoder and releases its resources.
+A native caller's own Accept-Encoding is preserved. These rules do not change
+other providers' transports.
 
 These captures are **not** allowance-saving checks. A
 matching captured ClientHello does not prove the entire TLS implementation,
@@ -139,10 +148,61 @@ protocol/effort preservation, selected OAuth identity, transport snapshot,
 cancellation, quota-header feedback, a 429 → Team handoff retaining the request,
 and independent checksum vectors. `MAGPIE_CLAUDE_HTTP_CAPTURE` may point to a
 sanitized local native capture to additionally compare its observed checksum
-and pass its actual requests through the gateway builder;
-the capture test skips without that optional file. No live account or gateway
-is used by these tests. The remainder of this page describes the default CLI
-transport only.
+and pass its actual requests through the gateway builder. Committed fake-token
+CLI, SDK and Desktop-entrypoint captures exercise checksum and request-builder
+preservation in the ordinary suite. No live account or gateway is used by
+these tests. The remainder of this page describes the default CLI transport only.
+
+### HTTP profile refresh (2026-10-25)
+
+The official download manifest and GitHub release both identified 2.1.310 as
+latest when checked. Its macOS arm64 binary was independently downloaded and
+SHA-256 verified; the installed CLI was left unchanged. Isolated fake-token
+probes sent only to a loopback CONNECT/HTTPS mock. Each inference request was
+linked to its CONNECT socket before normalizing the ClientHello.
+
+- Two native interactive 2.1.310 inference connections and three SDK-mode
+  connections matched the existing 2.1.309 inference fixture field for field,
+  excluding fresh random/session/key bytes while retaining their lengths.
+  The native interactive sample verifies `cli`/`human` billing, SDK 0.128.0,
+  runtime v26.3.0 and the 2.1.310 version checksum. Generated requests now use
+  that observed version; native requests retain their caller's version.
+- Installed Desktop 3.6556.2's ASAR pins CLI 2.1.308 and SDK wrapper 0.3.308.
+  Its Code environment builder selects `claude-desktop` or
+  `claude-desktop-3p`, and passes subscription/scopes/tier separately. This is
+  static package evidence, not proof of a particular running Desktop request.
+- The 2.1.308 compressed binary matched Desktop's embedded manifest hash;
+  decompression yielded the same independently verified macOS binary used by
+  the probe. With the `claude-desktop` entrypoint it produced three matching inference hellos. Its
+  UA and billing entrypoint differ from the standalone CLI. This is a
+  controlled entrypoint probe, not a capture of Desktop or Cowork's VM.
+  Desktop UI networking, host Code inference and VM inference must not be
+  treated as a single Chromium fingerprint.
+- Native CLI, SDK and Desktop-entrypoint samples retain identity blocks,
+  diagnostics, cache markers, beta headers, effort, request IDs and compression
+  headers through the ordinary gateway builder. Checksums are independently
+  checked against captured bodies. No live inference, seat change or
+  allowance comparison was performed for this refresh.
+
+Digests, capture boundaries and source references are recorded in
+`internal/gateway/testdata/claude-2.1.310-profile-notes.txt`. HTTP header
+serialization, production TLS behavior, Cowork's Linux runtime and subscription
+charging equivalence remain unproven; these probes do not establish a fully
+indistinguishable client.
+
+Verification for this refresh:
+
+- Sandboxed `go test -race -tags nogui ./internal/gateway -run '^TestClaudeHTTP'
+  -count=20 -timeout=8m` passed, plus 20 repetitions of the native caller's
+  explicit encoding-override check.
+- Sandboxed `go test -tags nogui ./... -timeout=45m` passed. Darwin, Linux and
+  Windows vet/build passed; `gofmt -l` and `git diff --check` printed nothing.
+- Temporarily removing wire decompression made `TestClaudeHTTPCompressedWire`
+  fail for every codec. Restoring it passed. Coverage also includes stacked
+  encodings, malformed data, stream delivery before EOF, close during a blocked
+  read, decoded header cleanup, and an unchanged ordinary-vendor transport.
+- No GUI assets changed in this refresh. These checks did not perform live
+  subscription inference or restart either installed application.
 
 ### HTTP parity verification (2026-10-24)
 

@@ -15,6 +15,7 @@ func TestClaudeHTTPNativeCallerKeepsItsProtocol(t *testing.T) {
 	r := httpClaudeRequest()
 	for k, value := range map[string]string{
 		"User-Agent": "claude-cli/2.1.309 (external, cli)", "x-app": "cli",
+		"Accept-Encoding":             "gzip",
 		"x-claude-code-session-id":    "c5779c78-6a35-42c8-a6ec-13fb67a140f2",
 		"x-claude-code-prompt-id":     "78992615-9a72-44e0-bccb-be6a55f90646",
 		"x-claude-code-request-class": "subagent", "x-claude-code-agent-id": "native-child",
@@ -31,7 +32,7 @@ func TestClaudeHTTPNativeCallerKeepsItsProtocol(t *testing.T) {
 		t.Fatalf("native call failed: %d %s", status, msg)
 	}
 	for k := range r.Header {
-		if claudeCodeHeader(k) || strings.EqualFold(k, "x-client-request-id") {
+		if claudeCodeHeader(k) || strings.EqualFold(k, "x-client-request-id") || strings.EqualFold(k, "Accept-Encoding") {
 			if strings.EqualFold(k, "anthropic-beta") {
 				continue
 			}

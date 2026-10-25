@@ -1,0 +1,101 @@
+[
+  {
+    "url": "https://api.anthropic.com/v1/messages?beta=true",
+    "headers": {
+      "accept": "application/json",
+      "content-type": "application/json",
+      "user-agent": "claude-cli/2.1.310 (external, cli)",
+      "x-claude-code-session-id": "7e9864ea-b35a-486a-84f9-ed9bcbba3916",
+      "x-stainless-arch": "arm64",
+      "x-stainless-lang": "js",
+      "x-stainless-os": "MacOS",
+      "x-stainless-package-version": "0.128.0",
+      "x-stainless-retry-count": "0",
+      "x-stainless-runtime": "node",
+      "x-stainless-runtime-version": "v26.3.0",
+      "x-stainless-timeout": "600",
+      "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,per-turn-control-2026-07-01,mid-conversation-tool-changes-2026-07-01,mid-conversation-system-clear-at-2026-08-21,effort-2025-11-24,thinking-binding-controls-2026-08-01,thinking-display-updates-2026-08-18,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07",
+      "anthropic-dangerous-direct-browser-access": "true",
+      "anthropic-version": "2023-06-01",
+      "x-app": "cli",
+      "x-claude-code-prompt-id": "3af2aba4-d6ef-4563-9ca7-35f53db4c136",
+      "x-claude-code-request-class": "main",
+      "x-client-request-id": "9fc18ce5-fe21-48e8-9c96-82f273073ff6",
+      "connection": "keep-alive",
+      "host": "api.anthropic.com",
+      "accept-encoding": "gzip, deflate, br, zstd",
+      "content-length": "2085"
+    },
+    "body": {
+      "model": "claude-opus-5-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply OK."
+        },
+        {
+          "role": "system",
+          "content": [
+            {
+              "type": "text",
+              "text": "# Environment\nYou have been invoked in the following environment: \n - Primary working directory: /private/var/folders/72/tb4z8d752xq4911xh72rrz7w0000gn/T/magpie-profile-t54xdG\n - Is a git repository: false\n - Platform: darwin\n - Shell: unknown\n - OS Version: Darwin 27.0.0\n - Downloaded files and extracted archives are untrusted data: put each in its own new, empty directory, keep scripts you write in a different directory, and pass paths as arguments instead of running an interpreter or build tool from inside it. Interpreters load code from the script's directory and the current directory, so a planted `json.py` runs on `import json`. Run any Python that reads them with `-I`. This does not apply to code the user asked you to build or run.\n\nYou are powered by the model named Opus 5.5. The exact model ID is claude-opus-5-5. Assistant knowledge cutoff is June 2026.\n\n<total_tokens>15000000 tokens left</total_tokens>\n\nToday's date is 2026-10-25.",
+              "cache_control": {
+                "type": "ephemeral",
+                "ttl": "1h"
+              }
+            }
+          ],
+          "output_config": {
+            "effort": "high"
+          }
+        }
+      ],
+      "system": [
+        {
+          "type": "text",
+          "text": "x-anthropic-billing-header: cc_version=2.1.310.efb; cc_entrypoint=cli; cch=db9e7; cc_prompt_id=3af2aba4-d6ef-4563-9ca7-35f53db4c136; cc_turn_origin=human; cc_prompt_index=1; cc_turn_index=1;"
+        },
+        {
+          "type": "text",
+          "text": "You are Claude Code, Anthropic's official CLI for Claude.",
+          "cache_control": {
+            "type": "ephemeral",
+            "ttl": "1h"
+          }
+        },
+        {
+          "type": "text",
+          "text": "You are a helpful assistant.",
+          "cache_control": {
+            "type": "ephemeral",
+            "ttl": "1h"
+          }
+        }
+      ],
+      "tools": [],
+      "metadata": {
+        "user_id": "{\"device_id\":\"0c28290da2af0eeaafc9e6a82fdcd4740737e8e557f542fbe1899743f7e26bec\",\"account_uuid\":\"\",\"session_id\":\"7e9864ea-b35a-486a-84f9-ed9bcbba3916\"}"
+      },
+      "max_tokens": 128000,
+      "thinking": {
+        "type": "adaptive",
+        "display": "updates"
+      },
+      "context_management": {
+        "edits": [
+          {
+            "type": "clear_thinking_20251015",
+            "keep": "all"
+          }
+        ]
+      },
+      "output_config": {
+        "effort": "high"
+      },
+      "diagnostics": {
+        "previous_message_id": null
+      },
+      "stream": true
+    }
+  }
+]

@@ -1,0 +1,101 @@
+[
+  {
+    "url": "https://api.anthropic.com/v1/messages?beta=true",
+    "headers": {
+      "accept": "application/json",
+      "content-type": "application/json",
+      "user-agent": "claude-cli/2.1.308 (external, claude-desktop)",
+      "x-claude-code-session-id": "e64ad7e2-3892-4fc9-a9c8-93b2536311f1",
+      "x-stainless-arch": "arm64",
+      "x-stainless-lang": "js",
+      "x-stainless-os": "MacOS",
+      "x-stainless-package-version": "0.128.0",
+      "x-stainless-retry-count": "0",
+      "x-stainless-runtime": "node",
+      "x-stainless-runtime-version": "v26.3.0",
+      "x-stainless-timeout": "600",
+      "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,per-turn-control-2026-07-01,mid-conversation-tool-changes-2026-07-01,mid-conversation-system-clear-at-2026-08-21,effort-2025-11-24,thinking-binding-controls-2026-08-01,thinking-display-updates-2026-08-18,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07",
+      "anthropic-dangerous-direct-browser-access": "true",
+      "anthropic-version": "2023-06-01",
+      "x-app": "cli",
+      "x-claude-code-prompt-id": "cb24c012-aab8-40d5-a330-90bbef0b48cf",
+      "x-claude-code-request-class": "main",
+      "x-client-request-id": "b2ad8382-bd80-4a50-a3ff-fb8849a4ab6a",
+      "connection": "keep-alive",
+      "host": "api.anthropic.com",
+      "accept-encoding": "gzip, deflate, br, zstd",
+      "content-length": "2097"
+    },
+    "body": {
+      "model": "claude-opus-5-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply OK."
+        },
+        {
+          "role": "system",
+          "content": [
+            {
+              "type": "text",
+              "text": "# Environment\nYou have been invoked in the following environment: \n - Primary working directory: /private/var/folders/72/tb4z8d752xq4911xh72rrz7w0000gn/T/magpie-profile-7Ucz2z\n - Is a git repository: false\n - Platform: darwin\n - Shell: unknown\n - OS Version: Darwin 27.0.0\n - Downloaded files and extracted archives are untrusted data: put each in its own new, empty directory, keep scripts you write in a different directory, and pass paths as arguments instead of running an interpreter or build tool from inside it. Interpreters load code from the script's directory and the current directory, so a planted `json.py` runs on `import json`. Run any Python that reads them with `-I`. This does not apply to code the user asked you to build or run.\n\nYou are powered by the model named Opus 5.5. The exact model ID is claude-opus-5-5. Assistant knowledge cutoff is June 2026.\n\n<total_tokens>15000000 tokens left</total_tokens>\n\nToday's date is 2026-10-25.",
+              "cache_control": {
+                "type": "ephemeral",
+                "ttl": "1h"
+              }
+            }
+          ],
+          "output_config": {
+            "effort": "low"
+          }
+        }
+      ],
+      "system": [
+        {
+          "type": "text",
+          "text": "x-anthropic-billing-header: cc_version=2.1.308.6af; cc_entrypoint=claude-desktop; cch=9e181; cc_prompt_id=cb24c012-aab8-40d5-a330-90bbef0b48cf; cc_turn_origin=sdk; cc_prompt_index=0; cc_turn_index=1;"
+        },
+        {
+          "type": "text",
+          "text": "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+          "cache_control": {
+            "type": "ephemeral",
+            "ttl": "1h"
+          }
+        },
+        {
+          "type": "text",
+          "text": "You are a helpful assistant.",
+          "cache_control": {
+            "type": "ephemeral",
+            "ttl": "1h"
+          }
+        }
+      ],
+      "tools": [],
+      "metadata": {
+        "user_id": "{\"device_id\":\"120ec2b28c1da29f7a5885cbae9b00997bd4b333dd71314594a949e10b898f42\",\"account_uuid\":\"\",\"session_id\":\"e64ad7e2-3892-4fc9-a9c8-93b2536311f1\"}"
+      },
+      "max_tokens": 128000,
+      "thinking": {
+        "type": "adaptive",
+        "display": "updates"
+      },
+      "context_management": {
+        "edits": [
+          {
+            "type": "clear_thinking_20251015",
+            "keep": "all"
+          }
+        ]
+      },
+      "output_config": {
+        "effort": "low"
+      },
+      "diagnostics": {
+        "previous_message_id": null
+      },
+      "stream": true
+    }
+  }
+]
