@@ -14,6 +14,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 
@@ -35,7 +36,7 @@ const PLUGINS = [
   { id: "warmups", name: "Warm-up and check-in", sub: "Start a subscription's usage window at a time you pick, and claim vendors' daily check-in credits", one: "1 warm-up or check-in on", many: "{n} warm-ups and check-ins on" },
 ];
 // the Essentials preset, picked by the user: all off but the Gateway, Routing
-// and Usage pages, the routing strategies, the gateway middleware, privacy
+// and Usage pages, Masking (part of privacy), the routing strategies, the gateway middleware, privacy
 // masking, web search, key limits and plugin tools, which are essential,
 // and two routing groups the user made
 const START = { budget: [true, 0], gateway: [true, 0], groups: [false, 2], library: [false, 0], middleware: [true, 0], otel: [false, 0], redact: [true, 0], rotation: [true, 0], routing: [true, 0], search: [true, 0], sessions: [false, 0], tools: [true, 0], usage: [true, 0], warmups: [false, 0] };
@@ -111,7 +112,7 @@ function server(lang, posts, broken) {
 // the pages' tabs shown, the page shown
 const tabs = (page) => page.evaluate(() => [...document.querySelectorAll("#nav button[data-view]")].filter((b) => !b.hidden && b.offsetParent && getComputedStyle(b).display !== "none").map((b) => b.dataset.view));
 const viewShown = (page) => page.evaluate(() => [...document.querySelectorAll("main.view")].filter((v) => !v.hidden).map((v) => v.id));
-const KEPT = ["agents", "providers", "routing", "gateway", "usage", "plugins"];
+const KEPT = ["agents", "providers", "routing", "gateway", "usage", "masking", "plugins"];
 const rowsOf = (page) => page.evaluate(() => [...document.querySelectorAll("#builtinList .feat-row")].map((r) => {
   const b = r.querySelector('[role="switch"]');
   return { id: r.dataset.id, name: r.querySelector(".name").textContent, on: b.getAttribute("aria-checked"), disabled: b.disabled, why: r.querySelector(".feat-why")?.textContent || "" };
@@ -201,12 +202,14 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.ok(await page.evaluate(() => { const v = document.querySelector("#view-plugins"); return v.scrollWidth <= v.clientWidth + 1; }), `${where}: the setting fits`);
 
         // Library switched on: its tab is back at once, the page stays
+        await reach(page, page.locator('#builtinList [data-id="library"] [role="switch"]'));
         await page.locator('#builtinList [data-id="library"] [role="switch"]').click();
         await page.waitForSelector('#builtinList [data-id="library"] [aria-checked="true"]');
         assert.deepEqual(posts, [["library", true]], where);
         if (width >= 800) assert.deepEqual(await tabs(page), ["agents", "library", ...KEPT.slice(1)], `${where}: Library back`);
         assert.deepEqual(await viewShown(page), ["view-plugins"], `${where}: Plugins stays`);
         // and Observability: its Settings tab is back
+        await reach(page, page.locator('#builtinList [data-id="otel"] [role="switch"]'));
         await page.locator('#builtinList [data-id="otel"] [role="switch"]').click();
         await page.waitForSelector('#builtinList [data-id="otel"] [aria-checked="true"]');
         assert.ok(await page.locator("#setTab-otel").evaluate((b) => getComputedStyle(b).display !== "none"), `${where}: Observability back`);
@@ -214,12 +217,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // Its row and Usage's can be below the fold: the reader scrolls to
         // them with the wheel, since the page puts back a scroll that isn't
         // the reader's (scrollOnPurpose), a click's own too
-        const wheelTo = async (id) => {
-          const list = await page.locator("#builtinList").boundingBox();
-          await page.mouse.move(list.x + 20, list.y + 20);
-          await page.mouse.wheel(0, 400);
-          await page.waitForFunction((id) => { const r = document.querySelector(`#builtinList [data-id="${id}"] [role="switch"]`).getBoundingClientRect(), foot = document.querySelector("footer.foot"); return r.bottom <= Math.min(document.getElementById("view-plugins").getBoundingClientRect().bottom, foot && foot.offsetParent ? foot.getBoundingClientRect().top : Infinity); }, id);
-        };
+        const wheelTo = (id) => reach(page, page.locator(`#builtinList [data-id="${id}"] [role="switch"]`));
         await wheelTo("routing");
         await page.locator('#builtinList [data-id="routing"] [role="switch"]').click();
         await page.waitForSelector('#builtinList [data-id="routing"] [aria-checked="false"]');
