@@ -45,6 +45,15 @@ const claudeHeard = time.Hour
 // answered, in place of the windows of the same names last read, and has
 // routing weigh the account by it.
 func NoteClaudeLimits(user string, ls []ClaudeLimit) {
+	t := claudeTeamForUser(user)
+	t.observation.Lock()
+	defer t.observation.Unlock()
+	noteClaudeLimits(user, ls)
+}
+
+// The caller serializes publication with this account's Team controller.
+// A quota collector uses this helper while already holding observation.
+func noteClaudeLimits(user string, ls []ClaudeLimit) {
 	var heard []QuotaWindow
 	for _, l := range ls {
 		i := slices.IndexFunc(claudeKinds, func(k struct {

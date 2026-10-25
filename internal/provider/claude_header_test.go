@@ -127,6 +127,18 @@ func TestClaudeHeaderReceivedDuringFailedUsage(t *testing.T) {
 	}
 }
 
+func TestClaudeHeaderReceivedDuringSuccessfulUsage(t *testing.T) {
+	_, card := claudeUsageCards(t, "Current session: 40% used", nil)
+	UsageClaudeVia(func(context.Context, string) (string, error) {
+		NoteClaudeLimits("a@example.com", []ClaudeLimit{{Kind: "five_hour", Used: 1}})
+		return "Current session: 40% used", nil
+	})
+	q := card()
+	if q.Error != "" || len(q.Windows) != 1 || q.Windows[0].Used != 100 {
+		t.Fatalf("successful stale read hid a newer exhaustion header: %+v", q)
+	}
+}
+
 func TestClaudeHeaderFallbackIsAccountScoped(t *testing.T) {
 	_, card := claudeUsageCards(t, "offline", nil)
 	NoteClaudeLimits("b@example.com", []ClaudeLimit{{Kind: "five_hour", Used: .42}})

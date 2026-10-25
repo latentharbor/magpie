@@ -886,14 +886,24 @@ func claudeWindows(ctx context.Context, user string, active bool) ([]QuotaWindow
 		}
 		return ws, err
 	}
+	t := claudeTeamForUser(user)
+	t.observation.Lock()
+	defer t.observation.Unlock()
 	c.Lock()
 	if c.m == nil {
 		c.m = map[string]claudeUsageEntry{}
 	}
+	if newer := c.m[key]; newer.heardSeq > e.heardSeq {
+		c.Unlock()
+		if projected, ok := claudeTeamQuota(user); ok {
+			return projected, nil
+		}
+		return newer.windows(time.Now()), nil
+	}
 	c.m[key] = claudeUsageEntry{at: now, ws: ws, heard: e.heard, tried: now, asked: asked, wait: e.wait, whole: true}
 	c.Unlock()
 	if ClaudeTeamManaged(user) {
-		noteClaudeTeamWindows(user, ws)
+		noteClaudeLimits(user, claudeTeamWindowLimits(ws))
 		if projected, ok := claudeTeamQuota(user); ok {
 			return projected, nil
 		}

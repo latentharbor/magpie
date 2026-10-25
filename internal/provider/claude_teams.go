@@ -493,6 +493,9 @@ func claudeLimitWindows(ls []ClaudeLimit) []QuotaWindow {
 // /usage is a local command, not an inference prompt. Failed or incomplete
 // collections retain the last complete observation, including its reset times.
 func (t *claudeTeamController) refreshQuota(ctx context.Context, id string) error {
+	t.mu.Lock()
+	observed := t.disk.Observed[id]
+	t.mu.Unlock()
 	user := t.userOf(id)
 	var ws []QuotaWindow
 	var err error
@@ -509,9 +512,18 @@ func (t *claudeTeamController) refreshQuota(ctx context.Context, id string) erro
 	if err == nil && !completeClaudeTeamQuota(ws) {
 		err = errors.New("incomplete allowance windows")
 	}
+	t.observation.Lock()
 	t.mu.Lock()
 	if t.disk.QuotaErrors == nil {
 		t.disk.QuotaErrors = map[string]string{}
+	}
+	if err == nil && !t.disk.Observed[id].Equal(observed) {
+		// A response or another collection supplied a newer snapshot while
+		// this read was running. In particular, do not roll exhaustion back
+		// to a stale percentage, or publish that stale read to the quota cache.
+		t.mu.Unlock()
+		t.observation.Unlock()
+		return t.persist()
 	}
 	if err != nil {
 		// Never expose helper stderr or credentials through the member API.
@@ -535,8 +547,9 @@ func (t *claudeTeamController) refreshQuota(ctx context.Context, id string) erro
 	t.signalLocked()
 	t.mu.Unlock()
 	if err == nil {
-		noteClaudeTeamWindows(user, ws)
+		noteClaudeLimits(user, claudeTeamWindowLimits(ws))
 	}
+	t.observation.Unlock()
 	if e := t.persist(); e != nil {
 		t.mu.Lock()
 		t.disk.QuotaErrors[id] = "Could not save usage; retry collection"
@@ -565,8 +578,4 @@ func claudeTeamWindowLimits(ws []QuotaWindow) []ClaudeLimit {
 		}
 	}
 	return ls
-}
-
-func noteClaudeTeamWindows(user string, ws []QuotaWindow) {
-	NoteClaudeLimits(user, claudeTeamWindowLimits(ws))
 }

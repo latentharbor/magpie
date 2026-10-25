@@ -125,6 +125,13 @@ not yet started. Partial or failed reads preserve the last complete snapshot
 and observation time, even after Unassigned, with a per-member error and retry.
 Reads and retries never allocate or rotate seats. External assignments are
 detected by the ordinary five-minute reconciliation, not a browser webhook.
+An allowance read that finishes after a newer inference observation cannot
+replace that observation in either the controller journal or the account card.
+This applies to background captures and explicit card refreshes, so an older
+low-use response cannot undo newly reported exhaustion during handoff. A new
+read started after that observation can still replace it, including clearing
+exhaustion after a real reset. Publication is serialized; network reads remain
+outside that lock.
 Fresh captures precede automatic rotation decisions; captures following an
 internal transfer run after handoff waiters are released. Errors never gate
 healthy inference. Disabling or

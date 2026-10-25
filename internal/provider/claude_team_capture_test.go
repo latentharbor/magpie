@@ -120,6 +120,92 @@ func teamUsageFixture() string {
 	return "Current session: 17% used · resets " + five + "\nCurrent week (all models): 38% used · resets " + week
 }
 
+func TestClaudeTeamSlowQuotaReadKeepsNewerExhaustion(t *testing.T) {
+	tm, admin, _ := teamFixture(t)
+	user, id := "u2@example.com · Team", teamID(2)
+	entered, finish := make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(finish) })
+	old := UsageClaudeVia(func(ctx context.Context, _ string) (string, error) {
+		close(entered)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-finish:
+			return teamUsageFixture(), nil
+		}
+	})
+	t.Cleanup(func() { UsageClaudeVia(old) })
+	t.Cleanup(release)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- tm.refreshQuota(ctx, id) }()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("quota read never started")
+	}
+	// An inference reports exhaustion after /usage began but before it
+	// returns its older, healthy snapshot. Neither the journal nor the
+	// ordinary quota cache may be rolled back by that late completion.
+	NoteClaudeLimits(user, []ClaudeLimit{
+		{Kind: "five_hour", Used: 1, ResetsAt: time.Now().Add(time.Hour).Unix()},
+		{Kind: "seven_day", Used: .2, ResetsAt: time.Now().Add(24 * time.Hour).Unix()},
+	})
+	tm.mu.Lock()
+	observed := tm.disk.Observed[id]
+	tm.mu.Unlock()
+	release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	tm.mu.Lock()
+	keptObservation := tm.disk.Observed[id].Equal(observed)
+	tm.mu.Unlock()
+	if !ClaudeTeamExhausted(user) || !keptObservation {
+		t.Fatal("late quota read replaced newer exhaustion or its observation time")
+	}
+	kept := KeptClaudeLimits(user)
+	if len(kept) == 0 || kept[0].Used != 1 {
+		t.Fatal("late quota read rolled back the ordinary quota cache")
+	}
+	if len(admin.writes) != 0 {
+		t.Fatal("quota collection itself moved a seat")
+	}
+	// A later explicit reading still replaces the old observation. A
+	// rejected stale read must not permanently latch the account at 100%.
+	UsageClaudeVia(func(context.Context, string) (string, error) {
+		return "Current session: 0% used\nCurrent week (all models): 0% used", nil
+	})
+	if err := tm.refreshQuota(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if ClaudeTeamExhausted(user) {
+		t.Fatal("new reading could not clear the old exhausted window")
+	}
+}
+
+func TestClaudeTeamCardReadKeepsNewerExhaustion(t *testing.T) {
+	_, admin, _ := teamFixture(t)
+	user := "u2@example.com · Team"
+	old := UsageClaudeVia(func(context.Context, string) (string, error) {
+		NoteClaudeLimits(user, []ClaudeLimit{
+			{Kind: "five_hour", Used: 1, ResetsAt: time.Now().Add(time.Hour).Unix()},
+			{Kind: "seven_day", Used: .2, ResetsAt: time.Now().Add(24 * time.Hour).Unix()},
+		})
+		return teamUsageFixture(), nil
+	})
+	t.Cleanup(func() { UsageClaudeVia(old) })
+	ctx := context.WithValue(Asked(context.Background()), cardRefreshKey{}, cardRefresh{"claude", user})
+	ws, err := claudeWindows(ctx, user, false)
+	if err != nil || len(ws) == 0 || ws[0].Used != 100 || !ClaudeTeamExhausted(user) {
+		t.Fatalf("card read replaced a newer exhausted Team window: %v %v", ws, err)
+	}
+	if len(admin.writes) != 0 {
+		t.Fatal("card read itself moved a seat")
+	}
+}
+
 func TestClaudeTeamJoinCapturesAndRetainsQuotaWithoutSeatWrites(t *testing.T) {
 	tm, f, c := teamFixture(t)
 	calls := 0

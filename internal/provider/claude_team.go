@@ -86,6 +86,7 @@ type claudeTeamDisk struct {
 type claudeTeamController struct {
 	folder                       string     // empty for the original, backwards-compatible subscription
 	op                           sync.Mutex // transactions and configuration edits, never taken by a request
+	observation                  sync.Mutex // publish quota cache and controller snapshots together; no network under this lock
 	mu                           sync.Mutex
 	cfg                          ClaudeTeamConfig
 	disk                         claudeTeamDisk
