@@ -119,8 +119,12 @@ func TestUsageReadAfterAppendHashesNothingOnAFineClock(t *testing.T) {
 			if !tc.fine {
 				logChangeTime = func(info os.FileInfo) time.Time { return changeTime(info).Truncate(time.Second) }
 			}
-			// each read comes 150 ms after the append before it
-			logIndexNow = func() time.Time { return time.Now().Add(150 * time.Millisecond) }
+			// Measure from the timestamp under test. Adding 150 ms to the
+			// wall clock can cross the whole-second stamp's settle bound
+			// depending on which fraction of a second the test starts in.
+			logIndexNow = func() time.Time {
+				return logChangeTime(mustStat(t)).Add(150 * time.Millisecond)
+			}
 			Summarize(Today)
 			hash := logRecordHash
 			var hashed int64
