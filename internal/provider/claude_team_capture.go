@@ -9,6 +9,58 @@ import (
 	"time"
 )
 
+type claudeTeamQuotaCheck struct {
+	done  chan struct{}
+	until time.Time
+}
+
+// RecheckClaudeTeamQuota verifies an ambiguous failed inference, never a normal
+// admission. Concurrent failures share one bounded read; another burst within
+// 30 seconds uses its result, including an unknown result. A failed collection
+// retains the last observation and cannot by itself trigger a seat transfer.
+func RecheckClaudeTeamQuota(ctx context.Context, user string) {
+	claudeTeamForUser(user).recheckQuota(ctx, user)
+}
+
+func (t *claudeTeamController) recheckQuota(ctx context.Context, user string) {
+	t.mu.Lock()
+	id := t.users[strings.ToLower(user)]
+	if ctx.Err() != nil || !t.cfg.Enabled || !slices.Contains(t.cfg.Members, id) ||
+		teamSpent(t.disk.Limits[id], t.cfg.Threshold, time.Now()) {
+		t.mu.Unlock()
+		return
+	}
+	if check := t.quotaChecks[id]; check != nil {
+		if check.until.IsZero() {
+			done := check.done
+			t.mu.Unlock()
+			select {
+			case <-done:
+			case <-ctx.Done():
+			}
+			return
+		}
+		if time.Now().Before(check.until) {
+			t.mu.Unlock()
+			return
+		}
+	}
+	if t.quotaChecks == nil {
+		t.quotaChecks = map[string]*claudeTeamQuotaCheck{}
+	}
+	check := &claudeTeamQuotaCheck{done: make(chan struct{})}
+	t.quotaChecks[id] = check
+	t.mu.Unlock()
+
+	probe, cancel := context.WithTimeout(ctx, 20*time.Second)
+	_ = t.refreshQuota(probe, id)
+	cancel()
+	t.mu.Lock()
+	check.until = time.Now().Add(30 * time.Second)
+	close(check.done)
+	t.mu.Unlock()
+}
+
 func completeClaudeTeamQuota(ws []QuotaWindow) bool {
 	for _, name := range []string{"5 hours", "7 days"} {
 		i := slices.IndexFunc(ws, func(w QuotaWindow) bool { return w.Name == name })

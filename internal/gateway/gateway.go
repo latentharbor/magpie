@@ -3465,7 +3465,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 				continue
 			}
 		}
-		if teamAccount && hw.failed() && !hw.passing && pin == "" && aff.Why != "strict" && checkpoint == nil && !sealedTask &&
+		teamRetry := teamAccount && hw.failed() && !hw.passing && pin == "" && aff.Why != "strict" && checkpoint == nil && !sealedTask
+		if teamRetry && hw.code() == 429 && failure(hw.code(), hw.errBody()) == failRate {
+			stopAlive := hw.keepQueued()
+			provider.RecheckClaudeTeamQuota(r.Context(), c.p.Account.User)
+			stopAlive()
+		}
+		if teamRetry &&
 			(failure(hw.code(), hw.errBody()) == failQuota || hw.code() == 429 && provider.ClaudeTeamExhausted(c.p.Account.User) || strings.Contains(call.Error, "Claude Team seat rotation in progress")) {
 			stopAlive := hw.keepQueued()
 			fresh := s.teamSuccessors(r, from, c, cands)
@@ -3589,7 +3595,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 				break
 			}
 		}
-		if wait, ok := passing(hw.code(), hw.header, hw.errBody(), again); ok && !protected && !hw.turnedAway && hw.failed() && waitFrom.IsZero() && !kept.tooQuiet(wait) {
+		retryHeader := hw.header
+		if teamRetry && hw.code() == 429 && !provider.ClaudeTeamExhausted(c.p.Account.User) {
+			retryHeader = claudeTeamRateHeaders(retryHeader)
+		}
+		if wait, ok := passing(hw.code(), retryHeader, hw.errBody(), again); ok && !protected && !hw.turnedAway && hw.failed() && waitFrom.IsZero() && !kept.tooQuiet(wait) {
 			// nobody else is left: the same one again, after a moment (not
 			// what Antigravity turned away: it turns it away again; nor
 			// once the group's patience is spent)

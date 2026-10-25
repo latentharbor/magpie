@@ -105,6 +105,7 @@ type claudeTeamController struct {
 	quotaDue                     map[string]bool
 	quotaAttempted               map[string]bool
 	quotaBusy                    string
+	quotaChecks                  map[string]*claudeTeamQuotaCheck
 }
 
 func newClaudeTeamController() *claudeTeamController {
@@ -298,6 +299,7 @@ func (t *claudeTeamController) selectPath() error {
 	t.disk = claudeTeamDisk{Limits: map[string][]ClaudeLimit{}, Original: map[string]claudeTeamFlags{}}
 	t.seats, t.users, t.closed = map[string]string{}, map[string]string{}, map[string]bool{}
 	t.quotaDue, t.quotaAttempted, t.quotaBusy = map[string]bool{}, map[string]bool{}, ""
+	t.quotaChecks = nil
 	t.legacyRoutes = nil
 	t.loaded, t.requested, t.rotating, t.manual, t.err = false, false, false, "", ""
 	return nil

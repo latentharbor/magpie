@@ -6,10 +6,25 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yetone/magpie/internal/provider"
 )
+
+// Allowance deadlines are not short-term rate-limit backoff. Keep explicit
+// Retry-After and request/token resets, but don't let a healthy account's next
+// 5-hour/weekly reset suppress the existing bounded retry of a generic 429.
+func claudeTeamRateHeaders(h http.Header) http.Header {
+	out := h.Clone()
+	for k := range out {
+		key := strings.ToLower(k)
+		if strings.HasPrefix(key, "anthropic-ratelimit-unified-") && strings.HasSuffix(key, "-reset") {
+			delete(out, k)
+		}
+	}
+	return out
+}
 
 func awaitClaudeTeam(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)

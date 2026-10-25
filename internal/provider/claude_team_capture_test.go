@@ -6,9 +6,112 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestClaudeTeam429QuotaChecksCoalesce(t *testing.T) {
+	for _, result := range []string{"exhausted", "healthy", "unknown"} {
+		t.Run(result, func(t *testing.T) {
+			tm, f, _ := teamFixture(t)
+			user, id := "u2@example.com · Team", teamID(2)
+			original := []ClaudeLimit{{Kind: "five_hour", Used: .99, ResetsAt: time.Now().Add(time.Hour).Unix()},
+				{Kind: "seven_day", Used: .2, ResetsAt: time.Now().Add(24 * time.Hour).Unix()}}
+			NoteClaudeLimits(user, original)
+			entered, finish := make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(finish) })
+			var reads atomic.Int32
+			old := UsageClaudeVia(func(ctx context.Context, _ string) (string, error) {
+				if reads.Add(1) == 1 {
+					close(entered)
+				}
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-finish:
+				}
+				switch result {
+				case "unknown":
+					return "", errors.New("fixture secret")
+				case "exhausted":
+					return strings.Replace(teamUsageFixture(), "17%", "100%", 1), nil
+				default:
+					return teamUsageFixture(), nil
+				}
+			})
+			t.Cleanup(func() { UsageClaudeVia(old) })
+			t.Cleanup(release)
+			var wg sync.WaitGroup
+			wg.Go(func() { RecheckClaudeTeamQuota(context.Background(), user) })
+			select {
+			case <-entered:
+			case <-time.After(3 * time.Second):
+				t.Fatal("quota verification never started")
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			returned := make(chan struct{})
+			go func() { RecheckClaudeTeamQuota(ctx, user); close(returned) }()
+			select {
+			case <-returned:
+			case <-time.After(time.Second):
+				t.Fatal("cancelled waiter blocked on another quota read")
+			}
+			for range 12 {
+				wg.Go(func() { RecheckClaudeTeamQuota(context.Background(), user) })
+			}
+			release()
+			wg.Wait()
+			RecheckClaudeTeamQuota(context.Background(), user)
+			if reads.Load() != 1 {
+				t.Fatalf("one burst made %d quota reads", reads.Load())
+			}
+			if spent := ClaudeTeamExhausted(user); spent != (result == "exhausted") {
+				t.Fatalf("spent=%v for %s", spent, result)
+			}
+			if result == "unknown" && (tm.disk.Limits[id][0] != original[0] || strings.Contains(tm.disk.QuotaErrors[id], "secret")) {
+				t.Fatal("unknown quota erased observation or exposed helper error")
+			}
+			if len(f.writes) != 0 {
+				t.Fatal("verification itself wrote a seat")
+			}
+		})
+	}
+}
+
+func TestClaudeTeam429QuotaCheckCancels(t *testing.T) {
+	tm, f, _ := teamFixture(t)
+	user, id := "u2@example.com · Team", teamID(2)
+	original := ClaudeLimit{Kind: "five_hour", Used: .99, ResetsAt: time.Now().Add(time.Hour).Unix()}
+	NoteClaudeLimits(user, []ClaudeLimit{original})
+	entered := make(chan struct{})
+	old := UsageClaudeVia(func(ctx context.Context, _ string) (string, error) {
+		close(entered)
+		<-ctx.Done()
+		return "", ctx.Err()
+	})
+	t.Cleanup(func() { UsageClaudeVia(old) })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan struct{})
+	go func() { RecheckClaudeTeamQuota(ctx, user); close(done) }()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("verification never started")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("verification ignored request cancellation")
+	}
+	if tm.disk.Limits[id][0] != original || ClaudeTeamExhausted(user) || len(f.writes) != 0 {
+		t.Fatal("cancelled verification changed quota or seats")
+	}
+}
 
 func teamUsageFixture() string {
 	now := time.Now().UTC()

@@ -4,8 +4,8 @@ This opt-in local fork exposes one normal subscription provider per Team
 organization (`claude-team-{organization UUID}`), managing existing Premium
 assignments in the background. Each subscription has its own routing, model,
 fallback and on/off settings. The genuine Claude Code bridge still handles
-inference, streaming and tool results. No request invokes Python,
-Desktop, a quota endpoint, or an administrator check before inference.
+inference, streaming and tool results. No request invokes Python or Desktop.
+Ordinary admission consults neither a quota endpoint nor an administrator API.
 
 ## Configuration and ownership
 
@@ -140,6 +140,16 @@ for the current bounded handoff, re-resolve that provider's enabled accounts,
 and continue with its original body. The final candidate's refusal is held
 too. Visible text, reasoning and tool calls are not replayed. Account/model
 scopes, pinned/strict affinity and sealed conversation ownership still apply.
+
+An ambiguous 429 on this uncommitted failure path rechecks the failed account's
+saved-login `/usage`, bounded by 20 seconds. Concurrent failures share that
+check, with a 30-second cooldown after either success or failure. Confirmed
+global exhaustion enters the normal background handoff; a failed/partial
+check retains the previous snapshot and does not invent exhaustion or move a
+seat. A generic rate limit without confirmed exhaustion keeps the gateway's
+bounded short-term retry policy, honoring `Retry-After` and request/token
+reset headers. Unified 5-hour/weekly allowance deadlines do not suppress that
+short-term retry. Normal successful requests still perform no quota read.
 
 Pending requests are in memory, not a disk spool of private prompts. At most
 128 callers wait for a current handoff; each wait is bounded by two minutes
