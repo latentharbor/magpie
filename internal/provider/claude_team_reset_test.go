@@ -41,6 +41,16 @@ func TestClaudeTeamEstimateDoesNotReplaceObservations(t *testing.T) {
 	if _, ok := pointOf(observed, now, now); !ok {
 		t.Fatal("an actual reading was discarded")
 	}
+	noteQuotaHistory([]SubscriptionQuota{q}, now)
+	if len(readQuotaHist()) != 0 {
+		t.Fatal("an estimate was recorded in history")
+	}
+	at := now.Add(-2 * time.Hour)
+	q.ReadAt, q.Windows = &at, []QuotaWindow{observed}
+	noteQuotaHistory([]SubscriptionQuota{q}, now.Add(time.Minute))
+	if len(readQuotaHist()) != 1 {
+		t.Fatal("the estimate suppressed an earlier actual observation")
+	}
 }
 
 func TestClaudeTeamElapsedWindowsKeepWeeklyAnchor(t *testing.T) {
