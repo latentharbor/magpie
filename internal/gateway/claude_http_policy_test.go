@@ -20,7 +20,8 @@ func TestClaudeHTTPNativeCallerKeepsItsProtocol(t *testing.T) {
 		"x-claude-code-prompt-id":     "78992615-9a72-44e0-bccb-be6a55f90646",
 		"x-claude-code-request-class": "subagent", "x-claude-code-agent-id": "native-child",
 		"x-stainless-runtime-version": "v26.3.0", "x-stainless-retry-count": "2",
-		"anthropic-beta": "claude-code-20250219,extended-cache-ttl-2025-04-11",
+		"anthropic-beta":            "claude-code-20250219,extended-cache-ttl-2025-04-11",
+		"anthropic-organization-id": "caller-organization",
 	} {
 		r.Header.Set(k, value)
 	}
@@ -33,7 +34,7 @@ func TestClaudeHTTPNativeCallerKeepsItsProtocol(t *testing.T) {
 	}
 	for k := range r.Header {
 		if claudeCodeHeader(k) || strings.EqualFold(k, "x-client-request-id") || strings.EqualFold(k, "Accept-Encoding") {
-			if strings.EqualFold(k, "anthropic-beta") {
+			if strings.EqualFold(k, "anthropic-beta") || strings.EqualFold(k, "anthropic-organization-id") {
 				continue
 			}
 			if head.Get(k) != r.Header.Get(k) {
@@ -64,6 +65,9 @@ func TestClaudeHTTPNativeCallerKeepsItsProtocol(t *testing.T) {
 	}
 	if head.Get("Authorization") != "Bearer fixture-oauth" || head.Get("x-api-key") != "" {
 		t.Error("caller credential escaped")
+	}
+	if head.Get("Anthropic-Organization-Id") != "" {
+		t.Error("caller organization escaped to the selected OAuth account")
 	}
 }
 

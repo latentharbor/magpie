@@ -68,6 +68,9 @@ func TestSelectedInferenceUsesGatewayWithoutOfficialCredentials(t *testing.T) {
 		if r.Header.Get("Anthropic-Beta") != "context-1m" {
 			t.Error("capability header lost")
 		}
+		if r.Header.Get("Accept-Encoding") != "identity" || r.Header.Get("Anthropic-Dangerous-Direct-Browser-Access") != "true" {
+			t.Error("native response encoding or SDK protocol header lost")
+		}
 		for _, h := range []string{"x-claude-code-session-id", "x-claude-code-prompt-id", "x-claude-code-request-class", "x-claude-code-agent-id", "x-claude-code-parent-agent-id"} {
 			if r.Header.Get(h) != "native-"+h {
 				t.Errorf("native affinity or request role lost: %s", h)
@@ -91,6 +94,8 @@ func TestSelectedInferenceUsesGatewayWithoutOfficialCredentials(t *testing.T) {
 	req.Header.Set("X-Api-Key", "official-api-secret")
 	req.Header.Set("Anthropic-Organization-Id", "private-org")
 	req.Header.Set("Anthropic-Beta", "context-1m")
+	req.Header.Set("Accept-Encoding", "identity")
+	req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
 	for _, h := range []string{"x-claude-code-session-id", "x-claude-code-prompt-id", "x-claude-code-request-class", "x-claude-code-agent-id", "x-claude-code-parent-agent-id"} {
 		req.Header.Set(h, "native-"+h)
 	}

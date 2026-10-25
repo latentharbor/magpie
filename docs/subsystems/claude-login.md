@@ -96,10 +96,15 @@ A successful system-trust status alone is not proof of Desktop or guest trust.
 
 Only POST `/v1/messages` and `/v1/messages/count_tokens` examine model mappings.
 Matching bodies retain tools, thinking signatures, cache markers, metadata and
-`output_config`; only `model` is rewritten. Gzip input is supported, with a
-64 MiB compressed/decoded limit. Native inference headers are retained through
+`output_config`; only the `model` value is rewritten in place. Unrelated JSON
+bytes, including nested formatting, are not compacted or reserialized. This
+does not imply that JSON whitespace changes affect the vendor's prompt cache.
+Gzip input is supported, with a 64 MiB compressed/decoded limit. Native inference headers are retained through
 an allowlist, while official Authorization, cookies, API keys and organization
 headers are discarded. Magpie gets its local synthetic bearer identity instead.
+The allowlist includes the caller's response `Accept-Encoding` and the native
+SDK's `anthropic-dangerous-direct-browser-access` header. Body compression and
+hop-by-hop headers are rebuilt for the local hop, rather than copied blindly.
 Selected replies cannot set the official client's cookies or redirect it.
 
 Native `POST /v1/messages/cache_touch` carries a `request_id`, not a model or

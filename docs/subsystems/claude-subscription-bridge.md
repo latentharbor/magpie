@@ -84,7 +84,10 @@ It preserves the caller's system/identity block attributes, SDK variants,
 diagnostics, session/prompt IDs, request class and client SDK headers. Only the
 selected account/device identity is substituted in metadata (unknown fields
 survive), and a present CCH is re-signed after final body changes. This is not
-an authentication exemption. Other callers receive compatibility fields; an
+an authentication exemption. The caller's `Anthropic-Organization-Id` header
+is discarded along with its credentials: organization selection belongs to the
+selected OAuth sign-in, including when the caller is signed into another team.
+Other callers receive compatibility fields; an
 existing standalone identity is reused, not duplicated or stripped of cache
 attributes. Existing provider refusal learning still filters final betas.
 
@@ -189,6 +192,28 @@ Digests, capture boundaries and source references are recorded in
 serialization, production TLS behavior, Cowork's Linux runtime and subscription
 charging equivalence remain unproven; these probes do not establish a fully
 indistinguishable client.
+
+The native relay-chain audit also exercises the actual local CONNECT/TLS proxy
+and gateway HTTP listener before the upstream request builder
+(`claude_http_proxy_test.go`). The three committed capture profiles and explicitly
+synthetic signed tool continuations retain native system blocks, messages,
+tools, max tokens, thinking/effort, context management, diagnostics and caller
+encoding. This found and removed whole-body reserialization and two dropped
+SDK/response-negotiation headers in the login proxy. The subscription layer still
+substitutes selected-account metadata and signs the final body as documented.
+Whitespace preservation is a relay contract, not evidence about vendor billing.
+
+`claude_http_replay_test.go` separately checks native 429 handoff with explicit
+5m/1h cache policy, signed tool history and max effort retained. An HTTP stream
+that has emitted text or a tool call retains its later error and is never
+replayed. These are offline checks against local mocks; they do not constitute
+a newly captured live Desktop Code or Cowork session.
+
+Restoring the old proxy serialization/header allowlist made the relay-chain
+test fail on rewritten nested fields and dropped encoding/SDK headers.
+Separately omitting the organization-header removal through a Go source overlay
+made `TestClaudeHTTPNativeCallerKeepsItsProtocol` fail with a caller-organization
+leak. The source overlay left the concurrent full-suite tree unchanged.
 
 Verification for this refresh:
 

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tidwall/sjson"
 	"github.com/yetone/magpie/internal/claudeanchor"
 )
 
@@ -306,8 +307,10 @@ func (p *Proxy) inference(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				if selected != "" {
-					fields["model"], _ = json.Marshal(selected)
-					decoded, err = json.Marshal(fields)
+					// Change the routing field alone. Marshaling RawMessages
+					// compacts every nested value and rewrites the client's
+					// otherwise untouched tools, signed blocks and cache prefix.
+					decoded, err = sjson.SetBytes(decoded, "model", selected)
 					if err != nil {
 						http.Error(w, "cannot encode inference", 500)
 						return
@@ -371,7 +374,8 @@ func (p *Proxy) inference(w http.ResponseWriter, r *http.Request) {
 // well as protocol capabilities. These are not login or account credentials.
 func nativeHeader(lower string) bool {
 	switch lower {
-	case "content-type", "accept", "user-agent", "anthropic-version", "anthropic-beta", "x-app",
+	case "content-type", "accept", "accept-encoding", "user-agent", "anthropic-version", "anthropic-beta",
+		"anthropic-dangerous-direct-browser-access", "x-app",
 		"x-claude-code-session-id", "x-claude-code-prompt-id", "x-claude-code-request-class",
 		"x-claude-code-agent-id", "x-claude-code-parent-agent-id", "x-session-id", "session-id", "session_id",
 		"x-client-request-id":

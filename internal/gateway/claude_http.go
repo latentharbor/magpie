@@ -256,6 +256,10 @@ func claudeHTTPHeaders(req *http.Request, body []byte, c claudeHTTPCall) {
 			}
 		}
 		h.Del("x-api-key")
+		// Organization selection belongs to the chosen OAuth credential, as
+		// account_uuid does in metadata. A native caller may be signed into
+		// a different organization from the account the router selected.
+		h.Del("Anthropic-Organization-Id")
 		h.Set("Authorization", "Bearer "+c.auth.Token)
 		h.Set("x-claude-code-session-id", c.session)
 		provider.MergeList(h, "Anthropic-Beta", "oauth-2025-04-20")

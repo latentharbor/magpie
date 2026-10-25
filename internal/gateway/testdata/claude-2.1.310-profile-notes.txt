@@ -52,5 +52,25 @@ REA SDK semantic coverage was partial under a bounded analysis. Eight unpacked
 native entries contradicted ASAR declared hashes; record-and-continue was used.
 REA therefore did not certify whole-package integrity or runtime behavior.
 
+Later runtime-identity follow-up (same date):
+Two running Desktop Code child processes resolved to the official signed
+claude.app host bundle under claude-code/2.1.308, rather than the independently
+downloaded standalone executable. Its executable SHA-256 is
+8cea5edf53fbb5a521d42f5fa7015288733e41855fbb79bcb48cbce976ed6064.
+codesign reported Anthropic PBC, TeamIdentifier Q6L2SF6YDW, hardened runtime
+and a stapled notarization ticket. The bundle's plist says 2.1.308;
+REA inspect_plist evidence:
+ev_35f76b13b43414ad5c3ba8f0080356428d12549c88561b2dbca5e1063975cba6
+These identify the file on disk; no live process memory was inspected.
+
+The exact host-bundle executable was separately launched in the same isolated
+fake-token, loopback-only harness with the claude-desktop entrypoint.
+Three inference connections (low/high/max) matched the existing normalized
+hello fixture. They advertised claude-cli/2.1.308 (external, claude-desktop),
+runtime v26.3.0 and adaptive thinking with display updates. The resulting
+requests passed the independent CCH check, gateway builder and full local
+CONNECT/TLS proxy-chain replay. This is stronger binary selection evidence,
+but remains a controlled launch, not a fresh request initiated by Desktop UI.
+
 No real Desktop inference, Cowork VM inference, production framing,
 allowance equivalence, or risk-control behavior was established by this probe.
