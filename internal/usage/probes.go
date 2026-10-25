@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/probelog"
+	"github.com/yetone/magpie/internal/provider"
 )
 
 // SourceProbe is Record.Source for a request magpie sent a provider on its
@@ -54,7 +55,9 @@ func clipProbeError(s string) string {
 // probeChunk is the probes made since since as one chunk of the request
 // log's rows, each in the order its line has in the log as a gateway
 // row's is; nil for none.
-func probeChunk(probes []probeRow, since time.Time) *rowChunk {
+// A provider renamed since is listed by the id it has now (Renames): the
+// Requests page's provider list named a renamed one twice (cybercaius).
+func probeChunk(probes []probeRow, since time.Time, renames provider.Renames) *rowChunk {
 	var c *rowChunk
 	for _, p := range probes {
 		if !since.IsZero() && p.Time.Before(since) {
@@ -63,7 +66,9 @@ func probeChunk(probes []probeRow, since time.Time) *rowChunk {
 		if c == nil {
 			c = &rowChunk{}
 		}
-		c.add(Row{Record: p.Record, Source: SourceProbe}, "", p.off, false)
+		r := p.Record
+		r.Provider = renames.Of(r.Provider, r.Time)
+		c.add(Row{Record: r, Source: SourceProbe}, "", p.off, false)
 	}
 	if c == nil {
 		return nil

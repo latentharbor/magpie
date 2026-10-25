@@ -420,7 +420,7 @@ func ledgerWithShared(since, until time.Time, f Filter, recs []Record, logs []se
 // ledgerMatched is ledgerWithShared with the session files' calls the
 // gateway saw already told (matched, by their index in logs).
 func ledgerMatched(since, until time.Time, f Filter, recs []Record, logs []sessions.Call, others []SharedCall, matched map[int]bool, pairs map[int]int, actors map[int]string, compactions map[int]*bool) (rows []Row, sum Totals, agents, providers []string) {
-	renamed := provider.Renamed()
+	renamed := provider.UsageRenames()
 	// the upstream names in force now, read once for the lot: a row is
 	// judged by the names standing today, which is what Ledger says, and
 	// the rows here are what a reader compares a bill against
@@ -459,9 +459,7 @@ func ledgerMatched(since, until time.Time, f Filter, recs []Record, logs []sessi
 		if !since.IsZero() && r.Time.Before(since) || after(until, r.Time) {
 			continue
 		}
-		if id, ok := renamed[r.Provider]; ok {
-			r.Provider = id
-		}
+		r.Provider = renamed.Of(r.Provider, r.Time)
 		actor := ""
 		if call, ok := pairs[i]; ok && call >= 0 && call < len(logs) {
 			actor = logs[call].ThreadID
@@ -496,9 +494,7 @@ func ledgerMatched(since, until time.Time, f Filter, recs []Record, logs []sessi
 		if !since.IsZero() && r.Time.Before(since) || after(until, r.Time) {
 			continue
 		}
-		if id, ok := renamed[r.Provider]; ok {
-			r.Provider = id
-		}
+		r.Provider = renamed.Of(r.Provider, r.Time)
 		add(r, priceOf(r), c.Source, "")
 	}
 	// the two logs, by when each call began
@@ -557,13 +553,11 @@ func Pricer() func(Record) *catalog.Price {
 // effective prices used by the ledger. Reuse it for one page of routes;
 // make it again on the next read so a changed tariff re-prices history.
 func NewPricer() func([]Record) Totals {
-	priceOf, renamed := Pricer(), provider.Renamed()
+	priceOf, renamed := Pricer(), provider.UsageRenames()
 	return func(recs []Record) Totals {
 		var sum Totals
 		for _, r := range recs {
-			if id, ok := renamed[r.Provider]; ok {
-				r.Provider = id
-			}
+			r.Provider = renamed.Of(r.Provider, r.Time)
 			sum.add(r, priceOf(r))
 		}
 		return sum
@@ -1115,17 +1109,18 @@ func ledgerSeriesAt(p Period, rows []Row, now time.Time) (bucket string, pts []S
 
 // Visit calls fn with each record from since on, as the ledger's index
 // reads usage.jsonl: only its blocks that reach since are decoded.
+// Each record is as it was recorded: a provider renamed since is named
+// by the id it had then, which provider.UsageRenames tells (NewCoster
+// does so itself).
 func Visit(since time.Time, fn func(Record)) { readLogSnapshot().visit(since, fn) }
 
 // NewCoster prices one record at a time at the effective prices the
 // ledger uses, read once: its cost in USD, and false for a call with
 // tokens but no known price.
 func NewCoster() func(Record) (float64, bool) {
-	priceOf, renamed := Pricer(), provider.Renamed()
+	priceOf, renamed := Pricer(), provider.UsageRenames()
 	return func(r Record) (float64, bool) {
-		if id, ok := renamed[r.Provider]; ok {
-			r.Provider = id
-		}
+		r.Provider = renamed.Of(r.Provider, r.Time)
 		var t Totals
 		t.add(r, priceOf(r))
 		return t.Cost, t.Unpriced == 0

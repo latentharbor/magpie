@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/provider"
 )
 
 // readBack is r as the ledger reads it back: from a chunk as written, priced
@@ -18,7 +19,7 @@ func readBack(t *testing.T, r Record) []Row {
 		}
 		return &chunk
 	}
-	b := newBlockPricer(nil, nil, func(Record) *catalog.Price { return nil })
+	b := newBlockPricer(provider.Renames{}, nil, func(Record) *catalog.Price { return nil })
 	defer b.release()
 	raw := made()
 	return []Row{raw.row(0), b.block(raw).row(0), b.block(made().pack()).row(0)}

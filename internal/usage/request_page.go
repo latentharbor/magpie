@@ -612,7 +612,7 @@ func readRequestState(now time.Time) requestState {
 	})
 	ids, _ := json.Marshal(provider.SessionIdentities(sessions.CodexDir()))
 	codexIdentityKey, _ := json.Marshal(codexIdentities)
-	renamed, _ := json.Marshal(provider.Renamed())
+	renamed := provider.UsageRenames().Key()
 	cfg := settings.Load()
 	prices, _ := json.Marshal(cfg.ModelPrices)
 	wires, _ := json.Marshal(cfg.ModelWires)
@@ -835,7 +835,8 @@ func readRequestBlocks(idx *requestIndex, st requestState, p Period, now time.Ti
 	// copy of each block kept beside it doubled the index, and over the
 	// cache budget every query priced the whole history again.
 	var gateways []*rowChunk
-	priced := newBlockPricer(provider.Renamed(), cfg.ModelWires, price)
+	renames := provider.UsageRenames()
+	priced := newBlockPricer(renames, cfg.ModelWires, price)
 	for _, packed := range snapshot.blocks {
 		if !gatewaySince.IsZero() && packed.Latest.Before(gatewaySince) {
 			continue
@@ -844,7 +845,7 @@ func readRequestBlocks(idx *requestIndex, st requestState, p Period, now time.Ti
 			gateways = append(gateways, c)
 		}
 	}
-	if c := probeChunk(snapshot.probes, gatewaySince); c != nil {
+	if c := probeChunk(snapshot.probes, gatewaySince, renames); c != nil {
 		gateways = append(gateways, c) // listed, never counted (SourceProbe)
 	}
 	on := map[string]bool{}
@@ -912,7 +913,6 @@ func readRequestBlocks(idx *requestIndex, st requestState, p Period, now time.Ti
 	// the other computers' days (#542), a chunk each, read again only when
 	// sync brought a new copy
 	var others []*rowChunk
-	var renames map[string]string
 	from := ""
 	if !since.IsZero() { // as sharedSources reads it
 		from = since.AddDate(0, 0, -2).Format(time.DateOnly)
@@ -925,16 +925,11 @@ func readRequestBlocks(idx *requestIndex, st requestState, p Period, now time.Ti
 		c := idx.chunks[s.path]
 		if reused := c != nil && c.Source.Size == s.size && c.Source.Modified.Equal(s.mod); !reused {
 			d, _ := readShared(s.path)
-			if renames == nil {
-				renames = provider.Renamed()
-			}
 			c = &rowChunk{Source: sessions.CallSource{Path: s.path, Size: s.size, Modified: s.mod}, Computer: s.computer, Rows: make([]packedRow, 0, len(d.Calls))}
 			for i, call := range d.Calls {
 				r := call.Record
 				r.Computer = ""
-				if id, ok := renames[r.Provider]; ok {
-					r.Provider = id
-				}
+				r.Provider = renames.Of(r.Provider, r.Time)
 				c.add(priceRow(r, call.Source), "", int64(i), false)
 			}
 			c.Bytes -= int64(32 * len(c.Strings))

@@ -860,16 +860,15 @@ func summarize(p Period, now time.Time, recs []Record) Summary {
 }
 
 func summarizeFrom(p Period, now time.Time, first time.Time, historicalKeys map[string]bool, read func(func(Record))) Summary {
-	renamed := provider.Renamed()
+	renamed := provider.UsageRenames()
 	// the names models' usage is counted under (SlouchyQuill507): a model's
 	// row sums its ids, each call priced by its own id first
 	alias := provider.UsageAlias()
 	normalizedKeys := map[string]bool{}
 	for id := range historicalKeys {
-		if next, ok := renamed[id]; ok {
-			id = next
+		for _, next := range renamed.Each(id) {
+			normalizedKeys[next] = true
 		}
-		normalizedKeys[id] = true
 	}
 	historicalKeys = normalizedKeys
 	// a picked range's own days alone: its chart can start on the Monday
@@ -880,9 +879,7 @@ func summarizeFrom(p Period, now time.Time, first time.Time, historicalKeys map[
 			if r.Time.Before(from) || after(until, r.Time) {
 				return
 			}
-			if next, ok := renamed[r.Provider]; ok {
-				r.Provider = next
-			}
+			r.Provider = renamed.Of(r.Provider, r.Time)
 			fn(r)
 		})
 	}
@@ -1070,7 +1067,9 @@ func Vias(since time.Time) ViaIndex {
 	return cachedVias(since)
 }
 
-func buildVias(snapshot *logSnapshot, since time.Time) *viaLists {
+// A provider renamed since is listed by the id it has now (renames): the
+// Sessions tab named a renamed one by its old id (cybercaius).
+func buildVias(snapshot *logSnapshot, since time.Time, renames provider.Renames) *viaLists {
 	out := map[string][]Via{}
 	first := map[string]time.Time{}
 	keep := keptStrings{}
@@ -1078,7 +1077,7 @@ func buildVias(snapshot *logSnapshot, since time.Time) *viaLists {
 		if r.IsRejected() || r.IsReported() || r.Session == "" || r.Model == "" {
 			return
 		}
-		r.Provider, r.Model, r.Effort = keep.of(r.Provider), keep.of(r.Model), keep.of(r.Effort)
+		r.Provider, r.Model, r.Effort = keep.of(renames.Of(r.Provider, r.Time)), keep.of(r.Model), keep.of(r.Effort)
 		k := ReportedAs(r.Agent) + "|" + r.Session
 		vs := out[k]
 		if t, seen := first[k]; !seen || r.Time.Before(t) {

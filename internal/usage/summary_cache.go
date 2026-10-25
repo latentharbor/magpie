@@ -134,7 +134,7 @@ func usagePriceCacheKey(now time.Time) string {
 	h := sha256.New()
 	st := settings.Load()
 	prices, _ := json.Marshal(st.ModelPrices)
-	aliases, _ := json.Marshal(provider.Renamed())
+	aliases := provider.UsageRenames().Key()
 	// and the names models' usage is counted under, which the groups key on
 	usageAliases, _ := json.Marshal(st.UsageAliases)
 	fmt.Fprint(h, string(prices), string(aliases), string(usageAliases))
