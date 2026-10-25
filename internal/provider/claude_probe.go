@@ -5,8 +5,10 @@ package provider
 import (
 	"context"
 	"errors"
+	"net/http"
 	"time"
 
+	"github.com/yetone/magpie/internal/probelog"
 	"github.com/yetone/magpie/internal/settings"
 )
 
@@ -71,8 +73,15 @@ func (p Provider) testClaude(ctx context.Context, model string) Result {
 	}
 	start := time.Now()
 	version := ClaudeLoginVersion(p.Account.User)
-	err = claudeCLIProbe(ctx, dir, model)
+	err = claudeCLIProbe(probelog.Taken(ctx), dir, model)
 	r.Millis = time.Since(start).Milliseconds()
+	// Claude Code sent it, not a client of magpie's: written down from
+	// what it came to
+	status, msg := http.StatusOK, ""
+	if err != nil {
+		status, msg = 0, err.Error()
+	}
+	probelog.NoteResult(probelog.WithModel(ctx, model), "claude -p", start, status, msg)
 	if err != nil {
 		NoteClaudeSignInFailure(p.Account.User, version, err.Error())
 		r.Error = err.Error()

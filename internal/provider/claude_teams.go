@@ -439,8 +439,8 @@ func (p Provider) teamAlsoOn() []Provider {
 	return out
 }
 
-// TeamQuota is the last real observation, never an inferred zero after reset.
-// An unassigned account cannot refresh its quota until it owns a seat again.
+// claudeTeamQuota projects elapsed cached windows without rewriting observations.
+// Unassigned accounts cannot refresh until they own a seat again.
 func claudeTeamQuota(user string) ([]QuotaWindow, bool) {
 	t := claudeTeamForUser(user)
 	t.mu.Lock()
@@ -451,7 +451,27 @@ func claudeTeamQuota(user string) ([]QuotaWindow, bool) {
 	if !managed || len(ls) == 0 {
 		return nil, false
 	}
-	return claudeLimitWindows(ls), true
+	return claudeTeamWindowsAt(ls, time.Now()), true
+}
+
+// claudeTeamWindowsAt is the shared display projection; raw limits remain on disk
+// and in the member's limits field for inspection and later vendor correction.
+func claudeTeamWindowsAt(ls []ClaudeLimit, now time.Time) []QuotaWindow {
+	ws := claudeLimitWindows(ls)
+	for i := range ws {
+		w := &ws[i]
+		if w.ResetsAt == nil || w.ResetsAt.After(now) {
+			continue
+		}
+		w.Used, w.Estimated = 0, true
+		if w.fixedReset {
+			at := nextFixedReset(*w.ResetsAt, w.Span, now)
+			w.ResetsAt = &at
+		} else {
+			w.ResetsAt = nil
+		}
+	}
+	return ws
 }
 
 func claudeLimitWindows(ls []ClaudeLimit) []QuotaWindow {
@@ -461,7 +481,7 @@ func claudeLimitWindows(ls []ClaudeLimit) []QuotaWindow {
 			if l.Kind != k.kind {
 				continue
 			}
-			w := QuotaWindow{Name: k.name, Used: l.Used * 100, Span: k.span, Model: k.model}
+			w := QuotaWindow{Name: k.name, Used: l.Used * 100, Span: k.span, Model: k.model, fixedReset: k.span == 7*24*time.Hour}
 			if l.ResetsAt > 0 {
 				at := time.Unix(l.ResetsAt, 0)
 				w.ResetsAt = &at

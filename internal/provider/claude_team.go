@@ -37,6 +37,7 @@ type ClaudeTeamMember struct {
 	SeatTier       string        `json:"seatTier"`
 	State          string        `json:"state"`
 	Limits         []ClaudeLimit `json:"limits"`
+	Windows        []QuotaWindow `json:"windows"`
 	Lapsed         bool          `json:"lapsed"`
 	Active         int           `json:"active"`
 	ObservedAt     *time.Time    `json:"observedAt,omitempty"`
@@ -1295,6 +1296,7 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 		}
 		account := strings.ToLower(id.AccountID)
 		m := ClaudeTeamMember{AccountID: account, OrganizationID: id.OrganizationID, User: l.User, Selected: slices.Contains(c.Members, account), On: l.On && !l.TeamOff, SeatTier: seats[account], Limits: limits[account], Lapsed: l.Lapsed != "", Active: active[account], State: "ready"}
+		m.Windows = claudeTeamWindowsAt(m.Limits, time.Now())
 		m.QuotaError, m.QuotaPending = quotaErrors[account], quotaPending[account]
 		if at := observed[account]; !at.IsZero() {
 			m.ObservedAt = &at

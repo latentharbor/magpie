@@ -444,8 +444,11 @@ func TestClaudeTeamParkedQuotaUsesLastObservationWithoutProbe(t *testing.T) {
 	UsageClaudeVia(func(context.Context, string) (string, error) { calls++; return "", errors.New("must not be called") })
 	t.Cleanup(func() { UsageClaudeVia(before) })
 	ws, err := claudeWindows(context.Background(), "u3@example.com · Team", true)
-	if err != nil || len(ws) != 1 || ws[0].Used != 100 || ws[0].ResetsAt == nil || ws[0].ResetsAt.Unix() != reset {
-		t.Fatalf("parked snapshot was probed or fabricated: %+v %v", ws, err)
+	if err != nil || len(ws) != 1 || ws[0].Used != 0 || ws[0].ResetsAt != nil || !ws[0].Estimated {
+		t.Fatalf("parked snapshot was not projected explicitly: %+v %v", ws, err)
+	}
+	if tm.disk.Limits[teamID(3)][0].Used != 1 || tm.disk.Limits[teamID(3)][0].ResetsAt != reset {
+		t.Fatal("projection changed the actual observation")
 	}
 	if calls != 0 {
 		t.Fatal("unassigned account was probed")

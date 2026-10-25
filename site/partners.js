@@ -56,4 +56,25 @@ export const PARTNERS = [
     },
     from: "2026-10-23T00:00:00+08:00",
   },
+  {
+    id: "apikeyfan",
+    name: "APIKEY.FAN",
+    regions: [
+      { id: "main", name: "Default", chat: "https://api.apikey.fan/v1", responses: "https://api.apikey.fan/v1", anthropic: "https://api.apikey.fan" },
+      { id: "slb", name: "Direct", chat: "https://slb.apikey.fan/v1", responses: "https://slb.apikey.fan/v1", anthropic: "https://slb.apikey.fan" },
+    ],
+    chat: "https://api.apikey.fan/v1",
+    responses: "https://api.apikey.fan/v1",
+    anthropic: "https://api.apikey.fan",
+    keysUrl: "https://apikey.fan/?aff=magpie",
+    website: "https://apikey.fan/?aff=magpie",
+    iconUrl: "https://usemagpie.ai/img/partner-apikeyfan.png",
+    notes: {
+      en: "Enterprise-grade AI API gateway to the world's leading models",
+      zh: "企业级 AI 中转站，连接全球主流大模型",
+      "zh-TW": "企業級 AI 中轉站，連接全球主流大模型",
+    },
+    langs: ["zh", "en"],
+    from: "2026-10-24T00:00:00+08:00",
+  },
 ];

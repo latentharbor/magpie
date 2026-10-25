@@ -84,8 +84,13 @@ window (including model-specific windows) still goes behind usable accounts.
 This changes neither other subscriptions' Smart nor explicit routing picks.
 Complete usable snapshots
 precede partial/unknown observations; unknown members are probes only when no
-known usable standby exists. Elapsed windows are eligible estimates, with their
-next expiry ranked one full window from now, without overwriting observations.
+known usable standby exists. Elapsed windows are eligible estimates without
+overwriting observations. An elapsed 5-hour window has zero estimated usage
+and no running deadline until the next use starts it; routing uses five hours
+from now only as a prospective bound. Weekly windows, including model-specific
+ones, advance from their observed reset on a fixed seven-day cadence, even
+after several missed periods. Both standby selection and inference use that
+anchored deadline, rather than seven days from the time of selection.
 
 Background Smart reconciliation also replaces a healthy active member when a
 known usable standby has an earlier expiry. It replaces the latest-expiring
@@ -97,9 +102,12 @@ request performs an administrator check. Explicit in-order, rotation and other
 policies retain their semantics and do not trigger voluntary expiry rebalancing.
 There is no preferred/current-CLI-login account or account-switch action in the
 Team UI. An unknown reset on a known exhausted account is not assumed reset.
-Quota reads for unassigned or draining accounts show only last-observed
-windows and an explicit stale-reading warning; they do not invoke inference
-or fabricate zero usage when a recorded reset passes.
+Quota reads for unassigned or draining accounts do not invoke inference.
+Displays project elapsed windows to zero with an explicit reset-based estimate
+notice; this is never described as a fresh vendor reading. The Team member API
+retains raw `limits` beside projected `windows`, and the private journal and
+observation time remain unchanged. A missing reset does not clear positive
+usage. A real successful reading replaces the estimate.
 5-hour and weekly windows are combined: an account is back only after every
 blocking window has reset. Revoked/expired credentials are not automatically
 cleared merely because an account receives a Premium seat.

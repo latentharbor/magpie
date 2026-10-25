@@ -434,10 +434,11 @@ func failureOf(c candidate, status int, body []byte) string {
 // restrictedSaid says an error is one magpie already put in words as an
 // account its vendor restricted: WorkBuddy's 11140 as the built-in
 // translates it, or as the plugin does, both ending in
-// provider.WBRestrictedHint. magpie's own words, which no vendor says, so
-// they are read whoever answered.
+// provider.WBRestrictedHint, and ZCode's Start Plan 3012 as the ZCode
+// plugin puts it (provider.ZCodeRestrictedHint, plugins#348). magpie's own
+// words, which no vendor says, so they are read whoever answered.
 func restrictedSaid(status int, body []byte) bool {
-	return status >= 400 && bytes.Contains(body, []byte(provider.WBRestrictedHint))
+	return status >= 400 && (bytes.Contains(body, []byte(provider.WBRestrictedHint)) || bytes.Contains(body, []byte(provider.ZCodeRestrictedHint)))
 }
 
 // restrictedRefused says p's vendor restricted the account: magpie's words
@@ -534,6 +535,9 @@ func init() { provider.OnRenewed(renewed) }
 
 // staleAllowance is provider.StaleAllowance, swapped in tests.
 var staleAllowance = provider.StaleAllowance
+
+// codexMayBeUsedUp is provider.CodexMayBeUsedUp, swapped in tests.
+var codexMayBeUsedUp = provider.CodexMayBeUsedUp
 
 // awaitAllowance is provider.AwaitAllowance, swapped in tests.
 var awaitAllowance = provider.AwaitAllowance
@@ -749,10 +753,29 @@ func resetsZhipu(body []byte, now time.Time) time.Duration {
 // them, each a number and its unit, and nothing else between.
 var resetsInWords = regexp.MustCompile(`(?i)\bresets? in (?:(\d+)\s*d(?:ays?)?\b\s*)?(?:(\d+)\s*h(?:ours?|rs?)?\b\s*)?(?:(\d+)\s*m(?:in(?:utes?|s)?)?\b)?`)
 
-// resetsAfter is how long the refusal says until it is back (resetsInWords),
-// held to longestWritten. Zero when it doesn't say.
+// quotaResetAfter: Antigravity's (Google Code Assist's) 429 for a model's
+// allowance used up, which writes how long until it is back as Go prints
+// a duration: "You have exhausted your capacity on this model. Your quota
+// will reset after 3h19m30s." Unread, the account rested the quarter of
+// an hour of a quota that says nothing, and the account first in order
+// was asked again, and refused, every 15 minutes for the hours or days
+// its quota was out (Dani Ariyanto on Discord, 10-24).
+var quotaResetAfter = regexp.MustCompile(`(?i)\bquota will reset after ((?:\d+h)?(?:\d+m)?(?:\d+(?:\.\d+)?s)?)`)
+
+// resetsAfter is how long the refusal says until it is back
+// (resetsInWords, quotaResetAfter), held to longestWritten. Zero when it
+// doesn't say.
 func resetsAfter(body []byte) time.Duration {
-	return spanWritten(resetsInWords.FindSubmatch(wordsOf(body)))
+	body = wordsOf(body)
+	if d := spanWritten(resetsInWords.FindSubmatch(body)); d > 0 {
+		return d
+	}
+	if m := quotaResetAfter.FindSubmatch(body); m != nil && len(m[1]) > 0 {
+		if d, err := time.ParseDuration(string(m[1])); err == nil && d > 0 && d <= longestWritten {
+			return d
+		}
+	}
+	return 0
 }
 
 // clineModelLimited says c, a provider whose requests reach Cline's API,
@@ -1023,6 +1046,11 @@ func (s *Server) restAfterMarked(c candidate, status int, header http.Header, bo
 	// by the plugin's provider ("plugin:grok"), not by "plugin"
 	if a := c.p.Account; a != nil && why != failOther && why != failVerify && why != failRestricted {
 		staleAllowance(a.UsageAgent(), a.User) // ask again what it has left
+		if why == failQuota && a.UsageAgent() == "codex" {
+			// the account Codex is signed in to may be out: the Codex app
+			// greys its Send till it knows magpie is its provider
+			codexMayBeUsedUp(a.User)
+		}
 	} else if a == nil && why != failOther && why != failVerify && why != failRestricted {
 		staleKeyAllowance(c.p) // a key that reads its windows, too
 	}

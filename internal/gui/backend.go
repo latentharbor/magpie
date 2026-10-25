@@ -12,6 +12,7 @@ import (
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/update"
+	"github.com/yetone/magpie/internal/usage"
 )
 
 // served is the gateway this process serves, nil while another magpie
@@ -40,9 +41,15 @@ func startBackend() (gw *gateway.Server) {
 	gateway.Window = true // the routing this process serves is shown on its page
 	gw = serveGateway()
 	go watchGateway(backendCtx, gatewayWatch)
+	// the usage log parsed now, not when the tray panel first asks for
+	// today's calls (CyberCaius)
+	go usage.ReadAhead()
 	// Codex's background app-server, restarted when it has the list from
 	// before a change and no codex session is on it (luci)
 	go agent.KeepCodexDaemonCurrent(backendCtx)
+	// the Codex app, reopened once its account is used up and magpie is
+	// its provider, which it reads only as it opens (MasterYi)
+	go keepCodexAppSending(backendCtx)
 	// the compactions magpie made in Codex's threads written as Codex's
 	// own, so a thread goes on when Codex talks to OpenAI itself
 	go agent.KeepCodexRolloutsPortable(backendCtx)

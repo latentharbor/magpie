@@ -109,7 +109,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           assert(sub.includes("Claude Code") && sub.includes("Codex"), "the sub names what is read: " + sub);
           if (lang !== "en") assert(!sub.startsWith("Read the accounts"), lang + " sub not translated");
           // the same Off and On as Mask secrets above it
-          assert.deepEqual(await opts.allTextContents(), await page.locator("#redactList .row").first().locator(".opt").allTextContents());
+          assert.deepEqual(await opts.allTextContents(), await page.locator("#redactList .opt").allTextContents().then((labels) => labels.slice(0, 2)));
           assert.equal(await opts.nth(1).evaluate((b) => b.classList.contains("on")), true, "On by default");
 
           const row = box.locator(".row");

@@ -11,8 +11,10 @@ import (
 )
 
 func teamUsageFixture() string {
-	reset := time.Now().UTC().Add(72*time.Hour).Format("Jan 2 at 3pm") + " (UTC)"
-	return "Current session: 17% used · resets " + reset + "\nCurrent week (all models): 38% used · resets " + reset
+	now := time.Now().UTC()
+	five := now.Add(3*time.Hour).Format("3:04pm") + " (UTC)"
+	week := now.Add(72*time.Hour).Format("Jan 2 at 3:04pm") + " (UTC)"
+	return "Current session: 17% used · resets " + five + "\nCurrent week (all models): 38% used · resets " + week
 }
 
 func TestClaudeTeamJoinCapturesAndRetainsQuotaWithoutSeatWrites(t *testing.T) {

@@ -248,6 +248,29 @@ func renewSaved(ctx context.Context, agent, user string, force bool, stale strin
 	if l == nil {
 		return "", "", fmt.Errorf("no saved %s account %q", agent, user)
 	}
+	if agent == "codex" && heldByCodex(*l) {
+		// the account Codex is signed in to now (switched to since this
+		// was asked for, or the copy kept of it as it was): one sign-in in
+		// two places, whose refresh token a refresh here would spend under
+		// Codex. Codex's own auth.json then holds a dead one, and the app
+		// of an edu or business workspace, which reads its workspace's
+		// settings with it at start, stays paused on "无法加载组织设置"
+		// (万贤凯 on Discord). So it is renewed where Codex keeps it, as
+		// Codex's own (codexTokenRenewing), and the copy is left as it is:
+		// a switch away saves it afresh from Codex's.
+		return codexTokenRenewing(ctx, codexHome(), stale)
+	}
+	if home := codexHeldIn(*l); home != "" {
+		// the same for an account Codex is signed in to in another of
+		// its folders (CODEX_HOME=~/.codex-work): Codex there refreshes
+		// it too, so magpie renews it in that folder, never in a copy
+		// whose refresh token would sign that Codex out
+		tok, accountID, err := codexTokenRenewing(ctx, home, stale)
+		if err != nil {
+			return "", "", fmt.Errorf("%s, signed in to Codex in %s: %w; to sign in again there, run CODEX_HOME=%s codex login", user, home, err, home)
+		}
+		return tok, accountID, nil
+	}
 	var auth []byte
 	switch agent {
 	case "codex":
@@ -287,6 +310,21 @@ func renewSaved(ctx context.Context, agent, user string, force bool, stale strin
 		}
 	}
 	return tok, accountID, writeLogins(ls)
+}
+
+// heldByCodex says the saved ChatGPT account l is the one Codex is signed
+// in to: the same login, or the same refresh token. Asked under
+// savedTokenMu, which a switch holds too, so it can't change before the
+// refresh it decides is done.
+func heldByCodex(l savedLogin) bool {
+	live, ok := liveLogin("codex")
+	if !ok {
+		return false
+	}
+	if sameLogin(live, l) {
+		return true
+	}
+	return sameRefresh(live.Auth, l.Auth)
 }
 
 // savedRefreshFailed words a saved account's failed refresh. One the vendor

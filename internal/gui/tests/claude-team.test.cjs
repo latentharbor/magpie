@@ -70,6 +70,33 @@ function fixture(lang) {
 }
 for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webkit"])) {
   for(const lang of (process.env.LANG_ONLY?[process.env.LANG_ONLY]:["en","zh","zh-TW","ja","de"])) {
+    test(engine+" "+lang+": elapsed Team windows show estimates and an unstarted 5h", {timeout:30000}, async t=>{
+      const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
+      t.after(()=>browser.close());
+      const page=await browser.newPage({viewport:{width:1000,height:850},reducedMotion:"reduce"});
+      const words=strings().I18N[lang]||{}, tr=s=>words[s]||s, f=fixture(lang);
+      const m=f.views.get(org).members[1], reset=Math.floor(Date.now()/1000)-6*24*3600;
+      m.limits=[{kind:"five_hour",used:1,resetsAt:reset},{kind:"seven_day",used:1,resetsAt:reset}];
+      // The API retains historical limits separately from its current projection.
+      m.windows=[{name:"5 hours",used:0,estimated:true},
+        {name:"7 days",used:0,estimated:true,resetsAt:new Date((reset+7*24*3600)*1000).toISOString()}];
+      await page.route("**/*",f.route);
+      await page.goto("http://magpie.test/?view=providers&edit=claude-team-"+org);
+      const row=page.locator(".team-accts .acc").nth(1);
+      await row.getByText(tr("Window not started"),{exact:true}).waitFor();
+      assert.equal(await row.locator(".aq b").allTextContents().then(xs=>xs.filter(x=>x.includes("0%")).length),2);
+      assert((await row.innerText()).includes(tr("Reset-based estimate; not refreshed from Claude")));
+      assert(!(await row.innerText()).includes("100%"),"historical 100% presented as current usage");
+      await page.locator(".team-accts > button").first().click();
+      const member=page.locator('.team-member[data-account="'+m.accountId+'"]');
+      await member.getByText(tr("Window not started"),{exact:true}).waitFor();
+      assert.deepEqual(await member.locator("progress").evaluateAll(xs=>xs.map(x=>x.value)),[0,0]);
+      assert((await member.innerText()).includes(tr("Reset-based estimate; not refreshed from Claude")));
+      const next=await page.evaluate(at=>new Date(at).toLocaleString(intlLang()),m.windows[1].resetsAt);
+      assert((await member.innerText()).includes(next),"fixed weekly deadline is visible");
+      assert.equal(f.posts.length,0,"displaying a reset changed seats");
+      assert.equal(m.limits[0].used,1,"display discarded historical data");
+    });
     test(engine+" "+lang+": add inside an organization, retry and return to its account list", {timeout:30000}, async t=>{
       const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
       t.after(()=>browser.close());

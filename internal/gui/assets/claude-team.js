@@ -35,7 +35,7 @@ function renderTeamAccounts(a, p) {
     if (m.on) dot.append(svg(CHECK, 10, 2.2));
     const state = m.seatTier === "team_tier_1" ? "Premium" : t("Unassigned");
     row.append(dot, el("span", "rename", m.user), el("span", "grow"), el("span", "plan", state));
-    const q = { windows: (m.limits || []).map((w) => ({ name: w.kind === "five_hour" ? "5 hours" : w.kind === "seven_day" ? "7 days" : w.kind,
+    const q = { windows: m.windows || (m.limits || []).map((w) => ({ name: w.kind === "five_hour" ? "5 hours" : w.kind === "seven_day" ? "7 days" : w.kind,
       used: w.used * 100, resetsAt: w.resetsAt ? new Date(w.resetsAt * 1000).toISOString() : null })), readDeferred: true, asOf: m.observedAt };
     const quota = accountQuota({ [m.user]: q }, m.user);
     if (m.quotaError || m.quotaPending) quota.append(el("span", "aq-asof", t(m.quotaPending ? "Collecting usage…" : m.quotaError)));
@@ -103,18 +103,21 @@ async function openClaudeTeam(organizationId = "") {
       top.append(el("span", "team-seat", state)); row.append(top);
       const windows = el("div", "team-windows");
       for (const kind of ["five_hour", "seven_day"]) {
-        const w = (m.limits || []).find((w) => w.kind === kind), line = el("div", "team-window");
-        const label = kind === "five_hour" ? t("5 hours") : t("7 days");
+        const name = kind === "five_hour" ? "5 hours" : "7 days";
+        const old = (m.limits || []).find((w) => w.kind === kind);
+        const w = m.windows ? m.windows.find(w => w.name === name) : old && {used:old.used * 100, resetsAt:old.resetsAt && new Date(old.resetsAt * 1000).toISOString()};
+        const line = el("div", "team-window"), label = t(name);
         if (w) {
-          const meter = el("progress"); meter.max = 1; meter.value = w.used; meter.setAttribute("aria-label", label);
-          line.append(el("span", "", label + " · " + Math.round(w.used * 100) + "%"), meter,
-            el("span", "hint", w.resetsAt ? t("Resets: {time}", { time: date(w.resetsAt * 1000) }) : w.used === 0 ? t("Window not started") : t("Reset time unknown")));
+          const meter = el("progress"); meter.max = 100; meter.value = w.used; meter.setAttribute("aria-label", label);
+          line.append(el("span", "", label + " · " + Math.round(w.used) + "%"), meter,
+            el("span", "hint", w.resetsAt ? t("Resets: {time}", { time: date(w.resetsAt) }) : kind === "five_hour" && w.used === 0 ? t("Window not started") : t("Reset time unknown")));
         } else line.append(el("span", "", label), el("span", "hint", t("Usage unknown")));
         windows.append(line);
       }
       row.append(windows);
       const states = { signed_out: "Sign in again", cooling: "Cooling down", unknown: "Usage unknown", ready: "Ready" };
       const foot = el("div", "team-member-foot");
+      if (m.windows?.some(w => w.estimated)) foot.append(el("span", "hint", t("Reset-based estimate; not refreshed from Claude")));
       if (states[m.state]) foot.append(el("span", "hint", t(states[m.state])));
       if (m.observedAt) foot.append(el("span", "hint", t("Last observed: {time}", { time: date(m.observedAt) })));
       if (m.quotaError && !m.quotaPending) foot.append(el("span", "hint", t(m.quotaError)));
@@ -185,7 +188,8 @@ async function openClaudeTeam(organizationId = "") {
   };
   const poll = () => {
     clearTimeout(timer);
-    if ((view?.rotating || view?.members?.some((m) => m.quotaPending)) && ed.isConnected) timer = setTimeout(() => { if (ed.isConnected && !$("#modal").hidden) load(); }, 1500);
+    if (ed.isConnected) timer = setTimeout(() => { if (ed.isConnected && !$("#modal").hidden) load(); },
+      view?.rotating || view?.members?.some((m) => m.quotaPending) ? 1500 : 30000);
   };
   org.oninput = draw;
   refresh.onclick = () => load();

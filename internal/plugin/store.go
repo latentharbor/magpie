@@ -711,8 +711,10 @@ func install(ctx context.Context, spec string) error {
 	// a @magpie-community package or version npm doesn't have (a new
 	// one waits for an owner to publish it there) comes from the
 	// community repo's dist branch; one Bun's minimumReleaseAge holds
-	// back stays held, as the user's bunfig asks
-	if name, version, ok := distWanted(spec); ok && err != nil && !minAge.MatchString(err.Error()) {
+	// back stays held, as the user's bunfig asks, and a bun this machine
+	// can't run at all can't add it from there either
+	var ue *BunUnstartableError
+	if name, version, ok := distWanted(spec); ok && err != nil && !minAge.MatchString(err.Error()) && !errors.As(err, &ue) {
 		if derr := installDist(ctx, bun, name, version); derr != nil {
 			return fmt.Errorf("%w (and from the community repo's dist branch: %v)", err, derr)
 		}
@@ -732,6 +734,9 @@ func bunAdd(ctx context.Context, bun, spec string) error {
 	if err != nil {
 		if hint := missingLibs(string(out)); hint != "" {
 			return fmt.Errorf("bun add %s: %s: %w", spec, hint, err)
+		}
+		if ue := wontLoad(bun, err); ue != nil {
+			return fmt.Errorf("bun add %s: %w", spec, ue)
 		}
 		return fmt.Errorf("bun add %s: %v: %s", spec, cantStart(bun, err), lastLines(string(out), 6))
 	}
@@ -901,6 +906,9 @@ func reinstall(ctx context.Context, spec string) error {
 	if err != nil {
 		if hint := missingLibs(string(out)); hint != "" {
 			return fmt.Errorf("bun update %s: %s: %w", name, hint, err)
+		}
+		if ue := wontLoad(bun, err); ue != nil {
+			return fmt.Errorf("bun update %s: %w", name, ue)
 		}
 		return fmt.Errorf("bun update %s: %v: %s", name, cantStart(bun, err), lastLines(string(out), 6))
 	}

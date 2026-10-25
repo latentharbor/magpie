@@ -16,4 +16,5 @@ export const SPONSORS = [
   { id: "zerotoken", readme: "https://zzq.si/go/22zuh4a" },
   { id: "kimi", readme: "https://www.kimi.ai/code?aff=magpie" },
   { id: "kimi-cn", readme: "https://www.kimi.com/code?aff=magpie" },
+  { id: "apikeyfan", readme: "https://apikey.fan/?aff=mg_readme" },
 ];

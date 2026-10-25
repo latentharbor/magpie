@@ -78,8 +78,8 @@ func keepLast(q SubscriptionQuota, user string) SubscriptionQuota {
 		}
 		e := lastQuota{At: time.Now(), Q: q}
 		for _, w := range q.Windows {
-			if w.matches != nil {
-				return q // a pool that can't be written down isn't kept
+			if w.matches != nil || w.Estimated {
+				return q // a projection must not replace an observed reading
 			}
 			e.Spans = append(e.Spans, lastWindow{w.Span, w.Model, w.Aside})
 		}

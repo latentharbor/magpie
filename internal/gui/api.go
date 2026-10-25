@@ -215,6 +215,10 @@ type agentJSON struct {
 	// StaleCopies: those copies, each with what it is and when it
 	// started, for the opened row to say which is left to reopen and how
 	StaleCopies []agent.StaleCopy `json:"staleCopies,omitempty"`
+	// AppRestart: its desktop app (Claude Desktop, WorkBuddy) running on
+	// what it read before magpie's last change, for the row's Restart
+	// (agent.AppBehind)
+	AppRestart *agent.AppRun `json:"appRestart,omitempty"`
 	// Joined: connected with its own models still in its list (Codex
 	// signed in with ChatGPT, agent.Agent.Join)
 	Joined bool `json:"joined,omitempty"`
@@ -470,6 +474,10 @@ type settingsJSON struct {
 	// the ChatGPT accounts signed in, each of which can have a daily
 	// warm-up time of its own (#957)
 	CodexUsers []string `json:"codexUsers,omitempty"`
+	// the Codexes here that kept the background compaction's table (and
+	// its share) out of the config at the last sync: too old for it
+	// (before 0.163.0-alpha.8), or of no known version (codex_async.go)
+	CodexAsyncHeld []agent.CodexReader `json:"codexAsyncHeld,omitempty"`
 	// whether a WorkBuddy (China) account is signed in, and each one's
 	// last daily check-in
 	WorkBuddy         bool                        `json:"workbuddy"`
@@ -641,6 +649,7 @@ func settingsState() settingsJSON {
 	}
 	s.CodexWarmed, s.ClaudeWarmed = latest(provider.CodexWarmed()), latest(provider.ClaudeWarmed())
 	s.CodexUsers = codexUsers()
+	s.CodexAsyncHeld = agent.CodexAsyncHeld()
 	s.WorkBuddy, s.WorkBuddyCheckins = provider.HasWorkBuddy(), provider.WorkBuddyCheckins()
 	s.Trae, s.TraeCheckins = provider.HasTrae(), provider.TraeCheckins()
 	s.MiniMax, s.MiniMaxCheckins = provider.HasMiniMax(), provider.MiniMaxCheckins()
@@ -978,6 +987,22 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		}
 		writeJSON(rw, c)
 	})
+	// quits the agent's desktop app and opens it again, so it reads what
+	// magpie wrote: the row's Restart, after the user said yes to it
+	mux.HandleFunc("POST /api/agents/restart/{id}", func(rw http.ResponseWriter, r *http.Request) {
+		a, err := agent.Find(r.PathValue("id"))
+		if err != nil {
+			fail(rw, err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+		defer cancel()
+		if err := a.RestartApp(ctx); err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, state())
+	})
 	// what disconnecting an agent changes in its files, line by line, for
 	// the dialog asking it (agent.DisconnectPreview); its files when the
 	// preview can't be had
@@ -1245,6 +1270,9 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		in.RedactActions = cur.RedactActions               // set on their own (redact-actions below)
 		in.RedactAllow = cur.RedactAllow                   // set on its own (redact-allow below)
 		in.DisabledModels = cur.DisabledModels             // set on their own (disabled-models below, #1867)
+		// the request archive on this computer: the archive's switch while no
+		// S3 bucket, and its size in settings.json only
+		in.RequestArchiveLocal, in.RequestArchiveLocalMB = cur.RequestArchiveLocal, cur.RequestArchiveLocalMB
 		// used or left is the Usage page's toggle as much as Settings', set on its own
 		in.QuotaLeft = cur.QuotaLeft
 		in.QuotaReads = cur.QuotaReads // set on its own (quota-reads below)
@@ -2396,6 +2424,7 @@ func state() stateJSON {
 			aj.Source = a.Source()
 			aj.Failover = a.FailingOver != nil && a.FailingOver()
 		}
+		aj.AppRestart = a.AppBehind()
 		if a.Import != nil {
 			aj.Import = a.Import()
 			if a.Added != nil {
@@ -2500,6 +2529,13 @@ func fail(rw http.ResponseWriter, err error) {
 			out["reason"] = admin.Err.Error()
 		}
 	}
+	// a bun this Windows or processor can't run at all: said, with what
+	// to do, in the reader's language (zgcwkj on Discord)
+	var bun *plugin.BunUnstartableError
+	if errors.As(err, &bun) {
+		out["code"], out["bun"], out["bunWhy"] = "bun_unstartable", bun.Bun, bun.Why
+		out["said"] = bunSaid[bun.Why]
+	}
 	_ = json.NewEncoder(rw).Encode(out)
 }
 
@@ -2573,4 +2609,12 @@ func countClient(m map[string]string, client, as string) (map[string]string, err
 	}
 	out[strings.ToLower(client)] = as
 	return out, nil
+}
+
+// bunSaid is what the page says for a bun that can't start, by why: an
+// i18n.js key the page's api() puts through t(), kept here so app.js
+// carries one line for it, not both sentences
+var bunSaid = map[string]string{
+	"windows": "Bun, which runs plugins, can't start on this version of Windows: it needs Windows 10 version 1809 or later, or Windows Server 2019 or later. Update Windows to use plugins, or set MAGPIE_BUN to a bun that runs here.",
+	"cpu":     "Bun, which runs plugins, can't start on this computer's processor: it needs an x64 processor with SSE4.2 (Intel or AMD from 2008 on; in a virtual machine, a CPU type that passes it through). Run magpie on such a processor to use plugins, or set MAGPIE_BUN to a bun that runs here.",
 }

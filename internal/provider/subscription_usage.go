@@ -33,6 +33,8 @@ type QuotaWindow struct {
 	ResetsAt  *time.Time `json:"resetsAt,omitempty"`
 	ResetSecs int64      `json:"resetSecs,omitempty"`
 	Display   string     `json:"display,omitempty"`
+	// Estimated marks a local reset projection, not a fresh vendor reading.
+	Estimated bool `json:"estimated,omitempty"`
 	// Amount of Limit is the window's own count in Unit, when the vendor
 	// counts it so (WorkBuddy's credits): Used is Amount as a share of
 	// Limit. The GUI says it as used or left, as it says the share (#659).
@@ -62,9 +64,10 @@ type QuotaWindow struct {
 	// ("opus"), when it doesn't count them all; and Aside when using it up
 	// doesn't stop the account — on-demand spending past the allowance,
 	// or Copilot's code completions, which no request here makes.
-	Span  time.Duration `json:"-"`
-	Model string        `json:"-"`
-	Aside bool          `json:"-"`
+	Span       time.Duration `json:"-"`
+	fixedReset bool
+	Model      string `json:"-"`
+	Aside      bool   `json:"-"`
 	// Credits is set on each window of a ChatGPT account that holds
 	// credits (has_credits with a balance left, or unlimited): using the
 	// window up doesn't stop it, the vendor spends the credits instead
@@ -789,21 +792,7 @@ func AskUsage() {
 func claudeWindows(ctx context.Context, user string, active bool) ([]QuotaWindow, error) {
 	cached, haveTeam := claudeTeamQuota(user)
 	if ls, parked := claudeTeamParked(user); parked {
-		ws := []QuotaWindow{}
-		for _, l := range ls {
-			for _, k := range claudeKinds {
-				if l.Kind != k.kind {
-					continue
-				}
-				w := QuotaWindow{Name: k.name, Used: l.Used * 100, Span: k.span, Model: k.model}
-				if l.ResetsAt > 0 {
-					at := time.Unix(l.ResetsAt, 0)
-					w.ResetsAt = &at
-				}
-				ws = append(ws, w)
-				break
-			}
-		}
+		ws := claudeTeamWindowsAt(ls, time.Now())
 		if len(ws) > 0 {
 			return ws, nil
 		}
@@ -905,6 +894,9 @@ func claudeWindows(ctx context.Context, user string, active bool) ([]QuotaWindow
 	c.Unlock()
 	if ClaudeTeamManaged(user) {
 		noteClaudeTeamWindows(user, ws)
+		if projected, ok := claudeTeamQuota(user); ok {
+			return projected, nil
+		}
 	}
 	// as of now, as a kept reading is: /usage gives a reset to the minute
 	// and can lag it, so a window it still counts full may have started
