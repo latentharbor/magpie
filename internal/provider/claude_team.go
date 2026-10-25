@@ -1250,6 +1250,9 @@ func ClaudeTeamStatus() ClaudeTeamView {
 	return claudeTeam.status()
 }
 func (t *claudeTeamController) status() ClaudeTeamView {
+	if err := t.selectPath(); err != nil {
+		return ClaudeTeamView{Error: err.Error(), Members: []ClaudeTeamMember{}, History: []ClaudeTeamEvent{}}
+	}
 	t.mu.Lock()
 	c := t.cfg
 	v := ClaudeTeamView{Config: c, SessionSet: c.SessionKey != "", Running: t.running, Rotating: t.rotating || t.requested, Error: t.err,

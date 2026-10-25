@@ -185,18 +185,29 @@ again. Only newly joined members are queued, not the entire saved pool.
 Refreshing an open form incorporates automatic membership without overwriting
 checkbox choices the user changed in that form.
 
-Providers → Add → Claude Team, or the Claude account editor's Claude Team
-button, opens the organization settings. Add may create multiple subscriptions;
-each appears in the ordinary provider list and uses its standard editor,
+Providers → Add → Claude Team first accepts the administrator session, discovers
+its organizations, and creates the selected provider after verifying member-list
+access. If discovery fails, an explicit organization UUID is offered with the
+same access check. Discovery does not persist credentials or change seats.
+The new provider appears even with no saved accounts and initially has rotation
+disabled; its ordinary editor is where accounts and Team settings are managed.
+Re-adding an existing hidden organization preserves its pool and settings.
+Add may create multiple subscriptions; each uses its standard editor,
 with Team-owned account rows and no Use / Make first controls. Organization
 forms reuse the native modal chrome but own their internal form/section layout,
 including narrow windows and long account names. They accept an organization UUID and an
 administrator sessionKey, selects existing saved accounts, shows Premium /
 Unassigned, seat counts, real quota snapshots and resets, and recent changes.
+Claude sign-in completion reloads the local provider catalog without waiting for
+unrelated vendors' model fetches, and invalidates account caches after automatic
+Team membership has been saved. Open account lists poll local snapshots faster
+while quota collection is pending, retaining the prior view on a read failure.
 Manual rotation posts a background request; status polling makes no cloud
 calls. The API is `GET /api/claude-team/subscriptions`,
 `GET /api/claude-team/{config|members}?organizationId={UUID}` (or `?new=1` for
 saved public identities),
+`POST /api/claude-team/discover` (`sessionKey`),
+`POST /api/claude-team/create` (`sessionKey`, `organizationId`),
 `POST /api/claude-team/config`, `POST /api/claude-team/rotate`, and
 `POST /api/claude-team/quota` (`organizationId`, `accountId`) for a background
 read-only retry. The editor polls pending collections and shows failures while

@@ -11,6 +11,7 @@ import (
 
 	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/claudelogin"
+	"github.com/yetone/magpie/internal/provider"
 )
 
 func claudeLoginRoutes(mux *http.ServeMux) {
@@ -57,6 +58,18 @@ func claudeLoginRoutes(mux *http.ServeMux) {
 		if err := next.Validate(); err != nil {
 			fail(w, err)
 			return
+		}
+		if next.Enabled {
+			available := map[string]bool{}
+			for _, e := range provider.Served() {
+				available[e.ID] = true
+			}
+			for _, target := range next.Models {
+				if !available[target] {
+					fail(w, fmt.Errorf("Claude login target %q is unavailable; select an existing provider model or routing group", target))
+					return
+				}
+			}
 		}
 		if err := agent.SetDesktopLogin(next); err != nil {
 			fail(w, err)

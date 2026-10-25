@@ -23,6 +23,14 @@ model IDs to Magpie `provider/model` or `group/id` identifiers. Wildcards are
 rejected. The feature is disabled by default. Status reads do not generate keys,
 change Desktop, or start a listener.
 
+The editor owns a full-width stacked body rather than the shared label/control
+grid. Mapping destinations can be selected from the current served models and
+ready routing groups, or entered explicitly. A provider bulk action maps its
+exact Claude model IDs and replaces destinations for those same sources only.
+Unavailable saved targets remain visible with a warning; enabling rejects them
+in both the editor and save API. Removing a Team never silently redirects its
+inference to another organization. Select a replacement target explicitly.
+
 ## Native Desktop configuration
 
 Static analysis of the installed official macOS **3.6556.2** bundle confirms

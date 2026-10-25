@@ -12219,7 +12219,7 @@ async function signedIn(st) {
   signing = null;
   justAdded = st.user;
   delete loginUsage[st.agent]; // what was fetched before has nothing on the new account
-  providers = await api("providers?wait=1"); // with its vendor's list (#204)
+  providers = await api(st.agent === "claude" ? "providers" : "providers?wait=1"); // Claude uses a local catalog; do not wait for unrelated vendors.
   const p = claudeTeamSignedInProvider(st) || providers.providers.find((x) => x.account?.agent === st.agent);
   if (p) { editing = p.id; draft = null; adding = false; presetQuery = ""; }
   renderProviders();

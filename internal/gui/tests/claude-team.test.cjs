@@ -25,7 +25,7 @@ function fixture(lang) {
   function provider(v) {
     return {id:"claude-team-"+v.config.organizationId,name:v.config.name,icon:"claude-color",chat:"https://example.invalid/v1",models:[],agents:[],fallback:[],headers:{},
       key:{set:true,masked:"fixture"},routing:v.config.routing,teamOrganization:v.config.organizationId,team:v,
-      account:{agent:"claude",agentName:"Claude Code",agentIcon:"claude-color",user:v.members[0].user,plan:"Team",
+      account:{agent:"claude",agentName:"Claude Code",agentIcon:"claude-color",user:v.members[0]?.user || "",plan:"Team",
         logins:v.members.map(m=>({agent:"claude",user:m.user,on:m.on,active:false,plan:"Team"}))}};
   }
   providers.push(provider(views.get(org)));
@@ -44,10 +44,16 @@ function fixture(lang) {
     }
     if(url.pathname.startsWith("/api/signin/")) return json(f.signing);
     if(url.pathname.startsWith("/api/claude-team/")) {
+      if(url.pathname.endsWith("/discover")) return f.discoveryError
+        ? route.fulfill({status:502,json:{error:f.discoveryError}})
+        : json(f.organizations || [{id:second,name:"Second Team"}]);
       if(req.method()==="POST") {
         const body=req.postDataJSON(); posts.push({path:url.pathname,body});
         const v=views.get(body.organizationId);
-        if(url.pathname.endsWith("config")) {
+        if(url.pathname.endsWith("create")) {
+          v.config.enabled=false;
+          providers.push(provider(v));
+        } else if(url.pathname.endsWith("config")) {
           v.config={...body}; delete v.config.sessionKey;
           if (f.failCaptureOnSave) v.members[1].quotaError="Quota collection failed; retry while this account has Premium access";
           let index=providers.findIndex(p=>p.teamOrganization===body.organizationId);
@@ -123,6 +129,9 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       await native.locator(".team-accts .acc").nth(13).waitFor();
       assert((await native.innerText()).includes(m.user));
       assert.equal(f.posts.length,0,"login required a separate Team save");
+      m.quotaPending=false;
+      m.windows=[{name:"5 hours",used:12},{name:"7 days",used:34}];
+      await native.locator(".team-accts .acc").filter({hasText:m.user}).locator(".aq b").filter({hasText:"34%"}).waitFor();
       await native.locator(".team-accts > button").first().click();
       const dialog=page.locator(".claude-team");
       await dialog.locator(".team-add-account").waitFor();
@@ -135,6 +144,63 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       await page.getByRole("button",{name:tr("Sign in anyway"),exact:true}).click();
       await page.locator(".signing .signlink").waitFor();
       assert.equal(f.starts[2].organizationId,org,"settings entry lost the organization");
+      assert.deepEqual(errors,[]);
+    });
+    test(engine+" "+lang+": organization discovery choices and explicit fallback", {timeout:30000}, async t=>{
+      const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
+      t.after(()=>browser.close());
+      const page=await browser.newPage({viewport:{width:1000,height:850},reducedMotion:"reduce"});
+      page.setDefaultTimeout(7000);
+      const words=strings().I18N[lang]||{}, tr=s=>words[s]||s, f=fixture(lang);
+      f.organizations=[{id:org,name:"Existing Team"},{id:second,name:"Second Team"}];
+      await page.route("**/*",f.route);
+      await page.goto("http://magpie.test/?view=providers");
+      const open=async()=>{
+        if (!await page.locator("#addSheet").isVisible()) await page.locator("#addProvider").click();
+        await page.locator('#addSheet .tile[data-pick="Claude Team"]').click();
+        const sheet=page.locator(".team-create");
+        await sheet.getByLabel(tr("Administrator sessionKey"),{exact:true}).fill("fixture-admin");
+        return sheet;
+      };
+      let sheet=await open();
+      await sheet.getByRole("button",{name:tr("Continue"),exact:true}).click();
+      await sheet.locator('input[type="radio"]').nth(1).check();
+      assert.equal(f.posts.length,0,"discovery saved credentials or created a provider");
+      await sheet.getByRole("button",{name:tr("Cancel"),exact:true}).click();
+      await sheet.waitFor({state:"detached"});
+      f.discoveryError="Organization discovery unavailable";
+      sheet=await open();
+      await sheet.getByRole("button",{name:tr("Continue"),exact:true}).click();
+      await sheet.getByText(f.discoveryError,{exact:true}).waitFor();
+      assert.equal(await sheet.getByLabel(tr("Administrator sessionKey"),{exact:true}).inputValue(),"fixture-admin","fallback lost the session draft");
+      await sheet.getByLabel(tr("Organization UUID"),{exact:true}).fill(second);
+      await sheet.getByRole("button",{name:tr("Continue"),exact:true}).click();
+      await sheet.waitFor({state:"detached"});
+      await page.locator('#providers .row[data-id="claude-team-'+second+'"]').waitFor();
+      assert.deepEqual(f.posts,[{path:"/api/claude-team/create",body:{organizationId:second,sessionKey:"fixture-admin"}}]);
+    });
+    test(engine+" "+lang+": a session creates an editable provider before accounts", {timeout:30000}, async t=>{
+      const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
+      t.after(()=>browser.close());
+      const page=await browser.newPage({viewport:{width:1000,height:850},reducedMotion:"reduce"});
+      const words=strings().I18N[lang]||{}, tr=s=>words[s]||s, f=fixture(lang), errors=[];
+      page.on("pageerror",e=>errors.push(e.message));
+      f.views.get(second).members=[];
+      f.views.get(second).config.members=[];
+      await page.route("**/*",f.route);
+      await page.goto("http://magpie.test/?view=providers");
+      await page.locator("#addProvider").click();
+      await page.locator('#addSheet .tile[data-pick="Claude Team"]').click();
+      const sheet=page.locator(".team-create");
+      await sheet.getByLabel(tr("Administrator sessionKey"),{exact:true}).fill("fixture-admin");
+      await sheet.getByRole("button",{name:tr("Continue"),exact:true}).click();
+      await sheet.waitFor({state:"detached"});
+      const native=page.locator(".editor:not(.claude-team)");
+      await native.locator(".team-add-account").waitFor();
+      assert.equal(await native.locator(".team-accts .with-aq").count(),0,"an empty organization invented a signed-in account");
+      await native.locator(".team-accts > button").first().click();
+      await page.locator(".claude-team .team-fields").waitFor();
+      assert.equal(f.posts.length,1,"opening the provider or its settings changed seats");
       assert.deepEqual(errors,[]);
     });
     test(engine+" "+lang+": normal subscriptions, cached quotas, multi-org forms and no preferred account", {timeout:60000}, async t=>{
@@ -213,15 +279,15 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       await page.setViewportSize({width:1000,height:850});
       await page.locator("#addProvider").click();
       await page.locator('#addSheet .tile[data-pick="Claude Team"]').click();
-      await dialog.getByRole("button",{name:second,exact:true}).waitFor();
-      await dialog.getByRole("button",{name:second,exact:true}).click();
-      await dialog.getByLabel(tr("Name"),{exact:true}).fill("Another organization");
-      await dialog.getByRole("button",{name:tr("Save"),exact:true}).click();
+      const create=page.locator(".team-create");
+      await create.getByLabel(tr("Administrator sessionKey"),{exact:true}).fill("fixture-second-admin");
+      assert.equal(await create.locator(".team-pool, .team-routing").count(),0,"creation still asks for rotation and accounts");
+      await create.getByRole("button",{name:tr("Continue"),exact:true}).click();
       await dialog.waitFor({state:"detached"});
       await page.locator('#providers .row[data-id="claude-team-'+second+'"]').waitFor();
       assert.equal(f.providers.length,2,"adding an organization does not replace the first");
       assert.equal(f.posts[3].body.organizationId,second);
-      assert.deepEqual(f.posts[3].body.members,[id(71),id(72)]);
+      assert.deepEqual(f.posts[3],{path:"/api/claude-team/create",body:{organizationId:second,sessionKey:"fixture-second-admin"}});
       assert.equal(f.views.get(org).config.threshold,95,"other organization remains unchanged");
       assert.deepEqual(errors,[]);
     });

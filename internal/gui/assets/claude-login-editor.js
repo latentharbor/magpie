@@ -1,5 +1,6 @@
 // This mode configures Desktop's native egress proxy, not its provider.
 async function showClaudeLoginEditor() {
+  let targets = null, offered = [];
   const editor = el("div", "editor claude-login");
   const head = el("div", "ehead");
   head.append(icon("claude-color"), el("b", "", t("Keep Claude signed in")));
@@ -20,19 +21,31 @@ async function showClaudeLoginEditor() {
   const prepareUsage = el("button", "text", t("Prepare quota certificate"));
   const mappings = el("div", "login-mappings");
   const add = el("button", "text", t("Add model mapping"));
+  const mapProvider = el("button", "text", t("Map Claude models from a provider"));
   const prepare = el("button", "text", t("Prepare local certificate"));
   const refresh = el("button", "text", t("Refresh"));
   const close = el("button", "text", t("Cancel"));
   const save = el("button", "text primary", t("Save"));
   const bar = el("div", "bar"); bar.append(prepare, refresh, prepareUsage, el("span", "grow"), close, save);
-  editor.append(head, explanation, fields, certificate, validation, usageHint, usageCertificate, mappings, add, message, bar);
+  editor.append(head, explanation, fields, certificate, validation, usageHint, usageCertificate, mappings, add, mapProvider, message, bar);
   openModal(editor);
   const addMapping = (from = "", target = "") => {
     const row = el("div", "login-mapping");
     const source = input(from, t("Exact Claude model ID")); source.setAttribute("aria-label", t("Exact Claude model ID"));
     const destination = input(target, "provider/model"); destination.setAttribute("aria-label", t("Magpie model or routing group"));
-    const remove = el("button", "text", t("Remove")); remove.type = "button"; remove.onclick = () => row.remove();
-    row.append(source, el("span", "", "→"), destination, remove); mappings.append(row);
+    const pick = el("button", "text login-target-pick", t("Choose model"));
+    const warning = el("p", "hint login-target-error"); warning.setAttribute("role", "status");
+    const validate = () => {
+      warning.textContent = targets && destination.value.trim() && !targets.some(x => x.v === destination.value.trim())
+        ? t("This target is no longer available. Choose a model from an existing provider or routing group.") : "";
+      warning.hidden = !warning.textContent;
+    };
+    destination.oninput = validate;
+    pick.onclick = () => {
+      if (targets) openProtoMenu(pick, targets, destination.value, value => { destination.value = value; validate(); }, "Choose model", "sess-menu", "right", false, "Search models…");
+    };
+    const remove = el("button", "text login-remove", t("Remove")); remove.type = "button"; remove.onclick = () => row.remove();
+    row.append(source, el("span", "", "→"), destination, pick, remove, warning); mappings.append(row); validate();
   };
   const draw = (view, keepDraft = false) => {
     if (!keepDraft) { address.value = view.config.listen; enabled.checked = view.config.enabled; usage.checked = !!view.config.gatewayUsage; organization.value = view.config.usageOrganization || ""; }
@@ -54,7 +67,27 @@ async function showClaudeLoginEditor() {
     message.textContent = view.runtime.error || (view.runtime.running ? t("Local inference proxy is running") : t("Local inference proxy is not running"));
   };
   add.onclick = () => addMapping(); close.onclick = () => closeModal();
-  refresh.onclick = async () => { try { draw(await api("claude-login"), true); } catch (e) { message.textContent = e.message; } };
+  const readTargets = async () => {
+    const list = await api("groups");
+    offered = list.models || [];
+    targets = [...(list.models || []).map(m => ({ v:m.id, name:m.name || m.id, note:m.providerName || "", literalName:true })),
+      ...(list.groups || []).filter(g => g.ready).map(g => ({ v:g.ref || "group/" + g.id, name:g.name || g.id, note:t("Routing group"), literalName:true }))];
+    for (const row of mappings.children) row.querySelectorAll("input")[1].oninput();
+  };
+  mapProvider.onclick = () => {
+    const choices = [...new Map(offered.filter(m => m.id.startsWith(m.provider + "/claude-")).map(m => [m.provider, { v:m.provider, name:m.providerName || m.provider, note:"", literalName:true }])).values()];
+    openProtoMenu(mapProvider, choices, "", provider => {
+      for (const m of offered.filter(m => m.provider === provider && m.id.startsWith(provider + "/claude-"))) {
+        const source = m.id.slice(provider.length + 1);
+        const existing = [...mappings.children].find(row => row.querySelector("input").value.trim() === source);
+        if (existing) {
+          const input = existing.querySelectorAll("input")[1]; input.value = m.id; input.oninput();
+        } else addMapping(source, m.id);
+      }
+      for (const row of [...mappings.children]) if ([...row.querySelectorAll("input")].every(input => !input.value.trim())) row.remove();
+    }, "Map Claude models from a provider", "sess-menu");
+  };
+  refresh.onclick = async () => { try { await readTargets(); draw(await api("claude-login"), true); } catch (e) { message.textContent = e.message; } };
   prepare.onclick = async () => {
     prepare.disabled = true;
     try { draw(await api("claude-login/prepare", {}), true); } catch (e) { message.textContent = e.message; }
@@ -75,6 +108,9 @@ async function showClaudeLoginEditor() {
       }
       models[source.value.trim()] = target.value.trim();
     }
+    if (enabled.checked && (!Object.keys(models).length || targets && Object.values(models).some(target => !targets.some(x => x.v === target)))) {
+      message.textContent = t("Choose at least one available model before enabling routing"); return;
+    }
     save.disabled = true;
     try {
       draw(await api("claude-login", { enabled: enabled.checked, gatewayUsage: usage.checked, usageOrganization: organization.value.trim(), listen: address.value.trim(), models }));
@@ -83,4 +119,5 @@ async function showClaudeLoginEditor() {
     finally { save.disabled = false; }
   };
   try { draw(await api("claude-login")); } catch (e) { message.textContent = e.message; save.disabled = true; }
+  try { await readTargets(); } catch (e) { message.textContent = e.message; }
 }

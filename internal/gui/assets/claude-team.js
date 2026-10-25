@@ -9,8 +9,57 @@ function claudeTeamSummary(p) {
 
 function claudeTeamTile() {
   const b = pickRow("claude-color", "Claude Team");
-  b.onclick = () => openClaudeTeam();
+  b.onclick = () => addClaudeTeam();
   return b;
+}
+
+async function addClaudeTeam() {
+  const ed = el("div", "editor claude-team team-create"), head = el("div", "ehead");
+  head.append(icon("claude-color"), el("b", "", "Claude Team"));
+  const key = input("", "sessionKey", "password"); key.autocomplete = "off";
+  const org = input("", t("Organization UUID"));
+  const fields = el("div", "team-fields");
+  fields.append(...field(t("Administrator sessionKey"), key));
+  const organizations = el("div", "team-organizations"), message = el("p", "hint team-message");
+  message.setAttribute("role", "status");
+  const cancel = el("button", "text", t("Cancel")), next = el("button", "text primary", t("Continue"));
+  const bar = el("div", "bar"); bar.append(el("span", "grow"), cancel, next);
+  ed.append(head, el("p", "hint team-intro", t("Add the administrator session first. Configure rotation and add accounts in the provider afterwards.")), fields, organizations, message, bar);
+  openModal(ed);
+  let busy = false, manual = false, selected = "";
+  const create = async id => {
+    const v = await api("claude-team/create", { sessionKey:key.value.trim(), organizationId:id });
+    key.value = "";
+    adding = false; draft = null; editing = "claude-team-" + v.config.organizationId;
+    await closeModal();
+    await loadProvidersNow();
+  };
+  cancel.onclick = () => { key.value = ""; closeModal(); };
+  next.onclick = async () => {
+    if (busy || !key.value.trim()) return;
+    busy = true; next.disabled = true; message.textContent = t("Loading…");
+    try {
+      if (manual || selected) await create(manual ? org.value.trim() : selected);
+      else {
+        const choices = await api("claude-team/discover", { sessionKey:key.value.trim() });
+        if (choices.length === 1) await create(choices[0].id);
+        else {
+          organizations.replaceChildren();
+          for (const c of choices) {
+            const [row, box] = tick((c.name || "Claude Team") + " · " + c.id, false);
+            box.type = "radio"; box.name = "team-organization"; box.onchange = () => { selected = c.id; };
+            organizations.append(row);
+          }
+          message.textContent = t("Choose the organization to add");
+        }
+      }
+    } catch (e) {
+      message.textContent = e.message;
+      // Discovery may be unavailable while a known organization's members API
+      // works. Keep its UUID as an explicit alternative, never guess one.
+      if (!manual) { manual = true; fields.append(...field(t("Organization UUID"), org)); }
+    } finally { busy = false; next.disabled = false; }
+  };
 }
 
 function claudeTeamSignedInProvider(st) {
@@ -25,7 +74,24 @@ async function addClaudeTeamAccount(organizationId) {
 }
 
 function renderTeamAccounts(a, p) {
-  const list = el("div", "accts team-accts"), settings = el("button", "text", "Claude Team");
+  const list = el("div", "accts team-accts");
+  drawTeamAccounts(list, p);
+  const poll = async () => {
+    if (!list.isConnected) return;
+    try {
+      const team = await api("claude-team/members?organizationId=" + encodeURIComponent(p.teamOrganization));
+      if (!list.isConnected) return;
+      p = {...p, team}; drawTeamAccounts(list, p);
+    } catch { /* Keep the last snapshot; a failed read is not an empty pool. */ }
+    if (list.isConnected) setTimeout(poll, p.team?.members?.some(m => m.quotaPending) ? 1500 : 10000);
+  };
+  setTimeout(poll, p.team?.members?.some(m => m.quotaPending) ? 1500 : 10000);
+  return list;
+}
+
+function drawTeamAccounts(list, p) {
+  list.replaceChildren();
+  const settings = el("button", "text", "Claude Team");
   settings.onclick = async () => { editing = null; draft = null; await closeModal(); openClaudeTeam(p.teamOrganization); };
   list.append(settings);
   if (p.team) list.append(el("div", "hint", t("Seats in use: {used}/{total}", { used: p.team.inUse, total: p.team.seats })));
@@ -50,10 +116,10 @@ function renderTeamAccounts(a, p) {
     add.onclick = () => addClaudeTeamAccount(p.teamOrganization);
     list.append(add);
   }
-  return list;
 }
 
 async function openClaudeTeam(organizationId = "") {
+  if (!organizationId) return addClaudeTeam();
   const ed = el("div", "editor claude-team"), head = el("div", "ehead");
   head.append(icon("claude-color"), el("b", "", "Claude Team"));
   const message = el("div", "hint team-message"), panel = el("div", "team-summary");

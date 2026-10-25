@@ -30,7 +30,9 @@ func TestCoreScriptBudget(t *testing.T) {
 	// connection label (1 KB); its certificate/mapping editor stays lazy-loaded.
 	// Reset projections add a shared estimated-reading label and unstarted
 	// window text (another 512 bytes); the projection itself stays in Go.
-	appBudget, coreBudget := appScriptBudget+1024, coreScriptBudget+17_024
+	// Session-first Team creation and local account-list polling add 4 KB to
+	// the existing provider integration. The mapping editor stays lazy-loaded.
+	appBudget, coreBudget := appScriptBudget+1024, coreScriptBudget+21_120
 	page, err := os.ReadFile("assets/index.html")
 	if err != nil {
 		t.Fatal(err)

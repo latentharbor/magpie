@@ -287,9 +287,6 @@ func claudeTeamProviders(base Provider) []Provider {
 				break
 			}
 		}
-		if first.User == "" {
-			continue
-		}
 		p := base
 		p.ID, p.Name = claudeTeamPrefix+v.Config.OrganizationID, v.Config.Name
 		if p.Name == "" {

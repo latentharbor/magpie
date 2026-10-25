@@ -30,6 +30,9 @@ func TestClaudeLoginAPIIsReadOnlyUntilExplicitPrepare(t *testing.T) {
 		t.Fatal("GET created authority")
 	}
 	body := `{"enabled":true,"listen":"127.0.0.1:3426","models":{"claude-opus-5-5":"group/opus"}}`
+	if w := call("POST", "/api/claude-login", body); !strings.Contains(w.Body.String(), "is unavailable; select an existing provider") {
+		t.Fatal("deleted mapping was accepted or misdiagnosed", w.Body)
+	}
 	if w := call("POST", "/api/claude-login", body); w.Code == 200 {
 		t.Fatal("untrusted routing enabled")
 	}

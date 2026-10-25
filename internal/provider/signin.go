@@ -886,6 +886,9 @@ func addLogin(l savedLogin) (using bool, err error) {
 				if joinErr := joinClaudeTeamLogin(l); joinErr != nil {
 					err = fmt.Errorf("signed in, but could not add the account to Claude Team: %w", joinErr)
 				}
+				// Membership changes which subscription owns this login. The
+				// pre-join catalog must not hide it until the next cache expiry.
+				forgetAccountCaches()
 			}
 		}
 	}()

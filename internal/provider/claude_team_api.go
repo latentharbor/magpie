@@ -40,22 +40,28 @@ type claudeTeamHTTP struct {
 	client   *http.Client
 }
 
-var newClaudeTeamAdmin = func(c ClaudeTeamConfig) claudeTeamAdmin {
+func newClaudeTeamHTTP(c ClaudeTeamConfig) *claudeTeamHTTP {
 	return &claudeTeamHTTP{org: c.OrganizationID, key: c.SessionKey, base: "https://claude.ai", client: &http.Client{
 		Transport:     http.DefaultTransport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}
 }
 
+var newClaudeTeamAdmin = func(c ClaudeTeamConfig) claudeTeamAdmin { return newClaudeTeamHTTP(c) }
+
 func (c *claudeTeamHTTP) call(ctx context.Context, method, path string, payload any, dst any) error {
 	if !claudeTeamUUID.MatchString(c.org) {
 		return errors.New("invalid Claude Team organization UUID")
 	}
+	return c.request(ctx, method, "/api/organizations/"+c.org+path, payload, dst)
+}
+
+func (c *claudeTeamHTTP) request(ctx context.Context, method, path string, payload any, dst any) error {
 	var body []byte
 	if payload != nil {
 		body, _ = json.Marshal(payload)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.base+"/api/organizations/"+c.org+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, bytes.NewReader(body))
 	if err != nil {
 		return errors.New("could not construct Claude Team request")
 	}
