@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yetone/magpie/internal/claudeanchor"
 )
 
 const maxBody = 64 << 20
@@ -34,6 +36,7 @@ type Proxy struct {
 	mu           sync.Mutex
 	conns        map[net.Conn]struct{}
 	closed       bool
+	requests     claudeanchor.Store[string]
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -225,7 +228,7 @@ func (p *Proxy) inference(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if r.Method == http.MethodPost && (r.URL.Path == "/v1/messages" || r.URL.Path == "/v1/messages/count_tokens") {
+	if r.Method == http.MethodPost && (r.URL.Path == "/v1/messages" || r.URL.Path == "/v1/messages/count_tokens" || r.URL.Path == "/v1/messages/cache_touch") {
 		cfg, err := p.Config()
 		if err != nil {
 			http.Error(w, "Claude login configuration cannot be read", http.StatusServiceUnavailable)
@@ -267,27 +270,53 @@ func (p *Proxy) inference(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "invalid inference JSON", http.StatusBadRequest)
 				return
 			}
-			var model string
-			if err := json.Unmarshal(fields["model"], &model); err != nil {
-				http.Error(w, "inference model is missing", http.StatusBadRequest)
-				return
-			}
-			selected = cfg.Models[model]
-			if selected == "" && cfg.GatewayUsage {
-				http.Error(w, "map this Code model in Magpie before using gateway-managed usage", http.StatusBadRequest)
-				return
-			}
-			if selected != "" {
-				fields["model"], _ = json.Marshal(selected)
-				decoded, err = json.Marshal(fields)
-				if err != nil {
-					http.Error(w, "cannot encode inference", 500)
+			if r.URL.Path == "/v1/messages/cache_touch" {
+				var id string
+				json.Unmarshal(fields["request_id"], &id)
+				if target, known := p.requests.Get(id, time.Now()); known {
+					for _, value := range cfg.Models {
+						if value == target {
+							selected = target
+							break
+						}
+					}
+					if selected == "" {
+						http.Error(w, "Claude cache model is no longer mapped", http.StatusNotFound)
+						return
+					}
+					r.Body = io.NopCloser(bytes.NewReader(decoded))
+					r.ContentLength = int64(len(decoded))
+					r.Header.Del("Content-Encoding")
+					r.Header.Del("Content-Length")
+				} else if cfg.GatewayUsage {
+					http.Error(w, "Claude cache request is unknown", http.StatusNotFound)
 					return
 				}
-				r.Body = io.NopCloser(bytes.NewReader(decoded))
-				r.ContentLength = int64(len(decoded))
-				r.Header.Del("Content-Encoding")
-				r.Header.Del("Content-Length")
+				// A cache touch has no model. Preserve its native request_id
+				// body; the gateway resolves the account from its own record.
+			} else {
+				var model string
+				if err := json.Unmarshal(fields["model"], &model); err != nil {
+					http.Error(w, "inference model is missing", http.StatusBadRequest)
+					return
+				}
+				selected = cfg.Models[model]
+				if selected == "" && cfg.GatewayUsage {
+					http.Error(w, "map this Code model in Magpie before using gateway-managed usage", http.StatusBadRequest)
+					return
+				}
+				if selected != "" {
+					fields["model"], _ = json.Marshal(selected)
+					decoded, err = json.Marshal(fields)
+					if err != nil {
+						http.Error(w, "cannot encode inference", 500)
+						return
+					}
+					r.Body = io.NopCloser(bytes.NewReader(decoded))
+					r.ContentLength = int64(len(decoded))
+					r.Header.Del("Content-Encoding")
+					r.Header.Del("Content-Length")
+				}
 			}
 		}
 	}
@@ -320,6 +349,13 @@ func (p *Proxy) inference(w http.ResponseWriter, r *http.Request) {
 		if selected != "" {
 			res.Header.Del("Set-Cookie")
 			res.Header.Del("Location")
+			if r.URL.Path == "/v1/messages" && res.StatusCode >= 200 && res.StatusCode < 300 {
+				id := res.Header.Get("Request-Id")
+				if id == "" {
+					id = res.Header.Get("X-Request-Id")
+				}
+				p.requests.Put(id, selected, time.Now())
+			}
 		}
 		return nil
 	}, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {

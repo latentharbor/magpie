@@ -1,0 +1,18 @@
+Static protocol reference, 2026-10-25, macOS arm64 Claude Code 2.1.309.
+Artifact SHA-256:
+5eadc0009cdcdbc0d06e58110d7b2baf88ced6088b1c33a60a21217fe410619c
+
+The embedded JavaScript at file offset 227468905 contains Ouo:
+client.post(wuo, {body: {request_id: e.requestId}, headers:
+{"anthropic-beta": lF([$Ae,qO]).join(",")}, signal: n, maxRetries: 0})
+wuo is /v1/messages/cache_touch (near offset 227460159).
+The client has maxRetries: 0, uses a 10-second abort timer, and classifies
+404/401/429/network errors rather than treating every touch as successful.
+
+The response-start hook $Ct (near offset 227463187) tests
+headers.get("anthropic-cache-keepalive") === "active" before arming touches.
+Do not synthesize this header. Request IDs and message IDs are distinct.
+
+This is static embedded-client code evidence, not a live keepalive capture
+or proof that a touch prolongs server Thread state. No vendor requests,
+credentials, client configuration changes or application launch were used.

@@ -47,6 +47,14 @@ use the existing Anthropic translators. There is no hidden CLI tool harness or
 CLI session resume in this path; the caller must send its conversation history.
 The CLI-only lean-prompt preference is retained but hidden in HTTP mode.
 
+Native message Thread ownership and request-ID cache touches are tracked
+separately in the HTTP path; see [Thread recovery and cache
+ownership](gateway-routing.md#native-anthropic-thread-recovery). A routing or
+seat change onto another account asks the caller for full-history replay before
+sending its delta. Cache touches use the accepted inference account, never a
+new routing pick, and do not perform inference. This does not guarantee upstream
+Thread retention or alter caller cache policy.
+
 When HTTP replays older CLI-backed history, only assistant `thinking` blocks
 whose signature is missing, null or the empty string are removed from the
 outgoing copy (`claudeHTTPUnsignedHistory`). A message emptied by that removal

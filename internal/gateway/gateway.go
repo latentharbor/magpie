@@ -32,6 +32,7 @@ import (
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/awake"
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/claudeanchor"
 	"github.com/yetone/magpie/internal/claudelogin"
 	"github.com/yetone/magpie/internal/gwbudget"
 	"github.com/yetone/magpie/internal/gwmw"
@@ -401,7 +402,8 @@ type Server struct {
 	compactFails compactFails
 	// codexTurns is the model each Codex last had a turn of its own
 	// answered on, by caller (codexMemoryStandIn)
-	codexTurns sync.Map
+	codexTurns    sync.Map
+	claudeAnchors claudeanchor.Store[claudeThreadOwner]
 	// the listener, swapped when the gateway is shared on the network or
 	// taken off it (see Relisten)
 	lnMu sync.Mutex
@@ -758,6 +760,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /responses", responsesOverHTTP)
 	mux.HandleFunc("POST /v1/messages", keepsSignIn(s.handle(provider.Anthropic)))
 	mux.HandleFunc("POST /messages", keepsSignIn(s.handle(provider.Anthropic)))
+	mux.HandleFunc("POST /v1/messages/cache_touch", s.claudeCacheTouch)
 	mux.HandleFunc("POST /v1/systemone", s.serveSystemOne)
 	// Codex's web.run tool (anton on Discord)
 	mux.HandleFunc("POST /v1"+AlphaSearchPath, s.alphaSearch)
@@ -4940,6 +4943,14 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 	}
 	defer res.Body.Close()
 	u.RequestID = requestID(res.Header)
+	if c, ok := claudeHTTPOf(r.Context(), p); ok && proto == provider.Anthropic && res.StatusCode >= 200 && res.StatusCode < 300 {
+		s.claudeAnchors.Put(claudeAnchorKey(r, "request", u.RequestID), c.owner, time.Now())
+		// Native Code arms touches only when upstream confirms activation.
+		// Preserve that confirmation; never manufacture it from the beta.
+		if v := res.Header.Get("Anthropic-Cache-Keepalive"); v != "" {
+			w.Header().Set("Anthropic-Cache-Keepalive", v)
+		}
+	}
 	if res.StatusCode >= 400 {
 		b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 		msg := p.Explain(p.Name+": "+provider.APIError(b, res.Status), res.StatusCode, b)

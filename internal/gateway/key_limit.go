@@ -32,12 +32,14 @@ const remoteKeyLimitHeader = "X-Magpie-Limit-Reset"
 // 429 before any provider is asked, saying the key, the limit and when it
 // resets; one let in holds a reservation until it ends. A key with a limit
 // while plugins/budget is off is refused with a 503, and nothing is sent. Reads, the
-// bridge's tool callbacks and counting tokens cost nothing and pass.
+// bridge's tool callbacks, native Claude cache touches and counting tokens cost
+// nothing and pass. Cache touches still check their original caller and the
+// current model/account grants in claudeCacheTouch.
 func keyLimited(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		who := access.Caller(r.Context())
 		limits := who.Limits()
-		if len(limits) == 0 || r.Method != http.MethodPost || strings.HasPrefix(r.URL.Path, "/_magpie/") || strings.HasPrefix(r.URL.Path, "/mcp/") || strings.HasSuffix(r.URL.Path, "/count_tokens") {
+		if len(limits) == 0 || r.Method != http.MethodPost || strings.HasPrefix(r.URL.Path, "/_magpie/") || strings.HasPrefix(r.URL.Path, "/mcp/") || strings.HasSuffix(r.URL.Path, "/count_tokens") || r.URL.Path == "/v1/messages/cache_touch" {
 			next.ServeHTTP(w, r)
 			return
 		}

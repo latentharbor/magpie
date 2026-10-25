@@ -94,6 +94,19 @@ an allowlist, while official Authorization, cookies, API keys and organization
 headers are discarded. Magpie gets its local synthetic bearer identity instead.
 Selected replies cannot set the official client's cookies or redirect it.
 
+Native `POST /v1/messages/cache_touch` carries a `request_id`, not a model or
+message ID (static Claude Code 2.1.309 reference is in gateway testdata).
+The proxy remembers successful selected inference request IDs, including at
+stream acceptance, and sends their touches to the gateway with official
+credentials stripped. It does not rewrite the touch body or infer a new turn.
+Only still-mapped targets qualify. Unknown IDs stay official when official
+inference is allowed; with gateway-managed usage they fail explicitly.
+The gateway separately resolves the original inference account and checks its
+current eligibility and grants; the proxy's model mapping cannot select OAuth
+credentials itself. Ownership metadata is bounded, process-local and does not
+survive restart. Native upstream activation headers and touch errors are retained;
+neither component manufactures keepalive success.
+
 By default, unmatched inference and control-plane requests keep the official destination,
 credentials and body. Control-plane forwarding does not depend on a readable
 routing configuration. Broken inference rules fail explicitly; they never silently

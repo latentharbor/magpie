@@ -41,6 +41,7 @@ type claudeHTTPCall struct {
 	probe       bool
 	diagnostic  *ledger.ClaudeHTTPDiagnostic
 	callerCache bool
+	owner       claudeThreadOwner
 }
 
 var claudeHTTPAuth = provider.ClaudeHTTPAuth
@@ -65,6 +66,12 @@ func (s *Server) serveClaudeHTTP(w http.ResponseWriter, r *http.Request, from pr
 		msg := "Claude Code HTTP: " + err.Error()
 		return writeError(w, from, http.StatusServiceUnavailable, msg), msg
 	}
+	owner := claudeOwner(p, model, auth)
+	owner.grant = modelOf(body)
+	if from == provider.Anthropic && s.claudeThreadMoved(r, body, owner) {
+		writeJSON(w, http.StatusNotFound, claudeThreadErrorBody(http.StatusNotFound, claudeThreadReplay, "thread_not_found"))
+		return http.StatusNotFound, claudeThreadReplay
+	}
 	// Never accept an endpoint or a device/account identity from an API caller.
 	// A copied provider keeps the original account for scopes, meters and proxy.
 	p.Anthropic = "https://api.anthropic.com"
@@ -78,6 +85,7 @@ func (s *Server) serveClaudeHTTP(w http.ResponseWriter, r *http.Request, from pr
 	}
 	prompt := uuid.NewSHA1(uuid.NameSpaceOID, []byte(session+"\x00"+string(body))).String()
 	c := claudeHTTPCall{auth: auth, session: session, prompt: prompt, turn: max(1, turn), headers: r.Header.Clone()}
+	c.owner = owner
 	c.diagnostic = &ledger.ClaudeHTTPDiagnostic{}
 	usage.claudeHTTP = c.diagnostic
 	c.probe, _ = r.Context().Value(claudeHTTPProbeKey{}).(bool)
@@ -96,6 +104,9 @@ func (s *Server) serveClaudeHTTP(w http.ResponseWriter, r *http.Request, from pr
 	r = r.WithContext(ctx)
 	if from == provider.Anthropic {
 		status, msg, _ := s.passthrough(w, r, p, from, model, body, usage)
+		if status >= 200 && status < 300 {
+			s.rememberClaudeAnchors(r, owner, usage)
+		}
 		return status, msg
 	}
 	return s.translate(w, r, p, from, provider.Anthropic, model, body, usage)

@@ -902,6 +902,36 @@ never read real providers or accounts.
 
 ## Native Anthropic Thread recovery
 
+The HTTP subscription path records successful response message IDs with their
+selected provider/model/account/organization (`claude_thread_owner.go`). A known
+continuation selected onto a different owner returns `404 thread_not_found`
+before any delta is sent. This does not override Smart, seat rotation or fallback
+selection: the native caller replays its complete history on the selected owner.
+Main and subagent anchors are independent; ownership is scoped by authenticated
+gateway key, not inferred from the shared conversation ID. Unknown anchors after
+a restart or eviction retain upstream recovery behavior.
+
+The same process records successful upstream request IDs separately for
+`POST /v1/messages/cache_touch`. This endpoint requires the original caller,
+currently eligible account, and current model/account grants (including a group
+that still contains the member). It rereads the selected OAuth identity and uses
+the same account proxy and Claude HTTP TLS transport. It participates in Team
+draining, but does not infer, transfer seats, rest accounts, or rotate on failure.
+Cache-only touches do not reserve an inference budget from the gateway key;
+the ordinary messages endpoint remains budgeted.
+Unknown/unavailable owners return an explicit error, and upstream touch status
+is relayed without claiming success. Successful touches renew only the local
+request record. Request ownership is recorded at upstream acceptance so native
+in-flight touches need not wait for a stream to finish. The upstream
+`anthropic-cache-keepalive` activation header is passed through, never invented.
+
+Both maps use the bounded process-local `internal/claudeanchor` store (8192
+records, maximum 24 hours since upstream success). Only identifiers and routing
+metadata are held; no prompt, credential or full request body is retained.
+This local bound does not establish a vendor Thread TTL. Thread state and prompt
+cache state can expire separately; a successful touch does not prove a Thread
+is still present. Caller cache marks and TTLs are unchanged.
+
 A Thread continuation may carry only the new messages and inherit system/tools
 from its upstream anchor. Native CLI headers plus a continuation anchor identify
 this form even when the identity system blocks are omitted. It stays on the
