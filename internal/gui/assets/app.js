@@ -23378,6 +23378,12 @@ const panEnds = () => { panning = null; };
 addEventListener("pointerdown", (e) => {
   downAt = [e.clientX, e.clientY];
   panEnds();
+  // End a wheel's coast before native focus can scroll the pressed control.
+  if (e.button === 0) {
+    const v = e.target.closest?.(".view");
+    if (v && performance.now() < purposeUntil) readerLeaves(v);
+    purposeUntil = flingUntil = 0;
+  }
   if (e.button === 1 && e.isTrusted) {
     const pv = e.target instanceof Element ? e.target.closest(".view") : null;
     if (pv && !pv.hidden && pv.scrollHeight > pv.clientHeight) { panning = { v: pv, from: downAt, far: false, lifted: false }; held = null; }

@@ -16,7 +16,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { watchSettingsReads, agentRow, openAgentSettings } = require("./reader.cjs");
+const { watchSettingsReads, settingsDrawn, agentRow, openAgentSettings } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const CODEX = ["codexAgentsV1Row", "fullContextRow", "codexAsyncRow", "codexTitlesRow", "codexDescriptionsRow", "codexPredictionsRow", "codexAutoReviewRow", "codexMemoriesRow"];
@@ -110,6 +110,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // none in Settings; its search says where they are
         await page.goto("http://magpie.test/?view=settings");
         await page.locator("#setQ").waitFor();
+        await settingsDrawn(page);
         for (const id of CODEX) assert.equal(await page.locator(`#view-settings #${id}`).count(), 0, `${lang}: ${id} not in Settings`);
         assert.equal(await page.locator(".agent-pref-link").first().isVisible(), false, "no link rows till searching");
         await page.locator("#setQ").fill(w.titles);

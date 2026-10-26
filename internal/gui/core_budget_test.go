@@ -34,7 +34,8 @@ func TestCoreScriptBudget(t *testing.T) {
 	// the existing provider integration. The mapping editor stays lazy-loaded.
 	// Shared menus use an explicit action-only class on older WebKit, and
 	// header fitting waits for a frame outside ResizeObserver delivery (+512B).
-	appBudget, coreBudget := appScriptBudget+1536, coreScriptBudget+21_632
+	// A primary press ends coasting before native focus can scroll (+256B).
+	appBudget, coreBudget := appScriptBudget+1792, coreScriptBudget+21_888
 	page, err := os.ReadFile("assets/index.html")
 	if err != nil {
 		t.Fatal(err)

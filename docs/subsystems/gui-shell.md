@@ -41,6 +41,8 @@ below its explanation when translated choices leave insufficient room
 beside it. A narrow tray footer wraps its reading time to keep Quit in
 the panel. The title bar removes preceding breadcrumb parts before
 truncating the current page, including pages with no toolbar controls.
+A primary pointer press ends the wheel's coasting window before native
+focus can scroll the pressed control; the click then holds that place.
 `session-identity.test.cjs` and `settings-lines-wrap.test.cjs`
 cover readable labels and controls remaining within their cells.
 
