@@ -104,7 +104,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
         // one click: the sheet opens and the view goes down to it
         await page.locator("#addProvider").click();
-        await page.waitForFunction(reached, null, { timeout: 3000 });
+        await page.waitForFunction(reached, null, { timeout: 3000 }).catch(async error => {
+          const detail = await page.evaluate(() => {
+            const v = document.querySelector("#view-providers"), sh = document.querySelector("#addSheet");
+            return { top:v.scrollTop,end:v.scrollHeight-v.clientHeight,height:v.clientHeight,sheet:{hidden:sh.hidden,top:sh.getBoundingClientRect().top-v.getBoundingClientRect().top,height:sh.offsetHeight},purposeUntil,now:performance.now(),held:!!held,animations:sh.getAnimations().map(a=>({state:a.playState,time:a.currentTime})) };
+          });
+          throw new Error(error.message + " sheet: " + JSON.stringify(detail));
+        });
         await page.waitForTimeout(300);
         s = await at();
         assert(s.away, "the button steps aside while the sheet's head is in sight");
