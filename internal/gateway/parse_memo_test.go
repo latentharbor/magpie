@@ -242,7 +242,11 @@ func TestChatAndMessagesFactsLeaveTheHistory(t *testing.T) {
 		facts := allocated(func() { readFacts(proto, body) })
 		parsed := allocated(func() { _, _ = parse(proto, body) })
 		t.Logf("%s: %d-byte body, facts allocated %d bytes, the whole parse %d", proto, len(body), facts, parsed)
-		if facts*3 > parsed {
+		// As in TestReadersOfAHeldBodyParseItOnce, -race's randomized
+		// sync.Pool eviction makes allocation ratios unreliable. Keep the
+		// budget in ordinary tests; factsAsTheWholeParse checks semantics
+		// with and without the race detector.
+		if !raceOn && facts*3 > parsed {
 			t.Errorf("%s: facts allocated %d bytes, a third or more of the whole parse's %d", proto, facts, parsed)
 		}
 	}
