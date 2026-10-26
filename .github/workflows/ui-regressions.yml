@@ -1,0 +1,80 @@
+name: UI regressions (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: 'Comma-separated test basenames, without .test.cjs'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-regressions-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+    env:
+      BROWSER: ${{ matrix.browser }}
+      UI_FILES: ${{ inputs.files }}
+      NODE_PATH: ${{ github.workspace }}/.github/ui-preview/node_modules
+      ARTIFACT_DIR: ${{ runner.temp }}/ui-artifacts
+      SCREENSHOT_DIR: ${{ runner.temp }}/ui-artifacts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install pinned browser fixtures
+        timeout-minutes: 15
+        run: |
+          for sources in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$sources" ]; then
+              sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' "$sources"
+            fi
+          done
+          sudo sh -c 'printf "%s\n" "Acquire::Retries \"3\";" "Acquire::http::Timeout \"30\";" "Acquire::https::Timeout \"30\";" > /etc/apt/apt.conf.d/99magpie-ci'
+          npm install --ignore-scripts --no-package-lock --prefix .github/ui-preview
+          .github/ui-preview/node_modules/.bin/playwright install --with-deps "$BROWSER"
+          sudo apt-get install --no-install-recommends -y fonts-noto-cjk
+      - name: Selected regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE' 2>&1 | tee "$RUNNER_TEMP/ui.log"
+          const { readdirSync } = require("node:fs");
+          const { spawnSync } = require("node:child_process");
+          const dir = "internal/gui/tests/";
+          const allowed = new Set(readdirSync(dir));
+          const names = process.env.UI_FILES.split(",").map(s => s.trim());
+          if (!names.length || names.some(n => !/^[a-z0-9-]+$/.test(n) || !allowed.has(n + ".test.cjs"))) {
+            throw new Error("Only existing UI test basenames are accepted");
+          }
+          const run = spawnSync(process.execPath, [
+            "--test", "--test-concurrency=2", "--test-reporter=tap",
+            ...new Set(names.map(n => dir + n + ".test.cjs")),
+          ], { stdio: "inherit" });
+          if (run.error) console.error(run.error);
+          process.exit(run.status ?? 1);
+          NODE
+      - name: Retain results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-ui-${{ matrix.browser }}
+          path: |
+            ${{ runner.temp }}/ui.log
+            ${{ runner.temp }}/ui-artifacts
+          if-no-files-found: ignore
+          retention-days: 7

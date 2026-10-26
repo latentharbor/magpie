@@ -75,6 +75,9 @@ jobs:
             "claude-auth-status", "title-bar-tools", "usage-pack",
             "usage-curve-zoom-back", "routing-live-patch",
             "claude-team", "claude-login",
+            "found-skill-pick-remove", "quota-refresh-order", "routing-pause",
+            "search-first", "session-identity", "agent-update-all",
+            "panel-quota-refresh",
           ].map(name => name + ".test.cjs");
           const files = process.env.FULL_UI === "true"
             ? readdirSync(dir).filter(f => f.endsWith(".test.cjs")).sort()

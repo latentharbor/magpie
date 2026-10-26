@@ -141,7 +141,21 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       const row=dialog.locator('.team-member[data-account="'+extra.accountId+'"]');
       assert(await row.locator('input[type="checkbox"]').isChecked(),"refresh lost server-side automatic membership");
       await dialog.locator(".team-add-account").click();
-      await page.getByRole("button",{name:tr("Sign in anyway"),exact:true}).click();
+      const confirm = page.getByRole("button",{name:tr("Sign in anyway"),exact:true});
+      try { await confirm.click(); }
+      catch (error) {
+        console.error("Sign-in layout", await confirm.evaluate(b => ({
+          button: b.getBoundingClientRect().toJSON(),
+          modal: document.querySelector("#modal .dialog").getBoundingClientRect().toJSON(),
+          bodies: [...document.querySelectorAll("#modal .ebody")].map(e => ({top:e.scrollTop,height:e.clientHeight,scroll:e.scrollHeight})),
+          animations: document.getAnimations().map(a => ({state:a.playState,time:a.currentTime,end:a.effect?.getComputedTiming().endTime})),
+        })));
+        if (process.env.SCREENSHOT_DIR) {
+          await fs.mkdir(process.env.SCREENSHOT_DIR,{recursive:true});
+          await page.screenshot({path:path.join(process.env.SCREENSHOT_DIR,engine+"-"+lang+"-signin-failure.png")});
+        }
+        throw error;
+      }
       await page.locator(".signing .signlink").waitFor();
       assert.equal(f.starts[2].organizationId,org,"settings entry lost the organization");
       assert.deepEqual(errors,[]);

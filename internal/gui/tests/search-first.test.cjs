@@ -10,7 +10,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { watchSettingsReads, settingsDrawn } = require("./reader.cjs");
+const { watchSettingsReads, settingsDrawn, reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const words = {
@@ -64,7 +64,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await settingsDrawn(page); // rows found are the ones that stay (#1659)
       const row = page.locator("#searchList #searchFirstRow");
       await row.waitFor();
-      await row.scrollIntoViewIfNeeded();
+      await reach(page, row);
       assert.equal(await row.locator(".name").textContent(), w.name);
       const model = row.locator(".segs button", { hasText: w.model });
       const apis = row.locator(".segs button", { hasText: w.apis });
@@ -72,9 +72,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert(!await apis.evaluate((b) => b.classList.contains("on")));
 
       const before = await page.evaluate(() => [scrollX, scrollY, document.scrollingElement.scrollTop]);
-      const b = await apis.boundingBox();
-      await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
-      for (let i = 0; i < 50 && !saved.length; i++) await page.waitForTimeout(50);
+      const first = page.waitForResponse(r => new URL(r.url()).pathname === "/api/settings" && r.request().method() === "POST");
+      await apis.click();
+      await first;
       assert.equal(saved.length, 1, "saved once");
       assert.equal(saved[0].searchFirst, "api");
       assert.equal(saved[0].searcher, "ds", "the rest kept");
@@ -87,9 +87,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.deepEqual(await page.evaluate(() => [scrollX, scrollY, document.scrollingElement.scrollTop]), before, "the click moved nothing");
 
       // and back
-      const m = await page.locator("#searchFirstRow .segs button", { hasText: w.model }).boundingBox();
-      await page.mouse.click(m.x + m.width / 2, m.y + m.height / 2);
-      for (let i = 0; i < 50 && saved.length < 2; i++) await page.waitForTimeout(50);
+      const second = page.waitForResponse(r => new URL(r.url()).pathname === "/api/settings" && r.request().method() === "POST");
+      await reach(page, model);
+      await model.click();
+      await second;
       assert.equal(saved.at(-1).searchFirst, "");
       assert.deepEqual(errors, []);
     });

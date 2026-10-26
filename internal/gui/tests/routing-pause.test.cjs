@@ -182,7 +182,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert(save, `saved: ${JSON.stringify(posts)}`);
       assert.deepEqual(save.body.rules.map((r) => [r.use, !!r.pause, r.tokens || 0, r.time]), [
         ["a/glm", true, 0, { from: "14:00", to: "18:00", days: WEEKDAYS }],
-        ["b/other", true, 0, { from: "09:00", to: "12:00", days: [] }],
+        ["b/other", true, 0, { from: "09:00", to: "12:00", days: [],
+          zone: await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone) }],
       ]);
       assert.deepEqual(errors, []);
     });

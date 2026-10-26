@@ -223,7 +223,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal((await sheet.locator(".ehead b").textContent()).trim(), w("Remove {name}?", { name: "stuck" }));
         assert.deepEqual(await lines(), [w("It is taken out of {agents}, and its folder is moved to magpie's backups.", { agents: "Gemini CLI" })]);
         assert.equal((await sheet.locator(".bar button.primary").textContent()).trim(), w("Remove"));
+        // The previous partial removal already put STUCK in #status. Wait
+        // for this request, not the old message, before reading its POST.
+        const refused = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/library/skills/remove-found-some"
+          && r.request().method() === "POST");
         await sheet.locator(".bar button.primary").click();
+        await refused;
         await page.locator("#status").filter({ hasText: STUCK }).waitFor();
         assert.deepEqual(posts.shift(), { what: "skills/remove-found-some", body: { names: ["stuck"] } });
         await sheet.locator(".bar button.primary:not([disabled])").waitFor();

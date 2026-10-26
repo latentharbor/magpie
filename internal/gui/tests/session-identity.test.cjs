@@ -135,9 +135,14 @@ for (const engine of ["chromium", "webkit"]) {
             const badges = [...cell.querySelectorAll(".source-badges .src")].map(n => n.getBoundingClientRect());
             const bounds = cell.getBoundingClientRect();
             const name = cell.querySelector(".where-name").getBoundingClientRect();
-            return badges.length === 2 && Math.abs(badges[0].top - badges[1].top) < 1 && badges[0].right < badges[1].left && badges.every(b => b.top >= name.bottom && b.left >= bounds.left && b.right <= bounds.right && b.bottom <= bounds.bottom);
+            // At compact widths the longer English labels can use two
+            // lines; both remain whole and inside their account's cell.
+            const ordered = badges.length === 2 && (badges[0].bottom <= badges[1].top
+              || Math.abs(badges[0].top - badges[1].top) < 1 && badges[0].right < badges[1].left);
+            return ordered && badges.every(b => b.top >= name.bottom && b.left >= bounds.left && b.right <= bounds.right && b.bottom <= bounds.bottom)
+              && (innerWidth < 1200 || Math.abs(badges[0].top - badges[1].top) < 1);
           });
-          assert(layout,"both badges share one row below the account at " + width);
+          assert(layout,"both badges stay readable below the account at " + width);
         }
         await page.setViewportSize({width:1200,height:900});
         await review.focus();
