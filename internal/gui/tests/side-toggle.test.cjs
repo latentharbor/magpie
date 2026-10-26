@@ -145,6 +145,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
     await t.test("the two trade places as one motion", async () => {
       const context = await browser.newContext({ viewport: { width: 1280, height: 760 } });
+      // Linux intentionally has no view transition; exercise the Mac
+      // path explicitly even when the fixture runs on a Linux runner.
+      await context.addInitScript(() => Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel" }));
       const page = await context.newPage();
       const errors = [];
       page.on("pageerror", (e) => errors.push(e.message));
@@ -224,6 +227,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     // after its half second, so the window never stays on the old picture
     await t.test("a transition that never ends is cut short", async () => {
       const context = await browser.newContext({ viewport: { width: 1280, height: 760 } });
+      await context.addInitScript(() => Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel" }));
       const page = await context.newPage();
       const errors = [];
       page.on("pageerror", (e) => errors.push(e.message));

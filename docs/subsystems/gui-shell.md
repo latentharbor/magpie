@@ -35,6 +35,12 @@ three.
 
 ## Constraints and failure behavior
 
+Compact account cells wrap source badges onto another line rather than
+clipping their labels. Settings' reset reminder moves its choice control
+below its explanation when translated choices leave insufficient room
+beside it. `session-identity.test.cjs` and `settings-lines-wrap.test.cjs`
+cover readable labels and controls remaining within their cells.
+
 ### Allowance card refreshes
 
 A card refresh applies only the requested account from the API's full

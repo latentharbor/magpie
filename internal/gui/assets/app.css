@@ -3397,6 +3397,12 @@ img.nav-ic { border-radius: 3px; object-fit: contain; }
 .session-terminal-select, .pref-pick { max-width: min(230px, 45%); height: 26px; color: var(--fg); }
 .session-terminal-select:focus-visible, .pref-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .row.pref .segs { flex: none; margin-left: auto; }
+/* Translated reminder choices must not squeeze their explanation to a
+   few pixels. Give the control its own line when both cannot fit. */
+#resetReminderRow { flex-wrap: wrap; }
+#resetReminderRow > .who { flex-basis: 180px; }
+#resetReminderSegs { margin-left: auto; max-width: 100%; }
+#resetReminderSegs > .segs { max-width: 100%; flex-wrap: wrap; }
 .proxy-segs { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; margin-left: auto; min-width: 0; max-width: 100%; }
 .proxy-controls, .proxy-auth { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; }
 .proxy-auth[hidden] { display: none; }
