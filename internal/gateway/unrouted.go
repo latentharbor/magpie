@@ -195,7 +195,9 @@ func (s *Server) watchUnrouted(w http.ResponseWriter, r *http.Request, f *inflig
 	ctx, cancel := context.WithCancelCause(r.Context())
 	u := &unroutedHold{s: s, f: f, w: newHeldWriter(w), cancel: cancel}
 	r = r.WithContext(context.WithValue(ctx, unroutedKey{}, u))
-	u.r = r
+	// Timers read the caller and path while the handler may decode the
+	// body and change headers. WithContext alone still shares those maps.
+	u.r = r.Clone(r.Context())
 	f.mu.Lock()
 	f.unrouted = u
 	f.mu.Unlock()

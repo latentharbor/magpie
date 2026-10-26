@@ -245,6 +245,8 @@ recorded as a prediction failure (`noPrediction`).
   `errUnrouted`, its route ends with the error, and the log has every
   goroutine's stack (at most once in 10 minutes). The handler's writes go
   through `heldWriter`, and nowhere once magpie has answered for it.
+  The watch owns a request snapshot, so its timers never read the header
+  map that the handler changes while decoding the incoming body.
   `TestUnroutedRequestShownThenAnswered`, `TestUnroutedShownGivesWayToItsRoute`.
 
 ## Remote magpie APIs

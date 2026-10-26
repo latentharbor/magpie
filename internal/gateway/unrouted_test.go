@@ -175,3 +175,26 @@ func TestUnroutedQuickRequestLeavesNoTrace(t *testing.T) {
 		}
 	}
 }
+
+// The watcher keeps the caller that arrived, independent of request headers
+// subsequently rewritten by body decoding or middleware on the handler.
+func TestUnroutedWatcherKeepsRequestSnapshot(t *testing.T) {
+	unroutedLimits(t, time.Hour, 2*time.Hour)
+	s := &Server{}
+	r := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}"))
+	r.Header.Set("Authorization", "Bearer "+TokenFor("codex"))
+	f := &inflight{start: time.Now()}
+	_, r, done := s.watchUnrouted(httptest.NewRecorder(), r, f)
+	defer done()
+	u := r.Context().Value(unroutedKey{}).(*unroutedHold)
+	r.Header.Set("Authorization", "Bearer "+TokenFor("claude-code"))
+	r.Header.Del("Content-Encoding")
+	r.URL.Path = "/v1/responses"
+	u.show()
+	if u.shown == nil || u.shown.Agent != "codex" {
+		t.Fatalf("watcher changed caller with the handler: %+v", u.shown)
+	}
+	if u.r.URL.Path != "/v1/messages" {
+		t.Fatalf("watcher changed path with the handler: %s", u.r.URL.Path)
+	}
+}
