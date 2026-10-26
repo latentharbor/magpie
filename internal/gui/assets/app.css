@@ -3511,6 +3511,9 @@ input.words.search-key, input.words.search-url { flex: 1 1 120px; width: auto; m
 .prefs .val { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; min-width: 0; max-width: 60%; flex: none; }
 .prefs .val code { font-size: 12px; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; -webkit-user-select: text; padding: 0 6px; }
 .prefs .val .text { padding: 3px 6px; }
+/* Download and Check must both fit when their translated labels exceed
+   the version row's right column, including before the release link loads. */
+#about > .row.pref:first-child .val { flex-wrap: wrap; justify-content: flex-end; }
 /* how hard a side model thinks, beside it: the model's chip gives way first
    (MOMO on Discord); with-effort is a class sideEffortChip sets, not :has(),
    which Safari before 15.4 can't parse */

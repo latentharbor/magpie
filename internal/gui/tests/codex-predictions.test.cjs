@@ -14,7 +14,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { watchSettingsReads, agentRow, openAgentSettings, reach } = require("./reader.cjs");
+const { watchSettingsReads, agentRow, openAgentSettings, reach, scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 
@@ -123,6 +123,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const top = () => pick.evaluate((e) => e.getBoundingClientRect().top);
         for (let i = 0; i < 80 && (await top()) > 200; i++) { await page.mouse.wheel(0, 100); await page.waitForTimeout(30); }
         await reach(page, pick);
+        // Leave room below the viewport: a shorter translated selection
+        // can shrink this row by a line. At the list's end the browser must
+        // clamp its scroll, independently of the click guard being tested.
+        await page.mouse.wheel(0, -120);
+        await scrollSettled(page);
         const before = await view(page);
         assert(before > 0, "the agents list must scroll to the row");
         const pickItem = async (s) => {

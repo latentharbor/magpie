@@ -80,6 +80,8 @@ function server(lang, state, posts) {
 // row first (the trash shows on hover), and nothing on the page scrolls
 const press = async (page, loc) => {
   await page.waitForFunction(() => !document.querySelector("#view-library").getAnimations({ subtree: true }).some((a) => a.effect?.getComputedTiming().endTime !== Infinity));
+  await loc.locator("xpath=ancestor::*[contains(@class,'lib-server') or contains(@class,'lib-hook')][1]").hover();
+  await loc.waitFor({ state: "visible" });
   const b = await loc.boundingBox();
   const scrolls = () => page.evaluate(() => [...document.querySelectorAll("*")].filter((e) => e.scrollTop).map((e) => (e.id || e.className) + ":" + e.scrollTop).join(" "));
   const top = await scrolls();

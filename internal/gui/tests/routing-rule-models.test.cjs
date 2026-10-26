@@ -125,7 +125,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const flash = row.locator(".rt-c", { has: page.locator(".rt-model", { hasText: "flash" }) });
         await reach(page, flash);
         await flash.hover();
-        await press(page, row.locator(`.rt-cx[title="${w.rm}"]`));
+        // reach moves the pointer to the view before wheeling. This × is
+        // only present on hover, so keep the pointer on the revealed chip.
+        await row.locator(`.rt-cx[title="${w.rm}"]`).click();
         assert.deepEqual(await chips(row), ["mini"]);
         assert.equal(await row.locator(".rt-then .rt-cx").count(), 0, "a rule's one model can't be taken out");
 

@@ -83,7 +83,14 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert(!(await hint("model-1").isVisible()));
         await page.evaluate(() => document.fonts.ready.then(() => {}));
         await boxes("model-1").nth(0).click();
-        await page.waitForFunction(() => [...document.querySelectorAll(".mname")].find(e => e.querySelector("code")?.textContent === "model-1")?.querySelector(".mlevels input")?.checked === false);
+        await page.waitForFunction(() => [...document.querySelectorAll(".mname")].find(e => e.querySelector("code")?.textContent === "model-1")?.querySelector(".mlevels input")?.checked === false).catch(async e => {
+          const detail = await boxes("model-1").nth(0).evaluate(e => {
+            const box = x => { const r = x.getBoundingClientRect(); return { top:r.top,left:r.left,width:r.width,height:r.height }; };
+            const r = e.getBoundingClientRect(), hit = document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+            return { checked:e.checked,box:box(e),hit:hit?.outerHTML,modal:box(e.closest(".editor")),names:box(e.closest(".mnames")),hold:{off:modalHold.off,y:modalHold.y,touched:modalHold.touched} };
+          });
+          throw new Error(e.message + " checkbox: " + JSON.stringify(detail));
+        });
         await boxes("model-1").nth(1).click();
         assert.deepEqual(await ticked("model-1"), [false, false], "the last level unticks");
         assert(await hint("model-1").isVisible());

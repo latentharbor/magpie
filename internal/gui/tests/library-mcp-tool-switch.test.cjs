@@ -113,6 +113,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // every switch in sight below the library's stuck head. Clicking the
         // pill can scroll it into view first (WebKit, now and then), which
         // left read_text_file under the head and the click on the head
+        // Long translated tool descriptions can fill the list's own 320px
+        // scroller. Reach the switch inside it before wheeling the outer view.
+        await sw(tools[2].name).scrollIntoViewIfNeeded();
         await reach(page, sw(tools[2].name));
         await page.mouse.move(Math.min(490, width / 2), 250);
         const canScroll = await page.locator("#view-library").evaluate(v => v.scrollHeight > v.clientHeight);
