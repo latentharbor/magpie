@@ -37,6 +37,10 @@ The About version row wraps update actions within its right column rather
 than overflowing with long translations. A dialog redrawn in place does not
 play its content translation under reduced motion, so opening an account's
 model picker keeps the row fixed (`account-models.test.cjs`).
+Names & levels takes mouse focus on a checkbox with `preventScroll`,
+preserving its click activation while preventing WebKit from centring the
+whole label and moving the checkbox between press and release in nested
+editor scrollers (`model-reasonless.test.cjs`).
 
 1. `magpie` with no arguments, `magpie app` or `magpie tray` calls `runGUI`, which calls `gui.Run`. A `nogui` build runs the TUI instead. A second launch hands over to the instance already running. On Windows, before any window is made, `webView2Check` asks Wails whether the WebView2 runtime is there (`Env.Info().PlatformInfo["WebView2"]`, "" when its lookup fails; a key Wails doesn't set counts as there). Without it Wails would exit on the first window with nothing on screen, so magpie logs it, shows a Windows message box in the reader's language naming the runtime, Microsoft's download page (`webView2Page`) and `magpie web` / `magpie tui`, opens the page on Yes, and `Run` ends (#1806, `webview2.go`, `TestWebView2MissingFromWails` on Windows). The box can't come from `ErrorHandler`, which runs on the thread Wails makes its windows on.
 2. `startBackend` brings up the gateway, or finds another magpie serving it.

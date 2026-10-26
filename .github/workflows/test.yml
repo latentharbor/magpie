@@ -48,7 +48,7 @@ jobs:
       - name: Install pinned browser fixtures
         timeout-minutes: 15
         run: |
-          for sources in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+          for sources in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
             if [ -f "$sources" ]; then
               sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' "$sources"
             fi
@@ -131,7 +131,7 @@ jobs:
           # The runner's Azure mirror timed out downloading WebKit before
           # tests could start. Use Ubuntu's official archive, with bounded
           # request timeouts and retries rather than extending a stuck job.
-          for sources in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+          for sources in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
             if [ -f "$sources" ]; then
               sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' "$sources"
             fi

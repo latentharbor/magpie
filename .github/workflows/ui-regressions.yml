@@ -53,7 +53,7 @@ jobs:
         timeout-minutes: 15
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
-          for sources in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+          for sources in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
             if [ -f "$sources" ]; then
               sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' "$sources"
             fi
