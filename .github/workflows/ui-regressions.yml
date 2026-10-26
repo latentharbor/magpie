@@ -7,6 +7,11 @@ on:
         description: 'Comma-separated test basenames, without .test.cjs'
         required: true
         type: string
+      platform:
+        description: 'Runner for native browser behavior'
+        type: choice
+        default: ubuntu-24.04
+        options: [ubuntu-24.04, macos-15]
 
 permissions:
   contents: read
@@ -17,7 +22,7 @@ concurrency:
 
 jobs:
   browser:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.platform || 'ubuntu-24.04' }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -39,15 +44,17 @@ jobs:
       - name: Install pinned browser fixtures
         timeout-minutes: 15
         run: |
+          if [ "$RUNNER_OS" = Linux ]; then
           for sources in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
             if [ -f "$sources" ]; then
               sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' "$sources"
             fi
           done
           sudo sh -c 'printf "%s\n" "Acquire::Retries \"3\";" "Acquire::http::Timeout \"30\";" "Acquire::https::Timeout \"30\";" > /etc/apt/apt.conf.d/99magpie-ci'
+          fi
           npm install --ignore-scripts --no-package-lock --prefix .github/ui-preview
           .github/ui-preview/node_modules/.bin/playwright install --with-deps "$BROWSER"
-          sudo apt-get install --no-install-recommends -y fonts-noto-cjk
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install --no-install-recommends -y fonts-noto-cjk; fi
       - name: Selected regressions
         shell: bash
         run: |
