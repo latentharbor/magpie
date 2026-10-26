@@ -68,11 +68,14 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
     const pages = [];
     t.after(async () => {
-      if (process.env.ARTIFACT_DIR) {
-        await fs.mkdir(process.env.ARTIFACT_DIR, { recursive: true });
-        for (const [i, p] of pages.entries()) await p.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `${engine}-currency-${i}.png`) });
+      try {
+        if (process.env.ARTIFACT_DIR) {
+          await fs.mkdir(process.env.ARTIFACT_DIR, { recursive: true });
+          for (const [i, p] of pages.entries()) if (!p.isClosed()) await p.screenshot({ timeout: 10000, path: path.join(process.env.ARTIFACT_DIR, `${engine}-currency-${i}.png`) });
+        }
+      } finally {
+        await browser.close();
       }
-      await browser.close();
     });
 
     for (const [lang, name, usd, cny, sub] of [

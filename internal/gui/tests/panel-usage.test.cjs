@@ -118,11 +118,14 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
       const errors = [], pages = [];
       t.after(async () => {
-        if (process.env.ARTIFACT_DIR) {
-          await fs.mkdir(process.env.ARTIFACT_DIR, { recursive: true });
-          for (const [i, p] of pages.entries()) await p.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `${engine}-${lang}-panel-usage-${i}.png`) });
+        try {
+          if (process.env.ARTIFACT_DIR) {
+            await fs.mkdir(process.env.ARTIFACT_DIR, { recursive: true });
+            for (const [i, p] of pages.entries()) if (!p.isClosed()) await p.screenshot({ timeout: 10000, path: path.join(process.env.ARTIFACT_DIR, `${engine}-${lang}-panel-usage-${i}.png`) });
+          }
+        } finally {
+          await browser.close();
         }
-        await browser.close();
       });
       const w = want[lang];
       const fitted = [];
