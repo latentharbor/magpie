@@ -43,7 +43,7 @@ def approved(sha, head, runs):
 
 def approved_backend(sha, head, run, jobs, preparing=False):
     """Publication requires every backend job; preparation may overlap them."""
-    if (run.get("status") not in ("in_progress", "completed")
+    if (run.get("status") not in (("queued", "in_progress", "completed") if preparing else ("in_progress", "completed"))
             or run.get("conclusion") not in (None, "", "success", "failure")
             or not approved(sha, head, [dict(run, status="completed", conclusion="success")])):
         return False
@@ -55,7 +55,7 @@ def approved_backend(sha, head, run, jobs, preparing=False):
     return (len(backend) == len(required)
             and {job.get("name") for job in backend} == required
             and all((job.get("status") == "completed" and job.get("conclusion") == "success")
-                    or (preparing and job.get("status") == "in_progress"
+                    or (preparing and job.get("status") in ("queued", "in_progress")
                         and job.get("conclusion") in (None, ""))
                     for job in backend))
 

@@ -52,6 +52,10 @@ class ReleaseTests(unittest.TestCase):
         pending[0].update(status="in_progress", conclusion="")
         self.assertFalse(release.approved_backend(sha, sha, run, pending))
         self.assertTrue(release.approved_backend(sha, sha, run, pending, preparing=True))
+        pending[0].update(status="queued", conclusion="")
+        queued_run = dict(run, status="queued")
+        self.assertFalse(release.approved_backend(sha, sha, queued_run, pending))
+        self.assertTrue(release.approved_backend(sha, sha, queued_run, pending, preparing=True))
         pending[0].update(status="completed", conclusion="failure")
         self.assertFalse(release.approved_backend(sha, sha, run, pending, preparing=True))
 
