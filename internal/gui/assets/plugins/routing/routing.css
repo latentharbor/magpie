@@ -806,6 +806,9 @@ button.rt-session { cursor: pointer; }
 /* the days that fit, the rest under the last pill (#961) */
 .rt-days { overflow-x: hidden; }
 .rt-days .rt-day[hidden] { display: none; }
+.rt-day-more { flex: 0 1 auto; min-width: 0; }
+.rt-day-more > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rt-day-more small { flex: none; }
 .rt-day-more svg { flex: none; align-self: center; opacity: .7; transition: transform .15s var(--ease); }
 .rt-day-more.open svg { transform: rotate(180deg); }
 

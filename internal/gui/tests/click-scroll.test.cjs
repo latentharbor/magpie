@@ -6,6 +6,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const now = new Date();
@@ -331,6 +332,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const n = await page.evaluate(() => window.__wheelsHeard);
         await page.mouse.wheel(0, dy);
         await page.waitForFunction((n) => window.__wheelsHeard > n, n);
+        await scrollSettled(page);
         await page.waitForFunction(() => performance.now() >= purposeUntil);
       };
       // a scroll by code is put back at the frame it is told of

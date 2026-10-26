@@ -3619,6 +3619,7 @@ html.theming, html.theming *, html.theming *::before, html.theming *::after {
   box-shadow: 0 0 0 1px var(--line), 0 24px 60px rgba(0, 0, 0, .32), 0 2px 8px rgba(0, 0, 0, .12);
 }
 .modal .dialog.swap { animation: content-in .22s var(--ease); }
+@media (prefers-reduced-motion: reduce) { .modal .dialog.swap { animation: none; } }
 /* In a dialog the editor's head and buttons stay put and only the fields
    between them scroll; both bars are the same height, their contents
    centred in it. */

@@ -110,7 +110,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await list.locator(".lib-toolcant").textContent(), w.cant);
 
         // scrolled a little, as the reader would, before the clicks, with
-        // every switch in sight below the library's stuck head. Clicking the
+        // the switch in sight below the library's stuck head. Clicking the
         // pill can scroll it into view first (WebKit, now and then), which
         // left read_text_file under the head and the click on the head
         // Long translated tool descriptions can fill the list's own 320px
@@ -126,7 +126,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const placed = () => page.evaluate(() => {
           const v = document.querySelector("#view-library").getBoundingClientRect();
           const head = document.querySelector("#view-library .lib-head").getBoundingClientRect();
-          const sws = [...document.querySelectorAll('#view-library .lib-tools[data-server="filesystem"] .lib-switch')].map((b) => b.getBoundingClientRect());
+          // The tool list scrolls within 320px; it need not show every
+          // description at once. Keep the switch being clicked in sight.
+          const sws = [[...document.querySelectorAll('#view-library .lib-tools[data-server="filesystem"] .lib-switch')][2]].map((b) => b.getBoundingClientRect());
           if (sws.some((r) => r.top < head.bottom)) return -1;
           if (sws.some((r) => r.bottom > v.bottom)) return 1;
           return 0;
@@ -137,7 +139,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           if (!p) break;
           await page.mouse.wheel(0, 40 * p);
         }
-        assert.equal(await placed(), 0, "the switches in sight");
+        assert.equal(await placed(), 0, "the switch in sight");
         await scrollSettled(page);
         const scrollTop = () => page.evaluate(() => document.querySelector("#view-library").scrollTop);
         const where = () => sw(tools[2].name).evaluate((b) => b.getBoundingClientRect().top);
@@ -154,7 +156,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await where(), at, "the click moved the switch");
         assert.ok(Math.abs((await scrollTop()) - top) <= 1, "the click scrolled the page");
         // two more while the first is out: one request when it's answered
+        await sw("write_file").scrollIntoViewIfNeeded();
+        await reach(page, sw("write_file"));
         await sw("write_file").click();
+        await sw("read_text_file").scrollIntoViewIfNeeded();
+        await reach(page, sw("read_text_file"));
         await sw("read_text_file").click();
         assert.deepEqual(await state(), [[tools[0].name, "false", true], [tools[1].name, "true", false], [tools[2].name, "false", true]]);
         await page.waitForTimeout(100);

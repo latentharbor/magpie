@@ -11,6 +11,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 
@@ -82,12 +83,19 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.deepEqual(await ticked("model-1"), [true, true]);
         assert(!(await hint("model-1").isVisible()));
         await page.evaluate(() => document.fonts.ready.then(() => {}));
+        await boxes("model-1").nth(0).scrollIntoViewIfNeeded();
+        await boxes("model-1").nth(0).evaluate(e => {
+          window.__levelClicks = [];
+          for (const type of ["pointerdown", "pointerup", "click", "change"])
+            e.closest(".mname").addEventListener(type, event => window.__levelClicks.push({type,tag:event.target.tagName,checked:e.checked,y:event.clientY,top:e.getBoundingClientRect().top}));
+        });
+        await scrollSettled(page);
         await boxes("model-1").nth(0).click();
         await page.waitForFunction(() => [...document.querySelectorAll(".mname")].find(e => e.querySelector("code")?.textContent === "model-1")?.querySelector(".mlevels input")?.checked === false).catch(async e => {
           const detail = await boxes("model-1").nth(0).evaluate(e => {
             const box = x => { const r = x.getBoundingClientRect(); return { top:r.top,left:r.left,width:r.width,height:r.height }; };
             const r = e.getBoundingClientRect(), hit = document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
-            return { checked:e.checked,box:box(e),hit:hit?.outerHTML,modal:box(e.closest(".editor")),names:box(e.closest(".mnames")),hold:{off:modalHold.off,y:modalHold.y,touched:modalHold.touched} };
+            return { checked:e.checked,box:box(e),hit:hit?.outerHTML,modal:box(e.closest(".editor")),names:box(e.closest(".mnames")),events:window.__levelClicks,hold:{off:modalHold.off,y:modalHold.y,touched:modalHold.touched} };
           });
           throw new Error(e.message + " checkbox: " + JSON.stringify(detail));
         });
