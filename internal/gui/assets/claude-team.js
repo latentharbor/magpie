@@ -243,6 +243,7 @@ async function openClaudeTeam(organizationId = "") {
     try {
       const next = await api("claude-team/members?" + (organizationId ? "organizationId=" + encodeURIComponent(organizationId) : "new=1"));
       if (!ed.isConnected) return;
+      if (!initial && JSON.stringify(next) === JSON.stringify(view)) { poll(); return; }
       view = next;
       for (const id of view.config.members || []) if (!changed.has(id)) selected.add(id);
       if (initial) {
