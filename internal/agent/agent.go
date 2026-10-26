@@ -239,10 +239,12 @@ type Agent struct {
 	Gateway func() string
 	// Import, for an app that takes magpie only through an import link of
 	// its own, which the user confirms there (Cindy), is that link; the app
-	// has no fields magpie sets. Added says whether it has magpie already;
-	// nil means the app exposes no way to read that status.
+	// has no fields magpie sets. Added says whether it has magpie already,
+	// known false when what it is read from couldn't be read: unknown,
+	// never "not added". nil means the app exposes no way to read that
+	// status.
 	Import func() string
-	Added  func() bool
+	Added  func() (added, known bool)
 	// Launch, for an agent that takes the gateway only from its
 	// environment (agy), is the command that starts it on magpie, while
 	// it is on one of magpie's models; "" otherwise.
@@ -278,6 +280,11 @@ type Agent struct {
 	// it where that is kept apart from Gateway (this machine's Codex at an
 	// address of the user's, #816): Drift tries it (see reach.go).
 	reach func() string
+	// reachFrom, when set, tries base from where the agent runs (inside
+	// its WSL distro), as reachable does from here: the last answer, and
+	// whether there is one. A WSL network's address answers from Windows
+	// whatever its firewall lets in from WSL, so only this tells.
+	reachFrom func(base string) (ok, known bool)
 	// move, when set, points the agent's config at to where it names the
 	// gateway at from: an address of WSL's that changed (#1013).
 	move func(from, to string) error

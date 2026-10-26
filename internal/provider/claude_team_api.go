@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -79,11 +78,8 @@ func (c *claudeTeamHTTP) request(ctx context.Context, method, path string, paylo
 		return errors.New("Claude Team request did not complete; its result is unknown")
 	}
 	defer res.Body.Close()
-	if strings.EqualFold(res.Header.Get("cf-mitigated"), "challenge") {
-		return errors.New("Claude Team administration requires Cloudflare browser verification; open claude.ai in a browser and complete verification. Seat rotation is paused; existing inference accounts are retained. A new sessionKey alone may not resolve this challenge")
-	}
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("Claude Team administration returned HTTP %d; check the administrator session and web verification", res.StatusCode)
+	if strings.EqualFold(res.Header.Get("cf-mitigated"), "challenge") || res.StatusCode < 200 || res.StatusCode >= 300 {
+		return claudeTeamResponseError(method, res)
 	}
 	if dst == nil {
 		return nil

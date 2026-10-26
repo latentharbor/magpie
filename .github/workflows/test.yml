@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      full_ui:
+        description: 'Also run the complete browser suite on GitHub runners'
+        type: boolean
+        default: false
 
 # On main a run finishes: a release waits for a green run, and one cancelled
 # by every next push left none to wait for (LESSONS.md). A newer push still
@@ -17,6 +22,74 @@ permissions:
   contents: read
 
 jobs:
+  ui:
+    name: ui (${{ matrix.browser }}, shard ${{ matrix.shard }})
+    if: github.repository == 'latentharbor/magpie'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+        shard: ${{ fromJSON(inputs.full_ui && '[0,1,2,3]' || '[0]') }}
+    env:
+      BROWSER: ${{ matrix.browser }}
+      UI_SHARD: ${{ matrix.shard }}
+      FULL_UI: ${{ inputs.full_ui || false }}
+      NODE_PATH: ${{ github.workspace }}/.github/ui-preview/node_modules
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: .github/ui-preview/package-lock.json
+      - name: Install pinned browser fixtures
+        run: |
+          npm ci --prefix .github/ui-preview
+          .github/ui-preview/node_modules/.bin/playwright install --with-deps chromium webkit
+          sudo apt-get install --no-install-recommends -y fonts-noto-cjk
+      # Normal pushes cover the reported failures and affected shared UI.
+      # A full run is explicit, sharded and never starts a local browser.
+      - name: Browser regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE' 2>&1 | tee "$RUNNER_TEMP/ui.log"
+          const { readdirSync } = require("node:fs");
+          const { spawnSync } = require("node:child_process");
+          const dir = "internal/gui/tests/";
+          const regressions = [
+            "sidebar", "old-webkit", "redact-words-any-case",
+            "gateway-key-models", "gateway-key-limit", "header-centre",
+            "claude-auth-status", "title-bar-tools", "usage-pack",
+            "usage-curve-zoom-back", "routing-live-patch",
+            "claude-team", "claude-login",
+          ].map(name => name + ".test.cjs");
+          const files = process.env.FULL_UI === "true"
+            ? readdirSync(dir).filter(f => f.endsWith(".test.cjs")).sort()
+                .filter((_, i) => i % 4 === Number(process.env.UI_SHARD))
+            : regressions;
+          if (!files.length) throw new Error("No browser tests selected");
+          console.log(`Running ${files.length} files in ${process.env.BROWSER}`);
+          const run = spawnSync(process.execPath, [
+            "--test", "--test-concurrency=2", "--test-reporter=tap",
+            ...files.map(f => dir + f),
+          ], { stdio: "inherit" });
+          if (run.error) console.error(run.error);
+          process.exit(run.status ?? 1);
+          NODE
+      - name: Retain browser results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-${{ matrix.browser }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ui.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   test:
     name: test (${{ matrix.os }})
     strategy:

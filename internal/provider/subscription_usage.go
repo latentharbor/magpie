@@ -35,6 +35,13 @@ type QuotaWindow struct {
 	Display   string     `json:"display,omitempty"`
 	// Estimated marks a local reset projection, not a fresh vendor reading.
 	Estimated bool `json:"estimated,omitempty"`
+	// Text is set on a window that is its Display alone, with no share
+	// to tell: a plugin's row of what an account holds or has done
+	// (AutoClaw's 积分余额 and 每日签到, Cursor's on-demand spend, ZCode's
+	// gift to claim), which plugins send set aside with used 0 and no
+	// count. Its Used is no reading, so it is told as its text, never as
+	// "100% left".
+	Text bool `json:"text,omitempty"`
 	// Amount of Limit is the window's own count in Unit, when the vendor
 	// counts it so (WorkBuddy's credits): Used is Amount as a share of
 	// Limit. The GUI says it as used or left, as it says the share (#659).

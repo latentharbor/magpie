@@ -262,7 +262,7 @@ func (s *Server) codexShaped(w http.ResponseWriter, r *http.Request, body []byte
 func (s *Server) codexPrediction(w http.ResponseWriter, r *http.Request, body []byte, to string) {
 	if to == "off" {
 		s.sentNowhere(w, r, body, "Predictions off",
-			"Codex composer predictions are off in magpie's Settings: answered with no prediction, sent nowhere", []any{predictionItem(fmt.Sprintf("resp_magpie_%d", time.Now().UnixNano()), noSuggestion)})
+			"Codex composer predictions are off in Codex's settings on magpie's Agents page: answered with no prediction, sent nowhere", []any{predictionItem(fmt.Sprintf("resp_magpie_%d", time.Now().UnixNano()), noSuggestion)})
 		return
 	}
 	body, _ = codexInput(body, true)
@@ -497,7 +497,7 @@ func noTitle(said string) string {
 // no {"title": …} in it, sets none). The Routing and Usage views have it
 // as the title request it was, answered by magpie and sent to no one.
 func (s *Server) codexTitleOff(w http.ResponseWriter, r *http.Request, body []byte) {
-	s.sentNowhere(w, r, body, "Titles off", "Codex titles are off in magpie's Settings: answered with no title, sent nowhere", nil)
+	s.sentNowhere(w, r, body, "Titles off", "Codex titles are off in Codex's settings on magpie's Agents page: answered with no title, sent nowhere", nil)
 }
 
 // sentNowhere answers a hidden turn of Codex's that a setting turned off

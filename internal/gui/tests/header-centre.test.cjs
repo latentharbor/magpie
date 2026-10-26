@@ -18,7 +18,7 @@ const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
 
-const assets = path.resolve(__dirname, "../assets");
+const assets = path.resolve(process.env.MAGPIE_GUI_ASSETS || path.join(__dirname, "../assets"));
 
 function server(lang) {
   return async (route) => {
@@ -62,6 +62,28 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await t.test(`${lang} at ${Math.round(zoom * 100)}%`, async () => {
         const ctx = await browser.newContext({ viewport: { width: Math.round(1100 / zoom), height: 600 }, deviceScaleFactor: zoom });
         await ctx.addInitScript(() => { Object.defineProperty(Navigator.prototype, "platform", { get: () => "Win32" }); });
+        await ctx.addInitScript(() => {
+          // A deterministic regression for the WebKit delivery loop: a
+          // header fit must not change an observed size inside delivery.
+          let delivering = false;
+          window.headerWritesDuringDelivery = 0;
+          const Original = ResizeObserver;
+          window.ResizeObserver = class extends Original {
+            constructor(callback) {
+              super((entries, observer) => {
+                delivering = true;
+                try { callback(entries, observer); } finally { delivering = false; }
+              });
+            }
+          };
+          for (const method of ["add", "remove", "toggle"]) {
+            const original = DOMTokenList.prototype[method];
+            DOMTokenList.prototype[method] = function (...args) {
+              if (delivering && this === document.querySelector(".top")?.classList) window.headerWritesDuringDelivery++;
+              return original.apply(this, args);
+            };
+          }
+        });
         const page = await ctx.newPage();
         page.on("pageerror", (e) => errors.push(e.message));
         await page.route("**/*", server(lang));
@@ -90,6 +112,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         }
         assert(middle > 1000, `the closer tabs were never in the middle (${middle})`);
         assert(inrow > 0, "the narrowest windows never put the tabs in the row");
+        assert.equal(await page.evaluate(() => window.headerWritesDuringDelivery), 0, "header sizes changed inside ResizeObserver delivery");
         await ctx.close();
       });
     }

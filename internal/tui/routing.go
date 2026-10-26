@@ -295,7 +295,7 @@ func (m *model) openClassifier(g provider.Group) {
 // ruleHint is what a rule is typed as.
 const ruleHint = `use=<model>, and any of: tokens=200k · images · effort=on|low|medium|high|xhigh|max · agents=codex,claude
 intent="a quick question" (the group's classifier=<model> tells it) · compact
-time=09:00-18:00 (local; 22:00-08:00 runs past midnight) · days=mon-fri · folders=~/work/acme,~/oss · except-folders=~/old · at=<n> for its place
+time=09:00-18:00 (22:00-08:00 runs past midnight) · days=mon-fri · tz=Asia/Shanghai (this computer's zone if none) · folders=~/work/acme,~/oss · except-folders=~/old · at=<n> for its place
 use-effort=low|medium|high|xhigh|max: the reasoning the model is asked for, whatever the agent asked
 or pause=<model> time=… days=… agents=… folders=… except-folders=…: the model is left out of the group then, not even a fallback`
 
@@ -327,6 +327,7 @@ func putRule(g *provider.Group, i int, line string) error {
 	if err != nil {
 		return err
 	}
+	r.InZoneHere()
 	if classifier != "" {
 		g.Classifier = classifier
 	}
@@ -523,7 +524,7 @@ func (m model) updateGroup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.confirm != "member/"+id {
 			m.confirm = "member/" + id
 			m.flash, m.flashOK = "press d again to take "+id+" out", false
-			if slices.ContainsFunc(g.Rules, func(r provider.Rule) bool { return r.Use == id }) {
+			if slices.ContainsFunc(g.Rules, func(r provider.Rule) bool { _, kept := r.Without(id); return !kept }) {
 				m.flash += " and its rules"
 			}
 			return m, nil
@@ -532,7 +533,14 @@ func (m model) updateGroup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.gsel = clamp(m.gsel, all-1)
 		return m, saveGroup(g.ID, func(g *provider.Group) error {
 			g.Members = slices.DeleteFunc(g.Members, func(x string) bool { return x == id })
-			g.Rules = slices.DeleteFunc(g.Rules, func(r provider.Rule) bool { return r.Use == id })
+			// a rule that sends to others too keeps them
+			var rules []provider.Rule
+			for _, r := range g.Rules {
+				if r, kept := r.Without(id); kept {
+					rules = append(rules, r)
+				}
+			}
+			g.Rules = rules
 			return nil
 		}, id+" taken out")
 	}
@@ -663,9 +671,10 @@ func (m model) viewGroup() string {
 	}
 	for i := ruleFrom; i < ruleTo; i++ {
 		r := g.Rules[i]
-		marker, use := "  ", sText.Render(r.Use)
+		uses := strings.Join(r.Uses(), ", ") // in order: the next when one can't take it
+		marker, use := "  ", sText.Render(uses)
 		if len(g.Members)+i == m.gsel {
-			marker, use = sCursor.Render("▸ "), sNameOn.Render(r.Use)
+			marker, use = sCursor.Render("▸ "), sNameOn.Render(uses)
 		}
 		arrow := " → "
 		if r.Pause {

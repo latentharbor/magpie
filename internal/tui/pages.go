@@ -777,6 +777,10 @@ func (m model) viewProviders() string {
 		}
 		r.models = fmt.Sprintf("%d models", len(p.Exposed()))
 		var notes []string
+		if p.Off {
+			// how to switch it on again, as magpie providers says it
+			notes = append(notes, "o switches it on")
+		}
 		if v, ok := m.bal[p.ID]; ok {
 			notes = append(notes, v)
 		}
@@ -1436,6 +1440,10 @@ func quotaCell(w provider.QuotaWindow, left bool, now time.Time) string {
 		pct = c + " · " + pct
 	}
 	c := sMuted.Render(w.Name) + " " + fill.Render(strings.Repeat("█", on)) + sFaint.Render(strings.Repeat("░", cells-on)) + " " + sText.Render(pct)
+	if w.Text {
+		// a row of text alone: no meter, no share to tell
+		c = sMuted.Render(w.Name) + " " + sText.Render(w.Display)
+	}
 	var at time.Time
 	if w.ResetsAt != nil {
 		at = *w.ResetsAt

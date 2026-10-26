@@ -141,7 +141,16 @@ test("compat.js is the first of the page's own scripts", async () => {
   const all = [...html.matchAll(/<script\s+src="([^"]+)"/g)].map((m) => m[1]);
   const srcs = all.filter((s) => s !== "boot.js" && s !== "theme.js" && s !== "omarchy.js");
   assert.equal(srcs[0], "compat.js", "loaded first: " + srcs.join(", "));
-  for (const f of await scripts()) assert(all.includes(f), f + " is not loaded by index.html");
+  // An editor can be loaded on demand by a script already reached from
+  // the page. Follow those literal script URLs too, but never count an
+  // orphan file's loader as an entry point.
+  const files = await scripts();
+  const reached = new Set(all);
+  for (const f of reached) {
+    if (!files.includes(f)) continue; // boot.js is served by Go
+    for (const m of (await read(f)).matchAll(/\b\w+\.src\s*=\s*["']([^"']+\.js)["']/g)) reached.add(m[1]);
+  }
+  for (const f of files) assert(reached.has(f), f + " is not loaded by index.html or a reachable loader");
 });
 
 test("the styles hold up in Safari 15.0", async () => {

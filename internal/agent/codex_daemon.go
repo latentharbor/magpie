@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yetone/magpie/internal/beat"
 	"github.com/yetone/magpie/internal/provider"
 )
 
@@ -84,13 +85,11 @@ func KeepCodexDaemonCurrent(ctx context.Context) {
 		return
 	}
 	path := filepath.Join(here(home).codexHome(), "config.toml")
-	t := time.NewTicker(codexDaemonEvery)
-	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-beat.Next(codexDaemonEvery):
 		}
 		if _, err := os.Stat(path); err == nil {
 			if c := codexDaemonCheck(path); c.Restarted {

@@ -21,6 +21,8 @@ import (
 	"context"
 	"log"
 	"time"
+
+	"github.com/yetone/magpie/internal/beat"
 )
 
 // Grace is how long after the last request ended sleep is still held off.
@@ -68,8 +70,6 @@ func Keep(ctx context.Context, level func() Level, state func() State) {
 	}
 	defer let()
 	failed := false
-	t := time.NewTicker(tick)
-	defer t.Stop()
 	for {
 		if l := level(); l != Off && want(state(), time.Now()) {
 			if release != nil && held != l {
@@ -98,7 +98,7 @@ func Keep(ctx context.Context, level func() Level, state func() State) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-beat.Next(tick):
 		}
 	}
 }

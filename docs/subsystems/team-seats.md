@@ -55,6 +55,16 @@ tiers. Disabled, parked, paused, revoked, removed and foreign-organization login
 are not restored as inference candidates. A successful complete member read
 replaces this compatibility state with authoritative assignments.
 
+Administrator failures report the HTTP status, operation and response format.
+Only `cf-mitigated: challenge` or recognized challenge-page markers identify
+Cloudflare verification; an ordinary 403 remains unclassified. A 401 or explicit
+authentication error identifies rejected authentication, while an explicit
+permission error identifies management access denial. Neither `cf-ray` nor the
+server header alone proves a challenge. Bounded error-body inspection never
+exposes response text, credentials or arbitrary vendor error types; only validated
+request IDs and edge correlation IDs are included. Diagnostics add no retries or
+assignment writes, and an administrator read failure preserves inference state.
+
 Each successful member snapshot enables only Premium accounts in the pool.
 A controller-owned `teamOff` bit prevents discovery, the agent's current
 login and its stand-in fallback from resurrecting an unassigned member.

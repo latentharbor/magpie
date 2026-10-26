@@ -34,6 +34,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/lastgood"
 	"github.com/yetone/magpie/internal/netproxy"
 	"github.com/yetone/magpie/internal/proc"
@@ -228,6 +229,7 @@ func save(l List) error {
 	if err := lastgood.Keep(listPath(), lastgood.JSON, 0o600); err != nil {
 		return err
 	}
+	defer filememo.Forget() // what follows plugins.json looks again (Written)
 	if err := writeWhole(listPath(), append(b, '\n')); err != nil {
 		return err
 	}
@@ -360,8 +362,20 @@ func Target(spec string) string {
 }
 
 // Add installs a plugin and adds it to the list, in place of one of the
-// same package. A package is installed with its scripts left unrun.
-func Add(ctx context.Context, spec string) (Entry, error) { return add(ctx, spec, "") }
+// same package. A package is installed with its scripts left unrun. A
+// community plugin's short or shown name (workbuddy, WorkBuddy) is its
+// package (resolve); the entry gives the package installed.
+func Add(ctx context.Context, spec string) (Entry, error) {
+	spec, err := resolve(ctx, strings.TrimSpace(spec))
+	if err != nil {
+		return Entry{}, err
+	}
+	return add(ctx, spec, "")
+}
+
+// AddExact is Add of a spec that is a package's own (another computer's
+// plugins.json), installed as written, never taken for a name.
+func AddExact(ctx context.Context, spec string) (Entry, error) { return add(ctx, spec, "") }
 
 // add is Add, an npm package installed at the version given when there is
 // one (installAt), its spec kept as given.
