@@ -58,13 +58,28 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await page.waitForSelector("#nav button.on");
       assert.ok(await page.evaluate(() => document.body.classList.contains("side-nav")), "a sidebar at " + width);
 
+      // Hold the real entrance halfway until the delayed plugin response
+      // redraws its rows. Sampling a running 400ms animation after a
+      // protocol round trip races its completion on a loaded runner.
+      await page.evaluate(() => {
+        const enter = navSubEnter;
+        navSubEnter = (box) => {
+          navSubEnter = enter;
+          enter(box);
+          for (const a of box.getAnimations()) {
+            a.pause();
+            a.currentTime = a.effect.getComputedTiming().activeDuration / 2;
+          }
+        };
+      });
       await page.locator('#nav button[data-view="plugins"]').click();
       const box = page.locator("#side .nav-sub:not(.leaving)");
       await box.waitFor();
       // the plugins come in while the list is still unrolling
-      await page.waitForFunction(() => document.querySelector(".nav-sub:not(.leaving)")?.getAnimations().some((a) => a.playState === "running"));
+      await page.waitForFunction(() => document.querySelector(".nav-sub:not(.leaving)")?.getAnimations().some((a) => a.playState === "paused"));
       open();
       await page.waitForFunction((w) => document.querySelector(".nav-s.cur")?.textContent.startsWith(w) && /\d/.test(document.querySelector(".nav-s.cur").textContent), installedWord[lang]);
+      await page.evaluate(() => document.querySelector(".nav-sub:not(.leaving)").getAnimations().forEach(a => a.play()));
       // every row, the list and its selection, done moving
       await page.waitForFunction(() => {
         const b = document.querySelector(".nav-sub:not(.leaving)");

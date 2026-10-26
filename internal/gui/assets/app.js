@@ -8797,16 +8797,6 @@ function holdModal(later) {
   new MutationObserver(() => holdModal()).observe(d, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class", "hidden", "open"] });
   // the reader's own press or key: from here the dialog holds its place
   m.addEventListener("pointerdown", (e) => { modalHold.touched = true; modalMark(e.target); }, true);
-  // WebKit centres a checkbox's containing label on native mouse focus,
-  // even when the checkbox itself is already visible in Names & levels.
-  // That moves it between press and release. Keep focus and activation,
-  // but take focus without scrolling either of the editor's nested lists.
-  m.addEventListener("pointerdown", (e) => {
-    const input = e.target.closest?.('.mnames input[type="checkbox"]');
-    if (e.button !== 0 || !input || input.disabled) return;
-    e.preventDefault();
-    input.focus({ preventScroll: true });
-  }, true);
   m.addEventListener("keydown", () => { modalHold.touched = true; }, true);
   m.addEventListener("focusin", (e) => modalMark(e.target), true);
   // a scroll moves the marked element, not the dialog

@@ -37,10 +37,10 @@ The About version row wraps update actions within its right column rather
 than overflowing with long translations. A dialog redrawn in place does not
 play its content translation under reduced motion, so opening an account's
 model picker keeps the row fixed (`account-models.test.cjs`).
-Names & levels takes mouse focus on a checkbox with `preventScroll`,
-preserving its click activation while preventing WebKit from centring the
-whole label and moving the checkbox between press and release in nested
-editor scrollers (`model-reasonless.test.cjs`).
+The framed editor clips its outer shell rather than making it a hidden
+scroll container: only its fields and nested model list scroll. This keeps
+native focus from resetting an outer scroll between checkbox press and
+release (`model-reasonless.test.cjs`).
 Opening an inline sheet follows its growth until new reader scroll input,
 rather than mistaking WebKit's intermediate scroll clamping for that input.
 The Requests chart's split controls stay inside the card at narrow widths;

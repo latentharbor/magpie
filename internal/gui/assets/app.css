@@ -1416,7 +1416,7 @@ body.window .field.solo { grid-column: auto; }
 /* the account's name is cut at 110px, but its column keeps room for the
    source badges under it, which don't wrap: capped at 110px the cell cut
    off the second English one ("Subscription") */
-.led.tighter .model, .led.tighter .where-name { max-width: 110px; }
+.led.tighter .model, .led.tighter .where-name { max-width: 100px; }
 .led.tighter th, .led.tighter td { padding-left: 4px; padding-right: 4px; }
 .led.tighter th { white-space: normal; }
 /* only a pointer to the details: it gives way to what shows beside it (the
@@ -3625,7 +3625,7 @@ html.theming, html.theming *, html.theming *::before, html.theming *::after {
    between them scroll; both bars are the same height, their contents
    centred in it. */
 .modal .dialog { display: flex; flex-direction: column; }
-.modal .editor.framed { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 0; min-height: 0; overflow: hidden; }
+.modal .editor.framed { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 0; min-height: 0; overflow: clip; }
 .modal .editor.framed > .ebody {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   display: grid; grid-template-columns: inherit; gap: 10px 14px; align-items: start; padding: 14px 18px;
