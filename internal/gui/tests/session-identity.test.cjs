@@ -23,7 +23,7 @@ const rows = [
 [10000,10001,30000,30001,1250,0,undefined,900,-1].forEach((ms,i) => rows[i].ms=ms);
 rows.push({t:now,agent:"codex",agentName:"Codex",provider:"codex",providerName:"ChatGPT",access:"subscription",model:"gpt-6-sol",in:10,out:2,status:200,ms:4000,cost:0,priced:false});
 
-for (const engine of ["chromium", "webkit"]) {
+for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
   test(engine + ": session account identities", async t => {
     const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({channel:"chromium"}));
     t.after(() => browser.close());

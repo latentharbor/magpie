@@ -56,6 +56,21 @@ async function zoomed(engine, zoom, t) {
 
 const settled = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 const steps = (page) => page.evaluate((all) => all.filter((c) => document.querySelector(".top").classList.contains(c)).length, STEPS);
+// Navigation grows when a page is added. "1200 points" is not evidence
+// that the uncompressed labels fit: measure their actual room.
+const naturalRoom = (page) => page.evaluate((all) => {
+  const top = document.querySelector(".top"), was = top.className;
+  top.classList.remove(...all);
+  const actions = top.querySelector(".actions").getBoundingClientRect();
+  const lead = document.querySelector("#sideToggle").offsetParent
+    ? document.querySelector("#sideToggle") : top.querySelector(".brand");
+  const nav = top.querySelector("#nav").getBoundingClientRect();
+  const room = lead.getBoundingClientRect().right + 8 <= nav.left
+    && nav.right + 8 <= actions.left
+    && actions.right <= top.getBoundingClientRect().right - parseFloat(getComputedStyle(top).paddingRight) + .5;
+  top.className = was;
+  return room;
+}, STEPS);
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
   test(engine + ": a zoomed header with room is drawn as at 100%", async (t) => {
@@ -72,17 +87,19 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.waitForSelector("#nav button.on");
         await page.waitForFunction(() => !document.querySelector("#update").hidden);
         assert(Math.abs(await page.evaluate(() => devicePixelRatio) - zoom) < 0.01, "the page isn't zoomed");
-        let last = 0;
+        let last = 0, roomy = 0;
         for (let w = 1300; w >= 700; w -= 10) {
           // the window's points; at a 1.1 zoom 1300 points are 1182 CSS pixels
           await page.setViewportSize({ width: engine === "webkit" ? Math.round(w / zoom) : w, height: 600 });
           await settled(page);
           const n = await steps(page), at = `${w}pt: ${await page.evaluate(() => document.querySelector(".top").className)}`;
-          if (w >= 1200) assert.equal(n, 0, "the header is drawn in with room to spare at " + at);
+          if (w >= 1200 && n === 0) roomy++;
+          if (w >= 1200 && n) assert.equal(await naturalRoom(page), false, "the header is drawn in with room to spare at " + at);
           assert(n >= last, "a wider window is drawn in more than a narrower one at " + at);
           last = n;
         }
         assert(last > 0, "the narrowest window never drew the header in");
+        assert(roomy > 0, "the fixture never exercised an uncompressed wide header");
         assert.deepEqual(errors, []);
       });
     }

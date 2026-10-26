@@ -48,7 +48,20 @@ const rowOf = (page, v) => page.evaluate((v) => {
 const watch = (page) => page.evaluate(() => { window.__tops = []; const f = () => { const hl = document.querySelector("#nav > .nav-top-hl"); window.__tops.push(hl.getBoundingClientRect().top); const t = window.__tops; if (t.length < 400 && !(t.length > 20 && t.slice(-20).every((y) => y === t[t.length - 1]))) requestAnimationFrame(f); else window.__still = true; }; window.__still = false; requestAnimationFrame(f); });
 const settled = async (page) => { await page.waitForFunction(() => window.__still); return page.evaluate(() => window.__tops); };
 const on = async (page, v) => {
-  const [s, r] = [await shape(page), await rowOf(page, v)];
+  // A late page/tab draw can move the row after an earlier spring has
+  // settled. Read the row and highlight in the same frame and wait for
+  // their final alignment, rather than comparing two different frames.
+  await page.waitForFunction(v => {
+    const h = document.querySelector("#nav > .nav-top-hl");
+    const row = document.querySelector(`#nav button[data-view="${v}"]`);
+    if (!h || h.hidden || !row) return false;
+    const a = h.getBoundingClientRect(), b = row.getBoundingClientRect();
+    return Math.abs(a.top - b.top) < .5 && Math.abs(a.height - b.height) < .5;
+  }, v);
+  const [s, r] = await page.evaluate(v => [
+    document.querySelector("#nav > .nav-top-hl"),
+    document.querySelector(`#nav button[data-view="${v}"]`),
+  ].map(e => { const b = e.getBoundingClientRect(); return {top:b.top,h:b.height}; }), v);
   assert(s, `the shape is drawn for ${v}`);
   assert(Math.abs(s.top - r.top) < 0.5 && Math.abs(s.h - r.h) < 0.5, `the shape on ${v}'s row: ${JSON.stringify(s)} vs ${JSON.stringify(r)}`);
 };
