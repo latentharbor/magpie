@@ -86,8 +86,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await boxes("model-1").nth(0).scrollIntoViewIfNeeded();
         await boxes("model-1").nth(0).evaluate(e => {
           window.__levelClicks = [];
-          for (const type of ["pointerdown", "pointerup", "click", "change"])
-            e.closest(".mname").addEventListener(type, event => window.__levelClicks.push({type,tag:event.target.tagName,checked:e.checked,y:event.clientY,top:e.getBoundingClientRect().top}));
+          for (const type of ["pointerdown", "mousedown", "focusin", "pointerup", "click", "change", "scroll"])
+            e.closest(".editor").addEventListener(type, event => window.__levelClicks.push({type,tag:event.target.tagName,checked:e.checked,y:event.clientY,top:e.getBoundingClientRect().top,names:e.closest(".mnames").scrollTop,body:e.closest(".ebody").scrollTop}),true);
         });
         await scrollSettled(page);
         await boxes("model-1").nth(0).click();

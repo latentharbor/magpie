@@ -1222,7 +1222,8 @@ body.window .field.solo { grid-column: auto; }
 .led-bar .grow { flex: 1; }
 .led-by { font-size: 11.5px; color: var(--muted); }
 /* "Split by" and its choices wrap together, under the metrics when narrow */
-.led-split { display: flex; align-items: center; gap: 8px; }
+.led-split { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; }
+.led-split .segs { min-width: 0; max-width: 100%; overflow-x: auto; }
 .led-body { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 272px; gap: 18px; }
 .led-chart { min-width: 0; }
 .led-chart .plot { position: relative; height: 236px; }

@@ -8801,7 +8801,7 @@ function holdModal(later) {
   // even when the checkbox itself is already visible in Names & levels.
   // That moves it between press and release. Keep focus and activation,
   // but take focus without scrolling either of the editor's nested lists.
-  m.addEventListener("mousedown", (e) => {
+  m.addEventListener("pointerdown", (e) => {
     const input = e.target.closest?.('.mnames input[type="checkbox"]');
     if (e.button !== 0 || !input || input.disabled) return;
     e.preventDefault();
@@ -15330,16 +15330,15 @@ $("#addProvider").onclick = (e) => {
     return unrollSheet(view, sheet, e);
   }
   if (!scrollOnPurpose(e, 700)) return;
+  const intent = readerScrollEpoch;
   const from = view.scrollTop;
   const to = Math.min(from + sheet.getBoundingClientRect().top - view.getBoundingClientRect().top - 12, view.scrollHeight - view.clientHeight);
   if (calm()) { view.scrollTop = to; return; }
   const t0 = performance.now(), ease = (x) => 1 - Math.pow(1 - x, 3);
-  let set = from;
   const step = (now) => {
-    if (Math.abs(view.scrollTop - set) > 2) return; // the reader took it
+    if (readerScrollEpoch !== intent) return; // the reader took it
     const x = Math.min(1, (now - t0) / 520);
     view.scrollTop = Math.round(from + (to - from) * ease(x));
-    set = view.scrollTop;
     if (x < 1) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
@@ -15388,6 +15387,7 @@ function unrollSheet(view, sheet, e) {
   // can start to move: from there the view goes down as it grows
   const x0 = Math.max(0, h - (room - from));
   const go = scrollOnPurpose(e, ROW_OPEN.ms + 300); // opened by a click, not by code
+  const intent = readerScrollEpoch;
   if (!h || calm()) { if (go) view.scrollTop = to; return; }
   const pad = getComputedStyle(sheet);
   sheet.style.overflow = "hidden";
@@ -15399,14 +15399,12 @@ function unrollSheet(view, sheet, e) {
     c.animate([{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "none" }],
       { duration: 340, delay: 60, easing: "cubic-bezier(.22, 1, .36, 1)", fill: "backwards" });
   }
-  // what the view is at once the sheet starts at no height: a page that
-  // was scrolled to its end is clamped shorter (WebKit), not moved by the reader
-  let set = view.scrollTop;
   const follow = () => {
-    if (!go || Math.abs(view.scrollTop - set) > 2) return; // the reader took it
+    // WebKit can clamp the view while the sheet grows between frames.
+    // A changed scrollTop alone therefore does not mean the reader took it.
+    if (!go || readerScrollEpoch !== intent) return;
     const done = grow.playState === "finished";
     view.scrollTop = Math.round(from + (to - from) * (done ? 1 : Math.min(1, Math.max(0, sheet.offsetHeight - x0) / (h - x0))));
-    set = view.scrollTop; // as far as there was room for
     if (!done) requestAnimationFrame(follow);
   };
   const end = () => { sheet.style.overflow = ""; };
@@ -15423,10 +15421,11 @@ function unrollSheet(view, sheet, e) {
 function unrollInView(fold, button, e) {
   const v = fold.closest(".view");
   if (!v || !scrollOnPurpose(e, UNROLL.ms + 400)) return;
+  const intent = readerScrollEpoch;
   let set = v.scrollTop;
   const until = performance.now() + UNROLL.ms + 300;
   const step = () => {
-    if (Math.abs(v.scrollTop - set) > 2) return false; // the reader took it
+    if (readerScrollEpoch !== intent) return false; // the reader took it
     const b = v.getBoundingClientRect(), pad = parseFloat(getComputedStyle(v).paddingBottom) || 0;
     const want = v.scrollTop + Math.min(fold.getBoundingClientRect().bottom + pad - b.bottom, button.getBoundingClientRect().top - b.top - 4);
     const to = Math.round(Math.max(set, Math.min(want, v.scrollHeight - v.clientHeight)));
@@ -23272,13 +23271,13 @@ function savePrefs(body) {
 // shows that with the reader's event: scrollOnPurpose(e). Called without one
 // (from a load, a timer, a helper that other clicks share) it is refused,
 // and whatever scroll follows is put back.
-let purposeUntil = 0, held = null;
+let purposeUntil = 0, held = null, readerScrollEpoch = 0;
 // guardUntil is purposeUntil when the window is the click guard's own (a
 // field brought back into sight, backToReader): it lets that scroll stand,
 // but it isn't the reader's, so an app menu the click opens stays open.
 let guardUntil = 0;
 // A new purposeful scroll supersedes any still-pending quota navigation.
-const readerScrolls = (ms) => { quotaFocus = ""; purposeUntil = Math.max(purposeUntil, performance.now() + ms); held = null; guardUntil = 0; };
+const readerScrolls = (ms) => { readerScrollEpoch++; quotaFocus = ""; purposeUntil = Math.max(purposeUntil, performance.now() + ms); held = null; guardUntil = 0; };
 function scrollOnPurpose(e, ms = 1000) {
   if (!e?.isTrusted || performance.now() - e.timeStamp > 1000) {
     console.warn("magpie: a scroll not asked for by the reader was refused");
