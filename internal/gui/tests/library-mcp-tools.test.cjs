@@ -95,6 +95,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const list = page.locator('#view-library .lib-tools[data-server="filesystem"]');
         const scrollTop = () => page.evaluate(() => document.querySelector("#view-library").scrollTop);
         const where = () => status("filesystem").evaluate((b) => b.getBoundingClientRect().top);
+        const geometry = () => status("filesystem").evaluate(b => {
+          const rect = e => { const r = e.getBoundingClientRect(); return { top: r.top, height: r.height }; };
+          return { row: rect(b.closest(".lib-row")), who: rect(b.closest(".who")), pill: rect(b) };
+        });
         for (let i = 0; i < 50 && !checks.length; i++) await page.waitForTimeout(20);
         assert.equal(checks.length, 1);
         checks[0].release();
@@ -121,7 +125,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.waitForFunction(() => document.querySelector("#view-library").scrollTop > 0);
         await page.waitForTimeout(400);
         await reach(page, status("filesystem"));
-        const top = await scrollTop(), pillAt = await where();
+        const top = await scrollTop(), pillAt = await where(), before = await geometry();
 
         // a click shows each tool's name and description, and asks nothing
         await status("filesystem").click();
@@ -130,7 +134,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // the row grows under it, and what was clicked stays where it was
         // (the click guard takes back the pixel a centred row gives up)
         assert.equal(await where(), pillAt, "the click moved what was clicked");
-        assert.ok(Math.abs((await scrollTop()) - top) <= 1, "the click scrolled the page: " + JSON.stringify({before:top,after:await scrollTop(),pillBefore:pillAt,pillAfter:await where()}));
+        assert.ok(Math.abs((await scrollTop()) - top) <= 1, "the click scrolled the page: " + JSON.stringify({before:top,after:await scrollTop(),pillBefore:pillAt,pillAfter:await where(),geometry:{before,after:await geometry()}}));
         assert.equal(await page.evaluate(() => document.querySelector("#modal").classList.contains("lib")), false, "the click opened the editor");
         assert.equal(checks.length, 1, "opening the list checked the server again");
         assert.equal(await status("filesystem").getAttribute("aria-expanded"), "true");

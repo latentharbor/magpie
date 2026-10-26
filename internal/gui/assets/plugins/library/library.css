@@ -481,6 +481,8 @@ input.lib-setname:focus { border-color: var(--accent); box-shadow: 0 0 0 3px col
 /* whether a server works, beside its name: a dot and a few words, the
    whole reason in the tooltip; a click checks it again */
 .lib-srvwho { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); align-items: center; }
+/* Expanding tools must not recenter the server heading beside taller chips. */
+.lib-server > .who { align-self: flex-start; }
 .lib-srvwho > .name { min-width: 0; }
 .lib-srvwho > .lib-health { justify-self: start; max-width: min(220px, 100%); }
 .lib-srvwho > :not(.name):not(.lib-health) { grid-column: 1 / -1; }
