@@ -92,7 +92,7 @@ i.dot.free { background: var(--k-free); box-shadow: inset 0 0 0 1px color-mix(in
 
 .ctx-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: -4px; }
 .ctx-leg { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--fg-2); cursor: default; padding: 2px 0; }
-.ctx-leg .v { color: var(--muted); }
+.ctx-leg .v { color: var(--muted); display: inline-block; min-width: 6ch; text-align: right; }
 .ctx-leg:hover .n { color: var(--fg); }
 
 .ctx-contents { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line); }

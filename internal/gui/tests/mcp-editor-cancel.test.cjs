@@ -14,6 +14,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const { I18N } = require("./strings.cjs").strings(); // i18n.js's and the plugins'
@@ -157,9 +158,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           const add = page.locator("#view-library .after-list button");
           // scrolled to with the wheel, as a reader does (the page puts back
           // a scroll no reader asked for): narrow, it's under the footer
-          await page.locator("#view-library").hover();
-          await page.mouse.wheel(0, 2000);
-          await page.waitForFunction(() => { const v = document.querySelector("#view-library"); return v.scrollTop + v.clientHeight >= v.scrollHeight - 1; });
+          await reach(page, add);
           await add.click();
           await ed.waitFor();
           await ed.locator(".segs .opt", { hasText: /^HTTP$/ }).click();

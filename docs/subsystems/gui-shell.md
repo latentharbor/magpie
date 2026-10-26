@@ -51,6 +51,8 @@ under a stationary pointer keeps focus in its search field.
 Tab also checks that the newly focused field is wholly visible after native
 scrolling. Long-conversation controls wrap below their explanation before
 translated choices can squeeze that explanation to a few pixels.
+Context legend values reserve the width of their compact numeric format so
+streaming token changes do not repeatedly rewrap the legend and move the card.
 `session-identity.test.cjs` and `settings-lines-wrap.test.cjs`
 cover readable labels and controls remaining within their cells.
 

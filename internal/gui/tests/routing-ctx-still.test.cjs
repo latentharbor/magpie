@@ -163,7 +163,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
             const vs = frames.map((f) => f[k]?.[i]);
             assert(vs.every((v) => v !== undefined), `${k} is there on every frame`);
             const lo = Math.min(...vs), hi = Math.max(...vs);
-            assert(hi - lo <= 0.5, `${k} held still (${["x", "y", "width", "height"][i]} from ${lo} to ${hi}, frames ${JSON.stringify(vs.map((v, j) => j + ":" + v).filter((x, j) => j === 0 || vs[j] !== vs[j - 1]))})`);
+            assert(hi - lo <= 0.5, `${k} held still (${["x", "y", "width", "height"][i]} from ${lo} to ${hi}, frames ${JSON.stringify(vs.map((v, j) => j + ":" + v).filter((x, j) => j === 0 || vs[j] !== vs[j - 1]))}); ranges ${JSON.stringify(Object.keys(WATCH).map(key => [key, ...[0,1,2,3].map(n => { const xs = frames.map(f => f[key]?.[n]); return [Math.min(...xs), Math.max(...xs)]; })]))}`);
           }
         }
         // the cache never flashes to a dash; its bar never empties

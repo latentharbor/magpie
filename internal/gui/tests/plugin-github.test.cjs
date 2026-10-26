@@ -18,6 +18,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { reach: readerReach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 
@@ -147,12 +148,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           // a reader scrolls to a card (narrow, below the fold); magpie
           // undoes a scroll nobody asked for, so Playwright's own wouldn't do
           const reach = async (card) => {
-            const box = await view.boundingBox();
-            await page.mouse.move(box.x + box.width / 2, Math.min(box.y + 200, 800));
-            for (let i = 0; i < 60 && !(await card.evaluate((e) => { const r = e.getBoundingClientRect(), v = e.closest(".view").getBoundingClientRect(); return r.top >= v.top && r.bottom <= v.bottom; })); i++) {
-              await page.mouse.wheel(0, 80);
-              await page.waitForTimeout(15);
-            }
+            await readerReach(page, card);
           };
           // and clicks it where it is: Playwright's own click scrolls a card
           // already in sight in Chromium at this width, as a reader's doesn't

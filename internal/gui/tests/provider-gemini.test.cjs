@@ -136,7 +136,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.waitForTimeout(100);
         await ed.locator('.segs .opt[data-api="openai"]').click();
         await ed.locator('.segs .opt[data-api="gemini"]').click();
-        await page.waitForTimeout(350);
+        await page.waitForFunction(() => {
+          const s = document.querySelector(".editor .segs:has(.opt[data-api])");
+          const on = s.querySelector(".opt.on").getBoundingClientRect(), thumb = s.querySelector(".thumb").getBoundingClientRect();
+          return ["left", "top", "width", "height"].every(k => Math.abs(on[k] - thumb[k]) <= 1);
+        });
         const fit = await ed.locator(".segs:has(.opt[data-api])").evaluate((s) => {
           const r = (e) => e.getBoundingClientRect();
           const on = r(s.querySelector(".opt.on")), th = r(s.querySelector(".thumb")), ed = r(s.closest(".editor"));

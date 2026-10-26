@@ -93,7 +93,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await p.locator('[data-view="usage"]').first().click();
         await p.locator(":is(#usageTab .opt, .nav-s):visible").nth(1).click();
         await p.locator("#ledWrap .led tbody tr").first().waitFor();
-        await p.waitForTimeout(300);
+        await reader.scrollSettled(p);
         return p;
       };
       const fits = (p) => p.locator("#ledWrap").evaluate((e) => {
@@ -103,7 +103,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
       // narrower than the table is with Sent, Effort and the cache left out
       const p = await open(820);
-      assert.deepEqual(await fits(p), { scroll: true, status: true }, "the table fits, Status in sight");
+      const geometry = await p.locator("#ledWrap").evaluate(e => ({
+        width: e.clientWidth, scroll: e.scrollWidth, classes: e.querySelector("table").className,
+        cols: [...e.querySelectorAll("thead th")].filter(e => e.offsetParent).map(e => [e.textContent, e.getBoundingClientRect().width]),
+      }));
+      assert.deepEqual(await fits(p), { scroll: true, status: true }, "the table fits, Status in sight: " + JSON.stringify(geometry));
       assert(await p.locator("#ledTight").isVisible(), "the hint says where the columns went");
       const ref = p.locator(".led tbody tr.led-row").nth(2).locator("td.cost");
       assert.equal(await ref.locator(".price-reference").isVisible(), false, "the price reference line is left out");
