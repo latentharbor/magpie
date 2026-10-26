@@ -67,18 +67,11 @@ function claudeTeamSignedInProvider(st) {
 }
 
 async function addClaudeTeamAccount(organizationId, event) {
-  const reveal = scrollOnPurpose(event, 3000);
+  scrollOnPurpose(event, 3000);
   editing = null; draft = null; adding = false;
   await closeModal();
   editing = "claude-team-" + organizationId;
   await startSignIn("claude", false, undefined, { organizationId });
-  // Returning from Team settings opens a fresh provider editor. A large
-  // account list must not leave the requested sign-in below its viewport.
-  if (reveal) {
-    const box = $("#modal .signing");
-    box?.scrollIntoView({ block: "center" });
-    box?.querySelector("button.primary")?.focus({ preventScroll: true });
-  }
 }
 
 function renderTeamAccounts(a, p) {
@@ -89,7 +82,9 @@ function renderTeamAccounts(a, p) {
     try {
       const team = await api("claude-team/members?organizationId=" + encodeURIComponent(p.teamOrganization));
       if (!list.isConnected) return;
-      p = {...p, team}; drawTeamAccounts(list, p);
+      if (JSON.stringify(team) !== JSON.stringify(p.team)) {
+        p = {...p, team}; drawTeamAccounts(list, p);
+      }
     } catch { /* Keep the last snapshot; a failed read is not an empty pool. */ }
     if (list.isConnected) setTimeout(poll, p.team?.members?.some(m => m.quotaPending) ? 1500 : 10000);
   };
@@ -98,12 +93,15 @@ function renderTeamAccounts(a, p) {
 }
 
 function drawTeamAccounts(list, p) {
-  list.replaceChildren();
+  // Polls update member rows without removing the sign-in's focused controls.
+  const flow = list.querySelector(":scope > .signing");
+  for (const child of [...list.children]) if (child !== flow) child.remove();
+  const rows = document.createDocumentFragment();
   const settings = el("button", "text", "Claude Team");
   settings.onclick = async () => { editing = null; draft = null; await closeModal(); openClaudeTeam(p.teamOrganization); };
-  list.append(settings);
-  if (p.team) list.append(el("div", "hint", t("Seats in use: {used}/{total}", { used: p.team.inUse, total: p.team.seats })));
-  list.append(el("p", "hint", t("Cached usage; refreshed when a seat is assigned")));
+  rows.append(settings);
+  if (p.team) rows.append(el("div", "hint", t("Seats in use: {used}/{total}", { used: p.team.inUse, total: p.team.seats })));
+  rows.append(el("p", "hint", t("Cached usage; refreshed when a seat is assigned")));
   for (const m of (p.team?.members || []).filter((m) => m.selected)) {
     const row = el("div", "acc with-aq"), dot = el("span", "dot tick fixed");
     if (m.on) dot.append(svg(CHECK, 10, 2.2));
@@ -114,15 +112,20 @@ function drawTeamAccounts(list, p) {
     const quota = accountQuota({ [m.user]: q }, m.user);
     if (m.quotaError || m.quotaPending) quota.append(el("span", "aq-asof", t(m.quotaPending ? "Collecting usage…" : m.quotaError)));
     row.append(quota);
-    list.append(row);
+    rows.append(row);
   }
-  if (signing?.agent === "claude" && signing.organizationId === p.teamOrganization) list.append(renderSigning(subOf("claude")));
+  if (signing?.agent === "claude" && signing.organizationId === p.teamOrganization) {
+    if (!flow) list.prepend(renderSigning(subOf("claude")));
+    list.append(rows);
+  }
   else {
+    flow?.remove();
     const add = el("button", "acc add team-add-account");
     const dot = el("span", "dot"); dot.append(svg(PLUS, 10, 1.8));
     add.append(dot, el("span", "n", t("Add another {name} account", { name: "Claude" })));
     add.onclick = (event) => addClaudeTeamAccount(p.teamOrganization, event);
-    list.append(add);
+    rows.append(add);
+    list.append(rows);
   }
 }
 

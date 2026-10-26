@@ -209,9 +209,13 @@ for (const [engine, runtime] of engines) {
       assert.equal(api.reads, reads, "Enter didn't refresh the font list");
       // a pointer that moves still takes an item's focus
       await page.locator("#uiFontRow .font-family").click();
+      await page.evaluate(async () => {
+        await Promise.all(document.querySelector(".font-menu").getAnimations({subtree:true}).map(a => a.finished.catch(() => {})));
+      });
       const item = page.locator(".font-menu .pm-item").nth(2);
       const box = await item.boundingBox();
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 1);
+      await page.waitForFunction(e => e === document.activeElement, await item.elementHandle());
       assert.equal(await item.evaluate(e => e === document.activeElement), true, "a moved pointer focuses the item it's on");
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }

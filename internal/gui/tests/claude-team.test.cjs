@@ -109,6 +109,7 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       const page=await(await browser.newContext({viewport:{width:1000,height:850},reducedMotion:"reduce"})).newPage();
       page.setDefaultTimeout(7000);
       const words=strings().I18N[lang]||{}, tr=s=>words[s]||s, f=fixture(lang), errors=[];
+      f.views.get(org).members[0].quotaPending=true;
       page.on("pageerror",e=>errors.push(e.message));
       await page.route("**/*",f.route);
       await page.goto("http://magpie.test/?view=providers&edit=claude-team-"+org);
@@ -117,6 +118,10 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       await page.getByRole("button",{name:tr("Sign in anyway"),exact:true}).click();
       await page.locator(".signing .signlink").waitFor();
       assert.deepEqual(f.starts,[{agent:"claude",organizationId:org}]);
+      const signLink=await page.locator(".signing .signlink").elementHandle();
+      f.views.get(org).members[0].windows=[{name:"5 hours",used:88}];
+      await native.locator(".team-accts .acc").first().locator(".aq b").filter({hasText:"88%"}).waitFor();
+      assert(await signLink.evaluate(e=>e.isConnected),"member refresh replaced the active sign-in");
       f.signing.state="failed"; f.signing.error="fixture failure";
       await page.getByRole("button",{name:tr("Try again"),exact:true}).click();
       await page.locator(".signing .signlink").waitFor();

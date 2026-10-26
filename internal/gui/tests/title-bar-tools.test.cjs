@@ -91,11 +91,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         page.setDefaultTimeout(5000);
         const errors = [];
         let on = "";
-        // going from page to page cancels the reads still on their way, and
-        // WebKit reports each one as a page error, "Fetch API cannot load …
-        // due to access control checks" (#1350, #1307): not this test's
         page.on("pageerror", (e) => {
-          if (engine === "webkit" && /^Fetch API cannot load .* due to access control checks/.test(e.message)) return;
           errors.push(`${width}px ${on}: ${e.stack}`);
         });
         await page.route("**/*", serve(lang));
@@ -146,6 +142,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           // where the tools have their icons alone, nothing more of them
           // can give way: the title shows whole wherever it fits beside them
           if (width >= 650) assert(!title.cut, `the title is cut at ${at}`);
+          // Finish this document's startup reads before navigating away.
+          await page.waitForLoadState("networkidle");
         }
         assert.deepEqual(errors, []);
         await context.close();
