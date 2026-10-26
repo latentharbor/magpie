@@ -111,7 +111,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          # Use the same macOS image as the arm64 release build. The floating
+          # label has remained queued while this image builds successfully.
+          - os: macos-latest
+            runner: macos-15
+    runs-on: ${{ matrix.runner || matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
