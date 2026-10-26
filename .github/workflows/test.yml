@@ -44,11 +44,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: .github/ui-preview/package-lock.json
       - name: Install pinned browser fixtures
         run: |
-          npm ci --prefix .github/ui-preview
+          # package.json pins Playwright, whose core dependency uses that exact
+          # same version. This upstream helper has no checked-in npm lockfile.
+          npm install --ignore-scripts --no-package-lock --prefix .github/ui-preview
           .github/ui-preview/node_modules/.bin/playwright install --with-deps chromium webkit
           sudo apt-get install --no-install-recommends -y fonts-noto-cjk
       # Normal pushes cover the reported failures and affected shared UI.
