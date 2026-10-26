@@ -92,7 +92,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
               const r = x.getBoundingClientRect(), c = getComputedStyle(x);
               nodes.push({tag:x.tagName,cls:x.className,top:r.top,height:r.height,scroll:x.scrollTop,transform:c.transform});
             }
-            return nodes;
+            return {nodes,parts:[...e.closest(".mname").querySelectorAll("*")].map(x => { const r=x.getBoundingClientRect(); return {tag:x.tagName,cls:x.className,top:r.top,left:r.left,width:r.width,height:r.height,hidden:x.hidden}; })};
           };
           for (const type of ["pointerdown", "mousedown", "focusin", "pointerup", "click", "change", "scroll"])
             e.closest(".editor").addEventListener(type, event => window.__levelClicks.push({type,tag:event.target.tagName,checked:e.checked,y:event.clientY,geometry:geometry(),active:document.activeElement?.outerHTML.slice(0,300)}),true);
