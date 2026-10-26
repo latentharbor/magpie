@@ -13,8 +13,10 @@
 //
 // A process of its own, not linked in: 1.7 GB the gateway would otherwise
 // hold for good, and a GPU driver's crash that would end the gateway with
-// it. One that dies is started again; one that dies on the GPU is started
-// on the CPU for the rest of magpie's run.
+// it. One that dies is started again; one that dies on the GPU, or doesn't
+// load there in gpuLoadTimeout, is started on the CPU for the rest of
+// magpie's run. One that keeps failing holds requests back at once, not
+// after a load each, until it is tried again (retryAfter).
 package pii
 
 import (
@@ -126,6 +128,10 @@ type Status struct {
 	GPUError string `json:"gpuError,omitempty"`
 	// why the last request got no answer
 	Failed string `json:"failed,omitempty"`
+	// pf-serve is loading the model, and how many requests wait for it
+	// (or for the one it is on)
+	Loading bool `json:"loading,omitempty"`
+	Waiting int  `json:"waiting,omitempty"`
 }
 
 // Now is the model's status.
@@ -139,11 +145,12 @@ func Now() Status {
 	if srv.h != nil {
 		s.Running, s.Device, s.GPU, s.LoadMS, s.GPUError = true, srv.h.hello.Device, srv.h.hello.GPU, srv.h.hello.MS, srv.h.hello.GPUError
 	}
-	s.Failed = srv.failed
+	s.Failed, s.Loading = srv.failed, srv.loading
 	if s.GPUError == "" {
 		s.GPUError = srv.gpuLost
 	}
 	srv.mu.Unlock()
+	s.Waiting = int(waiting.Load())
 	return s
 }
 

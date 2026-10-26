@@ -92,12 +92,13 @@ func proxied() http.RoundTripper {
 func Latest(ctx context.Context) (*Release, error) { return LatestIn(ctx, "") }
 
 // LatestIn asks the feed for the newest release, its notes in lang (see
-// InLang): the app's language, which What's new follows.
+// InLang): the app's language, which What's new follows. On Settings'
+// Stable channel it is Stable's release (see Stable).
 func LatestIn(ctx context.Context, lang string) (*Release, error) {
 	if distributionTrust != "" || Feed() == releaseHome+"/latest/download/latest.json" {
 		return latestDistribution(ctx, lang)
 	}
-	req, err := http.NewRequestWithContext(ctx, "GET", withLang(Feed(), lang), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", withChannel(withLang(Feed(), lang)), nil)
 	if err != nil {
 		return nil, err
 	}

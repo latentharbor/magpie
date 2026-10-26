@@ -1224,6 +1224,10 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		if _, sent := fields["noAutoDownload"]; !sent {
 			in.NoAutoDownload = cur.NoAutoDownload
 		}
+		// nor the update channel (ssharpcc on X)
+		if _, sent := fields["updateChannel"]; !sent {
+			in.UpdateChannel = cur.UpdateChannel
+		}
 		// nor whether the masked words match in any case
 		if _, sent := fields["redactWordsAnyCase"]; !sent {
 			in.RedactWordsAnyCase = cur.RedactWordsAnyCase
@@ -1392,6 +1396,13 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		// tried again through it, not in six hours (#294), and marked so
 		// before this answers: the page stops asking on the old error
 		if strings.TrimSpace(in.Proxy) != strings.TrimSpace(cur.Proxy) && updates.json().State == "error" && updates.begin() {
+			go updates.run()
+		}
+		// another update channel: the feed is asked again on it, so the
+		// version row and the header's Update follow (a download from
+		// every version is dropped on Stable, run), unless automatic
+		// updates are off and nothing was found
+		if in.UpdateChannel != cur.UpdateChannel && (!in.NoAutoUpdate || updates.json().Latest != "") && updates.begin() {
 			go updates.run()
 		}
 		writeJSON(rw, settingsState())
@@ -1700,7 +1711,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 			return
 		}
 		v := strings.TrimSpace(in.Model)
-		if v != "" {
+		if v != "" && v != settings.CodexAutoReviewSession {
 			// Resolve intentionally accepts arbitrary names under a known
 			// provider. An approval reviewer must be a model or group magpie
 			// actually lists, including providers kept unlisted for routing.

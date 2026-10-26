@@ -592,10 +592,11 @@ const noReasoning = " "
 // reasoning_content one: the thinking it sent back in another field
 // (reasoning, reasoning_details), else noReasoning. DeepSeek turns away a
 // reply after a tool result with none as it does a call (checked against
-// api.deepseek.com on 2026-10-12, #1822). A message with reasoning_content
-// of its own keeps it, any other reply is left as it is (DeepSeek doesn't
-// ask for its thinking), and a body with no tool calls comes back byte for
-// byte.
+// api.deepseek.com on 2026-10-12, #1822). Thinking taken from reasoning
+// goes in reasoning_content alone (asReasoningContent). A message with
+// reasoning_content of its own keeps it, any other reply is left as it is
+// (DeepSeek doesn't ask for its thinking), and a body with no tool calls
+// comes back byte for byte.
 func withReasoningOnToolTurns(body []byte) []byte {
 	afterTool := false
 	return editMessages(body, []string{"tool_calls"}, func(m map[string]json.RawMessage) bool {
@@ -622,9 +623,22 @@ func withReasoningOnToolTurns(body []byte) []byte {
 		if think == "" {
 			think = noReasoning
 		}
-		m["reasoning_content"], _ = marshalPlain(think)
+		asReasoningContent(m, think)
 		return true
 	})
+}
+
+// asReasoningContent puts think in a message's reasoning_content and
+// leaves its reasoning out: a server that reads the two as one field (a
+// self-hosted DeepSeek, as pi sends its thinking back in reasoning) turns
+// a message with both away as "duplicate field reasoning", so the thinking
+// goes once. reasoning_details stays: it is a list of typed entries, not
+// another name for the text, and can hold what the text can't (an
+// encrypted entry, a signature); an upstream that refuses it has it taken
+// out (reasoningDetailsAsContent, withoutMessageReasoning).
+func asReasoningContent(m map[string]json.RawMessage, think string) {
+	m["reasoning_content"], _ = marshalPlain(think)
+	delete(m, "reasoning")
 }
 
 // silentAssistantsOut is withoutSilentAssistants for a Chat request
@@ -747,7 +761,7 @@ func reasoningDetailsAsContent(body []byte) []byte {
 		var own string
 		if decodeJSON(m["reasoning_content"], &own) != nil || own == "" {
 			if think := reasoningText(m); think != "" {
-				m["reasoning_content"], _ = marshalPlain(think)
+				asReasoningContent(m, think)
 			}
 		}
 		delete(m, "reasoning_details")

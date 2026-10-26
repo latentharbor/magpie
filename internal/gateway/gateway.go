@@ -432,6 +432,9 @@ type Server struct {
 	// answered on, by caller (codexMemoryStandIn)
 	codexTurns    sync.Map
 	claudeAnchors claudeanchor.Store[claudeThreadOwner]
+	// codexLeads is the model each Codex conversation's own turns last
+	// went on, for its side calls to follow (codexFollowTo)
+	codexLeads codexLeads
 	// the listener, swapped when the gateway is shared on the network or
 	// taken off it (see Relisten)
 	lnMu sync.Mutex
@@ -1380,7 +1383,7 @@ func (s *Server) countTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	// Count the same masked prompt that generation sends to the vendor.
 	plain := body
-	w, body, unmask, err := redacted(w, body)
+	w, body, unmask, err := redacted(r.Context(), w, body)
 	defer unmask()
 	if err != nil {
 		writeError(w, provider.Anthropic, maskStatus(err), err.Error())
@@ -1580,19 +1583,19 @@ func (s *Server) handle(from provider.Protocol) http.HandlerFunc {
 		// Codex with magpie as its provider asks for a thread's title
 		// here (#743)
 		if from == provider.Responses {
-			if to := codexTitlesTo(r.Header, body, true); to != "" {
+			if to := codexTitlesTo(r.Header, body, true, nil); to != "" {
 				s.codexTitle(w, r, body, to)
 				return
 			}
-			if to := codexDescriptionsTo(r.Header, body, true); to != "" {
+			if to := codexDescriptionsTo(r.Header, body, true, nil); to != "" {
 				s.codexDescription(w, r, body, to)
 				return
 			}
-			if to := codexSummariesTo(r.Header, body, true); to != "" {
+			if to := codexSummariesTo(r.Header, body, true, nil); to != "" {
 				s.codexSummary(w, r, body, to)
 				return
 			}
-			if to := codexPredictionsTo(r.Header, body, true); to != "" {
+			if to := codexPredictionsTo(r.Header, body, true, nil); to != "" {
 				s.codexPrediction(w, r, body, to)
 				return
 			}
@@ -1720,7 +1723,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	// unmasked (unredactedRoute)
 	plain := body
 	var masked []byte // the masked body, when plain goes instead
-	w, body, unmask, maskedHits, err := redactedHits(w, body)
+	w, body, unmask, maskedHits, err := redactedHits(r.Context(), w, body)
 	defer unmask()
 	if err != nil { // fails closed: never sent unmasked
 		log.Printf("gateway: %v", err)
@@ -2044,6 +2047,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	ask := s.askClassifier
 	if r.Header.Get("User-Agent") == RouterAgent {
 		ask = nil
+	} else {
+		// a wait magpie knows of, before a route is begun (unrouted.go)
+		ask = askWaited(r.Context(), ask)
 	}
 	if isGroup && slices.ContainsFunc(ms, func(m provider.Member) bool {
 		return g.Ruled() || slices.ContainsFunc(m.Via, provider.Group.Ruled)
@@ -2490,11 +2496,15 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		watched.routeID = tr.ID
 	}
 	// what masking swapped, recorded for Settings → Privacy, unless the
-	// request went as written
+	// request went as written. The record names the provider and model
+	// the last try went to, not the group's first member, which a
+	// failover may never have reached
 	if masked == nil {
-		if m := noteMasked(r, "chat", maskedHits, string(body), tr.ID, p.ID, call.Model); m != nil {
+		m, done := noteMaskedUntil(r, "chat", maskedHits, string(body), tr.ID, p.ID, call.Model)
+		if m != nil {
 			s.trace.update(tr, func(t *Route) { t.Masked = m })
 		}
+		defer func() { done(call.Provider, model) }()
 	}
 	// the card's text is the masked body, even where the request went
 	// unmasked
@@ -2871,6 +2881,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			// reconnects are told so again, not sent on to a vendor that
 			// just refused it
 			held, call.Status, call.Error = true, http.StatusForbidden, said
+			noteMember(hw, r, c.p, c.model)
 			writeError(hw, from, call.Status, said)
 		} else if rested, back, ok := quotaHeld(cands[i:]); ok && last {
 			// it rests out of its allowance, and so does every key that
@@ -2881,6 +2892,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			// told to ask then rather than at once
 			msg := fmt.Sprintf("%s (out of its allowance: not asked again before %s)", rested.said, heldClock(back, time.Now()))
 			held, heldBack, call.Status, call.Error = true, back, rested.Status, c.p.Name+": "+msg
+			// the answer names who held it, as one asked would: a magpie
+			// using this one rests that model of it alone (remoteModelRest)
+			noteMember(hw, r, c.p, c.model)
 			writeError(hw, from, call.Status, msg)
 		} else {
 			// a stream that fails before anything is said is let go at
@@ -3787,8 +3801,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			// a compaction a rule sent to a model of its own isn't a turn of
 			// the conversation: it leaves the stick where it was when it
 			// answers (below), and breaking off mid-reply forgets nothing
-			// either (#776's follow-up)
-			if hit == nil || !hit.Compact {
+			// either (#776's follow-up). A conversation kept strictly
+			// forgets nothing: it never moves, so the retry goes back to
+			// the one it is on, its failure the agent's, as any other's
+			// there is (imwhatiam123 on Discord: Stays: Strict moved a
+			// session from Qoder CN to WorkBuddy AI after a reply broke
+			// off, the stick gone and the retry routed as a new one)
+			if (hit == nil || !hit.Compact) && aff.Why != "strict" {
 				unanswered(stuck, c)
 			}
 			if hw.looped != "" {
@@ -6474,17 +6493,23 @@ func upstreamPath(p provider.Provider, proto provider.Protocol, model string) st
 // Only the allowlist contracts below promise a required callable function:
 // other protocols have server, custom and MCP tools the IR cannot render.
 func parse(proto provider.Protocol, body []byte) (*Request, error) {
+	return parseIn(proto, body, false)
+}
+
+// parseIn is parse, for facts only as readResponses, readChat and
+// readAnthropic say.
+func parseIn(proto provider.Protocol, body []byte, facts bool) (*Request, error) {
 	var req *Request
 	var err error
 	switch proto {
 	case provider.Chat:
-		req, err = parseChat(body)
+		req, err = readChat(body, facts)
 	case provider.Responses:
-		req, err = parseResponses(body)
+		req, err = readResponses(body, facts)
 	case provider.Gemini:
 		req, err = parseGemini(body)
 	default:
-		req, err = parseAnthropic(body)
+		req, err = readAnthropic(body, false, facts)
 	}
 	if err != nil {
 		return nil, err

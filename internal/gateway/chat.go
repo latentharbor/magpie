@@ -73,11 +73,22 @@ type cRequest struct {
 	AccessPrograms json.RawMessage `json:"access_programs,omitempty"`
 }
 
-func parseChat(body []byte) (*Request, error) {
+func parseChat(body []byte) (*Request, error) { return readChat(body, false) }
+
+// readChat is parseChat; for facts (readFacts) it leaves out what they
+// never read, as readResponses does: the assistant's words and calls, the
+// tools' outputs, and the copies of raw values a parse kept would need. A
+// plugin's request is read for its work folder on every try (tellWorkPlace),
+// and a long conversation's history was most of what that allocated (#3472).
+func readChat(body []byte, facts bool) (*Request, error) {
+	decode := decodeJSON
+	if facts {
+		decode = decodeJSONView
+	}
 	body = liftMessageTools(body) // a request handle didn't see (#2322)
 	body = shapeChatTools(body)   // and its tools in another API's shape (#2622)
 	var c cRequest
-	if err := decodeJSON(body, &c); err != nil {
+	if err := decode(body, &c); err != nil {
 		return nil, fmt.Errorf("invalid request: %v", err)
 	}
 	r := &Request{Model: c.Model, MaxTokens: c.MaxCompletionTokens, Temp: c.Temperature, TopP: c.TopP,
@@ -104,6 +115,10 @@ func parseChat(body []byte) (*Request, error) {
 		case "user":
 			r.Messages = append(r.Messages, Message{Role: "user", Parts: chatParts(m.Content)})
 		case "assistant":
+			if facts {
+				r.Messages = append(r.Messages, Message{Role: "assistant"})
+				continue
+			}
 			msg := Message{Role: "assistant"}
 			// an earlier turn's thinking comes back in any of
 			// messageReasoning's spellings, and every upstream that
@@ -122,6 +137,10 @@ func parseChat(body []byte) (*Request, error) {
 			}
 			r.Messages = append(r.Messages, msg)
 		case "tool":
+			if facts {
+				r.Messages = append(r.Messages, Message{Role: "user", Parts: []Part{{Kind: ToolResult, CallID: m.ToolCallID}}})
+				continue
+			}
 			out, images := toolOutput(m.Content)
 			r.Messages = append(r.Messages, Message{Role: "user", Parts: []Part{{Kind: ToolResult, CallID: m.ToolCallID, Text: out, Images: images}}})
 		}
@@ -167,7 +186,8 @@ func chatParts(raw json.RawMessage) []Part {
 		Type     string `json:"type"`
 		Text     string `json:"text"`
 		ImageURL struct {
-			URL string `json:"url"`
+			URL    string `json:"url"`
+			Detail string `json:"detail"`
 		} `json:"image_url"`
 		File struct {
 			FileData string `json:"file_data"`
@@ -182,7 +202,9 @@ func chatParts(raw json.RawMessage) []Part {
 		case "text":
 			out = append(out, Part{Kind: Text, Text: it.Text})
 		case "image_url":
-			out = append(out, imagePart(it.ImageURL.URL))
+			im := imagePart(it.ImageURL.URL)
+			im.Detail = it.ImageURL.Detail
+			out = append(out, im)
 		case "file":
 			if p, ok := chatFile(it.File.FileData, it.File.FileID, it.File.Filename); ok {
 				out = append(out, p)
@@ -223,6 +245,38 @@ func imagePart(u string) Part {
 		}
 	}
 	return Part{Kind: Image, URL: u}
+}
+
+// chatImage is an image as a Chat Completions image_url, with the detail
+// the client asked for: Chat takes low, high and auto as they are, and
+// Responses' original, which Chat lacks, is high, the closest it has.
+func chatImage(p Part) map[string]any {
+	u := map[string]any{"url": dataURL(p)}
+	if d := chatDetail(p.Detail); d != "" {
+		u["detail"] = d
+	}
+	return map[string]any{"type": "image_url", "image_url": u}
+}
+
+// chatDetail is detail as Chat Completions takes it, or "" for none.
+func chatDetail(detail string) string {
+	switch d := strings.ToLower(strings.TrimSpace(detail)); d {
+	case "low", "high", "auto":
+		return d
+	case "original":
+		return "high"
+	}
+	return ""
+}
+
+// responsesDetail is detail as a Responses input_image takes it: the
+// client's own when the API knows it, else auto.
+func responsesDetail(detail string) string {
+	switch d := strings.ToLower(strings.TrimSpace(detail)); d {
+	case "low", "high", "auto", "original":
+		return d
+	}
+	return "auto"
 }
 
 func dataURL(p Part) string {
@@ -298,7 +352,7 @@ func buildChat(r *Request, model, host string, rejectTemp bool) []byte {
 		}
 		seen = append(seen, map[string]any{"type": "text", "text": "[From the result of " + of + ":]"})
 		for _, im := range p.Images {
-			seen = append(seen, map[string]any{"type": "image_url", "image_url": map[string]any{"url": dataURL(im)}})
+			seen = append(seen, chatImage(im))
 		}
 	}
 	showSeen := func() {
@@ -420,7 +474,7 @@ func buildChat(r *Request, model, host string, rejectTemp bool) []byte {
 				content = append(content, map[string]any{"type": "text", "text": attachmentText(p)})
 			case Image:
 				plain = false
-				content = append(content, map[string]any{"type": "image_url", "image_url": map[string]any{"url": dataURL(p)}})
+				content = append(content, chatImage(p))
 			case ToolResult:
 				out := p.Text
 				if n := len(p.Images); n > 0 {
