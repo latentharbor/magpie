@@ -110,6 +110,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await status("bare").getAttribute("title"), w.tip + "\n" + w.again);
         assert.equal(await status("bare").getAttribute("aria-expanded"), null);
 
+        // Capture the click baseline after page entry and font layout settle.
+        await page.evaluate(async () => {
+          await document.fonts.ready;
+          await Promise.all(document.getAnimations().filter(a => a.effect.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => {})));
+        });
         // scrolled a little first, by the wheel as the reader would
         await page.mouse.move(Math.min(490, width / 2), 250);
         await page.mouse.wheel(0, 30);

@@ -45,6 +45,9 @@ A primary pointer press ends the wheel's coasting window before native
 focus can scroll the pressed control; the click then holds that place.
 Framed dialogs reserve their scrollbar width on both macOS and other
 platforms, preventing WebKit from sizing the field grid beneath the bar.
+Menu hover focus follows changes in pointer coordinates during mousemove,
+independent of platform-specific mouseenter ordering. Redrawing a search
+under a stationary pointer keeps focus in its search field.
 `session-identity.test.cjs` and `settings-lines-wrap.test.cjs`
 cover readable labels and controls remaining within their cells.
 

@@ -144,7 +144,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           await pill.waitFor({ state: "visible" });
           if (tight) {
             // the header as fitTop leaves it when the tabs don't fit (#442)
-            await page.evaluate(() => { topFit.disconnect(); document.querySelector(".top").classList.add("tight"); });
+            await page.evaluate(async () => {
+              await document.fonts.ready;
+              topFit.disconnect(); cancelAnimationFrame(topFitFrame); topFitFrame = 0;
+              document.querySelector(".top").classList.add("tight");
+            });
             assert.equal(await pill.locator("span").evaluate((e) => getComputedStyle(e).display), "none", "the pill is its round arrow");
           }
           await pill.hover();

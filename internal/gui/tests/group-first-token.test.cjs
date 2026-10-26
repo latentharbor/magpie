@@ -11,6 +11,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { reach: readerReach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const models = [
@@ -90,14 +91,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // at 420 the editor runs past the window's foot, and WebKit doesn't
       // scroll the page's own scroller to a click: wheel it into view
       const reach = async (loc) => {
-        await loc.waitFor();
-        await page.mouse.move(width / 2, 600);
-        for (let i = 0; i < 30; i++) {
-          const b = await loc.boundingBox();
-          if (b && b.y >= 0 && b.y + b.height <= 2000) return loc;
-          await page.mouse.wheel(0, b && b.y < 0 ? -400 : 400);
-          await page.waitForTimeout(50);
-        }
+        await readerReach(page, loc);
         return loc;
       };
       const save = async () => {

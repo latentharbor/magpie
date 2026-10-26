@@ -114,21 +114,28 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // the open's morph over, so each frame's box is the dialog's own
         await page.waitForFunction(() => document.querySelector("#modal .dialog").getAnimations().length === 0);
         const before = await gaps(page);
-        // each frame's gaps, from the README's arrival until the dialog settles
-        const frames = page.evaluate(() => new Promise((done) => {
+        // Sample the actual height animation at fixed times. A busy runner
+        // can skip most of its early frames; frame count isn't duration.
+        const frames = page.evaluate(async () => {
           const m = document.querySelector("#modal"), c = getComputedStyle(m), d = m.querySelector(".dialog"), out = [];
-          const step = () => {
-            if (d.querySelector(".pm-md")) {
-              const a = m.getBoundingClientRect(), b = d.getBoundingClientRect();
-              out.push({ top: b.top - a.top - parseFloat(c.paddingTop), bottom: a.bottom - parseFloat(c.paddingBottom) - b.bottom, height: b.height });
-              if (out.length > 3 && !d.getAnimations().length) return done(out);
-            }
-            requestAnimationFrame(step);
-          };
-          step();
-        }));
+          const frame = () => new Promise(requestAnimationFrame);
+          for (let i = 0; !d.querySelector(".pm-md") && i < 120; i++) await frame();
+          const grow = d.getAnimations().find(a => a.effect.getKeyframes().some(k => "height" in k));
+          if (!grow) throw new Error("README did not start a dialog height animation");
+          grow.pause();
+          const duration = grow.effect.getTiming().duration;
+          for (const fraction of [0, .025, .05, .075, .1, .15, .2, .3, 1]) {
+            grow.currentTime = duration * fraction;
+            await frame(); await frame();
+            const a = m.getBoundingClientRect(), b = d.getBoundingClientRect();
+            out.push({ top: b.top - a.top - parseFloat(c.paddingTop), bottom: a.bottom - parseFloat(c.paddingBottom) - b.bottom, height: b.height });
+          }
+          grow.finish();
+          return { seen: out, duration };
+        });
         release({ readme: readme(height > 600 ? 12 : 60), updated: "2026-09-01T00:00:00Z" });
-        const seen = await frames;
+        const { seen, duration } = await frames;
+        assert(duration >= 300, "README growth has a visible duration");
         const end = seen.at(-1);
         assert(end.height > before.height + 40, `grew: ${JSON.stringify({ before, end })}`);
         // drawn at heights between the two, not the skeleton's then the README's
