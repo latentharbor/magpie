@@ -551,6 +551,8 @@ body.mac :is(.view, .modal .dialog, .modal .editor.framed > .ebody, .heat-scroll
    and scrolled sideways; the bar's room is always kept, out of the right
    padding, so the fields end where they did */
 body.mac .modal .editor.framed > .ebody { overflow-y: scroll; padding-right: 10px; }
+/* Non-overlay WebKit has the same grid sizing issue with its 10px bar. */
+body:not(.mac) .modal .editor.framed > .ebody { overflow-y: scroll; padding-right: 8px; }
 /* Usage and Routing keep their bar's room too, whether the page runs past
    the window or not. Their square-celled grids (the year heatmap, Sessions'
    calendar, the context waffle) grow taller as they grow wider, so near the
