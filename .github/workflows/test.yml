@@ -31,10 +31,11 @@ jobs:
       fail-fast: false
       matrix:
         browser: [chromium, webkit]
-        shard: ${{ fromJSON(inputs.full_ui && '[0,1,2,3]' || '[0]') }}
+        shard: ${{ fromJSON(inputs.full_ui && '[0,1,2,3,4,5,6,7]' || '[0]') }}
     env:
       BROWSER: ${{ matrix.browser }}
       UI_SHARD: ${{ matrix.shard }}
+      UI_SHARDS: 8
       FULL_UI: ${{ inputs.full_ui || false }}
       NODE_PATH: ${{ github.workspace }}/.github/ui-preview/node_modules
     steps:
@@ -83,7 +84,7 @@ jobs:
           ].map(name => name + ".test.cjs");
           const files = process.env.FULL_UI === "true"
             ? readdirSync(dir).filter(f => f.endsWith(".test.cjs")).sort()
-                .filter((_, i) => i % 4 === Number(process.env.UI_SHARD))
+                .filter((_, i) => i % Number(process.env.UI_SHARDS) === Number(process.env.UI_SHARD))
             : regressions;
           if (!files.length) throw new Error("No browser tests selected");
           console.log(`Running ${files.length} files in ${process.env.BROWSER}`);
