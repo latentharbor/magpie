@@ -99,7 +99,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // A neighboring preference save keeps HTTP selected.
       await reveal(page, page.locator("#loopGuardRow"), width);
       await page.locator("#loopGuardRow .segs button").first().click();
-      await page.waitForFunction(() => document.querySelector("#loopGuardRow .segs button")?.getAttribute("aria-pressed") === "true");
+      // The segment paints immediately; its save redraws the settings later.
+      // Reach the transport control only after that redraw, otherwise the
+      // pending save can replace and move its anchor while the menu opens.
+      await page.waitForFunction(() => prefsQueued === 0 && document.querySelector("#loopGuardRow .segs button")?.getAttribute("aria-pressed") === "true");
       assert.equal(saved.at(-1).claudeTransport, "http");
       await reveal(page, row, width);
       await page.locator("#claudeTransportPick").click();

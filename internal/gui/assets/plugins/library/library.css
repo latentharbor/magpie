@@ -486,6 +486,10 @@ input.lib-setname:focus { border-color: var(--accent); box-shadow: 0 0 0 3px col
 .lib-srvwho > .name { min-width: 0; }
 .lib-srvwho > .lib-health { justify-self: start; max-width: min(220px, 100%); }
 .lib-srvwho > :not(.name):not(.lib-health) { grid-column: 1 / -1; }
+@media (max-width: 600px) {
+  .lib-srvwho { grid-template-columns: minmax(0, 1fr); }
+  .lib-srvwho > .lib-health { margin-left: 0; }
+}
 .lib-health { display: inline-flex; flex: 0 1 auto; min-width: 0; align-items: center; gap: 5px; max-width: 220px; height: 17px; margin-left: 7px; padding: 0 6px; border-radius: 6px;
   font: var(--ui-style, normal) 400 11px var(--ui-font, var(--font)); font-stretch: var(--ui-stretch, 100%); color: var(--muted); white-space: nowrap; transition: background .14s var(--ease); }
 .lib-health > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

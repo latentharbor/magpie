@@ -4,7 +4,7 @@ const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
 const { fixture, confirmKeyAction } = require("./fixtures/caller-keys.cjs");
-const { openPart } = require("./reader.cjs");
+const { openPart, scrollSettled } = require("./reader.cjs");
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
   for (const lang of ["en", "zh"]) {
@@ -134,6 +134,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await confirmKeyAction(page, tablet, w.remove);
       await page.waitForFunction(() => document.querySelectorAll("#gatewayKeys .acc[data-key]").length === 4);
       await page.setViewportSize({ width: 560, height: 740 });
+      await scrollSettled(page);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
       assert.deepEqual(errors, []);
       if (process.env.ARTIFACT_DIR) {

@@ -15,6 +15,8 @@ An MCP server's heading has a content-independent flex basis and stays at
 the top of its row when its tools expand. A wide tools list does not wrap
 the heading onto a new flex line; the click guard need not scroll the view
 to compensate for that movement.
+At narrow window widths its health badge takes its own line so translated
+sign-in status cannot be squeezed to a zero-width label.
 
 | Part | Responsibility | Source |
 | --- | --- | --- |

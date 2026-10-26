@@ -3625,7 +3625,7 @@ html.theming, html.theming *, html.theming *::before, html.theming *::after {
    between them scroll; both bars are the same height, their contents
    centred in it. */
 .modal .dialog { display: flex; flex-direction: column; }
-.modal .editor.framed { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 0; min-height: 0; overflow: clip; }
+.modal .editor.framed { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 0; min-height: 0; overflow: hidden; }
 .modal .editor.framed > .ebody {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   display: grid; grid-template-columns: inherit; gap: 10px 14px; align-items: start; padding: 14px 18px;
