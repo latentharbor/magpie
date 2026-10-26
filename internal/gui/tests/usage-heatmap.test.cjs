@@ -148,7 +148,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           const v = document.querySelector("#view-usage"), vr = v.getBoundingClientRect();
           return { over: s.scrollWidth > s.clientWidth + 1, left: s.scrollLeft, sw: s.scrollWidth, cw: s.clientWidth, lr: [last.left, last.right, r.left, r.right], inView: last.right <= r.right + 1 && last.left >= r.left - 1, inCard: r.left >= card.left && r.right <= card.right,
             page: document.documentElement.scrollWidth <= window.innerWidth + 1, view: v.scrollWidth <= v.clientWidth + 1,
-            overflow: [...v.querySelectorAll("*")].filter(e => !e.closest(".heat-scroll,.led-wrap") && e.getBoundingClientRect().right > vr.right + 1).slice(0,12).map(e => ({tag:e.tagName,id:e.id,cls:e.className,right:e.getBoundingClientRect().right,width:e.getBoundingClientRect().width})), viewWidths:[v.scrollWidth,v.clientWidth],
+            overflow: [...v.querySelectorAll("*")].filter(e => !e.closest(".heat-scroll,.led-wrap,.led-hscroll") && e.getBoundingClientRect().right > document.querySelector("#ledgerPane").getBoundingClientRect().right + 1).slice(0,12).map(e => ({tag:e.tagName,id:e.id,cls:e.className,right:e.getBoundingClientRect().right,width:e.getBoundingClientRect().width,text:e.textContent.slice(0,100)})), viewWidths:[v.scrollWidth,v.clientWidth],
             containers: ["#ledgerPane","#ledWrap","#ledHScroll","#ledHeat"].map(sel => { const e=document.querySelector(sel),r=e.getBoundingClientRect(); return {sel,left:r.left,right:r.right,width:r.width,sw:e.scrollWidth,cw:e.clientWidth,overflow:getComputedStyle(e).overflowX}; }) };
         });
         assert(sc.inView, "the newest day in sight: " + JSON.stringify(sc));
