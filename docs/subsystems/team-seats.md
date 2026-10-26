@@ -66,6 +66,13 @@ request IDs and edge correlation IDs are included. Diagnostics add no retries or
 assignment writes, and an administrator read failure preserves inference state.
 
 Each successful member snapshot enables only Premium accounts in the pool.
+Standard and other non-Premium seat types remain valid pool members but stay
+parked and are never transfer targets. They do not block other members'
+rotation. After a later snapshot reports Unassigned they become standby
+candidates automatically; their saved credentials and usage survive the change.
+Missing members still fail membership verification rather than being assumed
+Unassigned. The member view distinguishes another seat type from unverified
+membership and never labels either as ready.
 A controller-owned `teamOff` bit prevents discovery, the agent's current
 login and its stand-in fallback from resurrecting an unassigned member.
 These switches take effect without restarting Magpie or Claude Desktop.

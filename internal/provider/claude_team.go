@@ -490,9 +490,9 @@ func (t *claudeTeamController) save(ctx context.Context, c ClaudeTeamConfig) err
 func teamMembersPresent(c ClaudeTeamConfig, seats []claudeTeamSeat) error {
 	for _, id := range c.Members {
 		if !slices.ContainsFunc(seats, func(s claudeTeamSeat) bool {
-			return s.AccountID == id && (s.SeatTier == "team_tier_1" || s.SeatTier == "unassigned")
+			return s.AccountID == id && s.SeatTier != ""
 		}) {
-			return errors.New("a selected Claude Team member is missing or has another seat type")
+			return errors.New("a selected Claude Team member is missing from the organization")
 		}
 	}
 	return nil
@@ -1333,6 +1333,13 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 			m.State = "cooling"
 		} else if len(m.Limits) == 0 {
 			m.State = "unknown"
+		}
+		// Membership and eligibility are separate. Other seat tiers stay
+		// parked until an authoritative snapshot reports Unassigned.
+		if m.SeatTier == "" {
+			m.State = "unverified"
+		} else if m.SeatTier != "team_tier_1" && m.SeatTier != "unassigned" {
+			m.State = "other_seat"
 		}
 		if m.Selected && m.SeatTier == "team_tier_1" {
 			v.Seats++

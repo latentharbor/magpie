@@ -176,7 +176,7 @@ async function openClaudeTeam(organizationId = "") {
       const user = el("span", "team-user", m.user); user.title = m.user;
       label.append(box, user);
       const top = el("div", "team-member-head"); top.append(label);
-      const state = m.seatTier === "team_tier_1" ? "Premium" : m.seatTier === "unassigned" ? t("Unassigned") : t("Not verified");
+      const state = m.seatTier === "team_tier_1" ? "Premium" : m.seatTier === "unassigned" ? t("Unassigned") : m.seatTier ? t("Other seat tier") : t("Not verified");
       top.append(el("span", "team-seat", state)); row.append(top);
       const windows = el("div", "team-windows");
       for (const kind of ["five_hour", "seven_day"]) {
@@ -192,7 +192,7 @@ async function openClaudeTeam(organizationId = "") {
         windows.append(line);
       }
       row.append(windows);
-      const states = { signed_out: "Sign in again", cooling: "Cooling down", unknown: "Usage unknown", ready: "Ready" };
+      const states = { signed_out: "Sign in again", cooling: "Cooling down", unknown: "Usage unknown", ready: "Ready", other_seat: "Waiting for Unassigned", unverified: "Not verified" };
       const foot = el("div", "team-member-foot");
       if (m.windows?.some(w => w.estimated)) foot.append(el("span", "hint", t("Reset-based estimate; not refreshed from Claude")));
       if (states[m.state]) foot.append(el("span", "hint", t(states[m.state])));

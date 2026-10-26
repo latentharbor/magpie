@@ -133,6 +133,64 @@ func TestClaudeTeamNativeSwitchesAndSecret(t *testing.T) {
 	}
 }
 
+func TestClaudeTeamOtherSeatDoesNotBlockRotation(t *testing.T) {
+	for _, tier := range []string{"team_tier_0", "future_seat_tier"} {
+		t.Run(tier, func(t *testing.T) {
+			tm, f, c := teamFixture(t)
+			old := UsageClaudeVia(func(context.Context, string) (string, error) {
+				return "", errors.New("fixture quota unavailable")
+			})
+			t.Cleanup(func() { UsageClaudeVia(old) })
+			f.mu.Lock()
+			f.seats[2].SeatTier = tier
+			f.mu.Unlock()
+			if err := tm.save(context.Background(), c); err != nil {
+				t.Fatalf("valid organization member blocked configuration: %v", err)
+			}
+			for _, m := range tm.status().Members {
+				if m.AccountID == teamID(4) && (m.On || m.State != "other_seat" || m.SeatTier != tier) {
+					t.Fatalf("other seat was eligible or unverified: %+v", m)
+				}
+			}
+			tm.note("u2@example.com · Team", []ClaudeLimit{{Kind: "five_hour", Used: 1, ResetsAt: time.Now().Add(time.Hour).Unix()}})
+			if err := tm.reconcile(context.Background(), ""); err != nil {
+				t.Fatal(err)
+			}
+			f.mu.Lock()
+			writes := slices.Clone(f.writes)
+			parked := f.seats[2].SeatTier
+			f.mu.Unlock()
+			if !slices.Equal(writes, []string{teamID(2) + ":unassigned", teamID(3) + ":team_tier_1"}) || parked != tier {
+				t.Fatalf("rotation blocked or other subscription changed: %v, %s", writes, parked)
+			}
+			// An administrator later cancels this member's seat. The next
+			// snapshot must admit it to standby without signing in again.
+			f.mu.Lock()
+			f.seats[2].SeatTier = "unassigned"
+			f.mu.Unlock()
+			tm.note("u3@example.com · Team", []ClaudeLimit{{Kind: "five_hour", Used: 1, ResetsAt: time.Now().Add(time.Hour).Unix()}})
+			if err := tm.reconcile(context.Background(), ""); err != nil {
+				t.Fatal(err)
+			}
+			f.mu.Lock()
+			writes = slices.Clone(f.writes)
+			f.mu.Unlock()
+			if !slices.Equal(writes[2:], []string{teamID(3) + ":unassigned", teamID(4) + ":team_tier_1"}) {
+				t.Fatalf("newly unassigned member was not selected: %v", writes)
+			}
+		})
+	}
+}
+
+func TestClaudeTeamMissingMemberStillRejected(t *testing.T) {
+	c := ClaudeTeamConfig{Members: []string{teamID(2)}}
+	for _, seats := range [][]claudeTeamSeat{nil, {{teamID(2), ""}}, {{teamID(3), "unassigned"}}} {
+		if err := teamMembersPresent(c, seats); err == nil {
+			t.Fatalf("missing or unverified membership accepted: %v", seats)
+		}
+	}
+}
+
 func TestClaudeTeamDrainMultipleSeatsAndLostResponses(t *testing.T) {
 	tm, f, c := teamFixture(t)
 	for _, kind := range []string{"five_hour", "seven_day"} {

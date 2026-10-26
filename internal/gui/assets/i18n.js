@@ -4,6 +4,8 @@
 // works. {name} slots are filled by t(str, vars).
 const I18N = {
   zh: {
+    "Other seat tier": "其他坐席类型",
+    "Waiting for Unassigned": "等待取消坐席分配",
     "Choose model": "选择模型",
     "Search models…": "搜索模型…",
     "Routing group": "路由组",
@@ -4100,6 +4102,8 @@ const I18N = {
     "Sign in to at least two Claude accounts in this organization first": "請先登入此組織中的至少兩個 Claude 帳號",
     "Seats in use: {used}/{total}": "席位使用中：{used}/{total}",
     "Earliest reset: {time}": "最早重設：{time}",
+    "Other seat tier": "其他席位類型",
+    "Waiting for Unassigned": "等待取消席位分配",
     "Not verified": "未驗證",
     "Cooling down": "等待額度重設",
     "Usage unknown": "用量未知",
@@ -8127,6 +8131,8 @@ const I18N = {
     "Sign in to at least two Claude accounts in this organization first": "まずこの組織の Claude アカウントを2つ以上登録してください",
     "Seats in use: {used}/{total}": "使用中のシート：{used}/{total}",
     "Earliest reset: {time}": "最短のリセット：{time}",
+    "Other seat tier": "その他のシート種別",
+    "Waiting for Unassigned": "シート割り当て解除待ち",
     "Not verified": "未確認",
     "Cooling down": "リセット待ち",
     "Usage unknown": "使用量不明",
@@ -12156,6 +12162,8 @@ const I18N = {
     "Sign in to at least two Claude accounts in this organization first": "Zuerst mindestens zwei Claude-Konten dieser Organisation anmelden",
     "Seats in use: {used}/{total}": "Belegte Sitze: {used}/{total}",
     "Earliest reset: {time}": "Früheste Zurücksetzung: {time}",
+    "Other seat tier": "Anderer Sitztyp",
+    "Waiting for Unassigned": "Warten auf Aufhebung der Sitzzuweisung",
     "Not verified": "Nicht geprüft",
     "Cooling down": "Warten auf Zurücksetzung",
     "Usage unknown": "Nutzung unbekannt",
