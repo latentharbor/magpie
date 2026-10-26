@@ -214,8 +214,23 @@ for (const [engine, runtime] of engines) {
       });
       const item = page.locator(".font-menu .pm-item").nth(2);
       const box = await item.boundingBox();
+      await page.evaluate(() => {
+        window.__fontMoves = [];
+        addEventListener("mousemove", e => {
+          window.__fontMoves.push({ x: e.clientX, y: e.clientY, sx: e.screenX, sy: e.screenY, target: e.target.className, active: document.activeElement.className });
+          if (window.__fontMoves.length > 10) window.__fontMoves.shift();
+        }, true);
+      });
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 1);
-      await page.waitForFunction(e => e === document.activeElement, await item.elementHandle());
+      try {
+        await page.waitForFunction(e => e === document.activeElement, await item.elementHandle());
+      } catch (err) {
+        const detail = await item.evaluate(e => {
+          const b = e.getBoundingClientRect(), x = b.x + b.width / 2, y = b.y + b.height / 2 + 1;
+          return { box: b.toJSON(), hit: document.elementFromPoint(x, y)?.outerHTML.slice(0, 300), active: document.activeElement.outerHTML.slice(0, 300), pointerAt, pointerMoved, moves: window.__fontMoves };
+        });
+        throw new Error("moved pointer did not focus font item: " + JSON.stringify(detail), { cause: err });
+      }
       assert.equal(await item.evaluate(e => e === document.activeElement), true, "a moved pointer focuses the item it's on");
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
