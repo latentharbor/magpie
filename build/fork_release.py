@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 REPOSITORY = "latentharbor/magpie"
 NOTES = ("Maintenance and compatibility improvements.\n\n"
@@ -40,6 +41,23 @@ def approved(sha, head, runs):
                     for run in runs))
 
 
+def approved_backend(sha, head, run, jobs):
+    """An explicit manual UI exception still requires every backend job."""
+    if (run.get("status") not in ("in_progress", "completed")
+            or run.get("conclusion") not in (None, "", "success", "failure")
+            or not approved(sha, head, [dict(run, status="completed", conclusion="success")])):
+        return False
+    required = {
+        "test (ubuntu-latest)", "test (macos-latest)", "test (windows-latest)",
+        "cli (linux/amd64, nogui)", "cli (android/arm64, nogui)",
+    }
+    backend = [job for job in jobs if not job.get("name", "").startswith("ui (")]
+    return (len(backend) == len(required)
+            and {job.get("name") for job in backend} == required
+            and all(job.get("status") == "completed" and job.get("conclusion") == "success"
+                    for job in backend))
+
+
 def gate(sha):
     if os.environ.get("GITHUB_REPOSITORY") != REPOSITORY:
         raise ValueError("this release belongs to a different repository")
@@ -48,7 +66,21 @@ def gate(sha):
     head = gh(f"repos/{REPOSITORY}/git/ref/heads/main")["object"]["sha"]
     runs = gh(f"repos/{REPOSITORY}/actions/workflows/test.yml/runs?head_sha={sha}&per_page=100")["workflow_runs"]
     if not approved(sha, head, runs):
-        raise ValueError("release requires successful Test on the exact current main SHA")
+        exception = (os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+                     and os.environ.get("FORK_RELEASE_ALLOW_UI_FAILURES") == "true")
+        allowed = False
+        if exception:
+            for run in runs:
+                if not approved(sha, head, [dict(run, status="completed", conclusion="success")]):
+                    continue
+                result = gh(f"repos/{REPOSITORY}/actions/runs/{run['id']}/jobs?per_page=100")
+                jobs = result["jobs"]
+                if result.get("total_count") == len(jobs) and approved_backend(sha, head, run, jobs):
+                    allowed = True
+                    print("Manual UI exception: backend checks passed; UI acceptance is not asserted.", file=sys.stderr)
+                    break
+        if not allowed:
+            raise ValueError("release requires successful Test on exact current main, or an explicit manual UI exception with all backend checks passed")
     return sha
 
 

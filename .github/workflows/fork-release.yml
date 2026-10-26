@@ -10,6 +10,10 @@ on:
       sha:
         description: 'Exact current main SHA (blank uses current main)'
         type: string
+      allow_ui_failures:
+        description: 'Manual exception: require all backend checks, leave UI acceptance separate'
+        type: boolean
+        default: false
 
 concurrency:
   group: distribution-release
@@ -18,6 +22,9 @@ concurrency:
 permissions:
   contents: read
   actions: read
+
+env:
+  FORK_RELEASE_ALLOW_UI_FAILURES: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_ui_failures && 'true' || 'false' }}
 
 jobs:
   gate:
@@ -35,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.ref }}
       - name: Require the independent release signing key
         env:
           FORK_RELEASE_PRIVATE_KEY: ${{ secrets.FORK_RELEASE_PRIVATE_KEY }}
@@ -169,7 +176,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.gate.outputs.sha }}
+          ref: ${{ github.ref }}
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:

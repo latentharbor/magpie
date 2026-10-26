@@ -30,6 +30,25 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(release.next_version(["v0.1.1330", "v0.1.9", "garbage", "v0.1.1331-dev"]), "0.1.1331")
         self.assertEqual(release.next_version(["v1.0.0"]), "1.0.1")
 
+    def test_manual_ui_exception_keeps_all_backend_checks(self):
+        sha = "a" * 40
+        run = {"head_sha": sha, "head_branch": "main", "event": "push", "status": "in_progress",
+               "conclusion": "", "head_repository": {"full_name": release.REPOSITORY}}
+        jobs = [{"name": name, "status": "completed", "conclusion": "success"} for name in (
+            "test (ubuntu-latest)", "test (macos-latest)", "test (windows-latest)",
+            "cli (linux/amd64, nogui)", "cli (android/arm64, nogui)")]
+        jobs.append({"name": "ui (webkit, shard 0)", "status": "completed", "conclusion": "failure"})
+        self.assertTrue(release.approved_backend(sha, sha, run, jobs))
+        self.assertFalse(release.approved_backend(sha, "b" * 40, run, jobs))
+        for outcome in ("failure", "cancelled", "skipped", None):
+            changed = [dict(job) for job in jobs]
+            changed[0]["conclusion"] = outcome
+            self.assertFalse(release.approved_backend(sha, sha, run, changed))
+        self.assertFalse(release.approved_backend(sha, sha, run, jobs[1:]))
+        self.assertFalse(release.approved_backend(sha, sha, run, jobs + [jobs[0]]))
+        self.assertFalse(release.approved_backend(sha, sha, dict(run, conclusion="cancelled"), jobs))
+        self.assertFalse(release.approved_backend(sha, sha, dict(run, event="pull_request"), jobs))
+
     def test_release_rerun_is_idempotent(self):
         sha = "a" * 40
         old = {"tag_name": "v0.1.1331", "target_commitish": sha, "draft": False}
