@@ -31,11 +31,11 @@ jobs:
       fail-fast: false
       matrix:
         browser: [chromium, webkit]
-        shard: ${{ fromJSON(inputs.full_ui && '[0,1,2,3,4,5,6,7]' || '[0]') }}
+        shard: ${{ fromJSON(inputs.full_ui && '[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]' || '[0]') }}
     env:
       BROWSER: ${{ matrix.browser }}
       UI_SHARD: ${{ matrix.shard }}
-      UI_SHARDS: 8
+      UI_SHARDS: 16
       FULL_UI: ${{ inputs.full_ui || false }}
       NODE_PATH: ${{ github.workspace }}/.github/ui-preview/node_modules
     steps:
@@ -58,7 +58,7 @@ jobs:
           # package.json pins Playwright, whose core dependency uses that exact
           # same version. This upstream helper has no checked-in npm lockfile.
           npm install --ignore-scripts --no-package-lock --prefix .github/ui-preview
-          .github/ui-preview/node_modules/.bin/playwright install --with-deps chromium webkit
+          .github/ui-preview/node_modules/.bin/playwright install --with-deps "$BROWSER"
           sudo apt-get install --no-install-recommends -y fonts-noto-cjk
       # Normal pushes cover the reported failures and affected shared UI.
       # A full run is explicit, sharded and never starts a local browser.
