@@ -74,7 +74,11 @@ async function addClaudeTeamAccount(organizationId, event) {
   await startSignIn("claude", false, undefined, { organizationId });
   // Returning from Team settings opens a fresh provider editor. A large
   // account list must not leave the requested sign-in below its viewport.
-  if (reveal) $("#modal .signing")?.scrollIntoView({ block: "center" });
+  if (reveal) {
+    const box = $("#modal .signing");
+    box?.scrollIntoView({ block: "center" });
+    box?.querySelector("button.primary")?.focus({ preventScroll: true });
+  }
 }
 
 function renderTeamAccounts(a, p) {

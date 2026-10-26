@@ -125,7 +125,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // the row grows under it, and what was clicked stays where it was
         // (the click guard takes back the pixel a centred row gives up)
         assert.equal(await where(), pillAt, "the click moved what was clicked");
-        assert.ok(Math.abs((await scrollTop()) - top) <= 1, "the click scrolled the page");
+        assert.ok(Math.abs((await scrollTop()) - top) <= 1, "the click scrolled the page: " + JSON.stringify({before:top,after:await scrollTop(),pillBefore:pillAt,pillAfter:await where()}));
         assert.equal(await page.evaluate(() => document.querySelector("#modal").classList.contains("lib")), false, "the click opened the editor");
         assert.equal(checks.length, 1, "opening the list checked the server again");
         assert.equal(await status("filesystem").getAttribute("aria-expanded"), "true");

@@ -24,6 +24,7 @@ function page() {
     const quotaCycleHolds = new Map(); // past cycles' estimates (#2009), cleared by a refresh
     const t = x => x;
     const calm = () => true;
+    const mode = "window";
     const document = { querySelectorAll: () => [] };
     const el = () => ({ dataset: {}, classList: { add() {}, remove() {}, toggle() {} }, setAttribute() {} });
     function renderQuotas() {}

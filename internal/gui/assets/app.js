@@ -24568,13 +24568,12 @@ if (mode === "window") {
       body.classList.remove("tools-tight");
       set("--crumb-max", "none");
       set("--tools-l", Math.ceil(c.left + whole + 16) + "px");
-      if (!head || !over().over) return;
+      if (!head || !over().over && c.left + whole <= a.left - 8) return;
       body.classList.add("tools-tight");
       const o = over();
-      if (!o.over) return;
-      const max = Math.max(0, Math.floor(a.left - 8 - 16 - o.need - c.left));
-      // where the reader is keeps its last word: "Work / Library /" goes,
-      // a part and its slash at a time, before "MCP servers" is cut
+      if (!o.over && c.left + whole <= a.left - 8) return;
+      const max = Math.max(0, Math.floor(a.left - 8 - 16 - Math.max(0, o.need) - c.left));
+      // Hide preceding parts before cutting the current page, even with no tools.
       let w = whole;
       for (let i = 0; i + 1 < kids.length - 1 && w > max; i += 2) {
         kids[i].hidden = kids[i + 1].hidden = true;
