@@ -53,6 +53,10 @@ func TestStaleLatestIsNotUpToDate(t *testing.T) {
 		u.mu.Unlock()
 	}
 
+	// Keep the initial check and the page in the same language. Otherwise
+	// jsonIn legitimately asks for translated notes in the background, and
+	// its request races the count intended to check stale-feed refreshes.
+	u.inLang("zh")
 	u.check()
 	if j := get("/api/update?fresh=1&lang=zh"); j.State != "latest" {
 		t.Fatalf("just checked: %+v", j)

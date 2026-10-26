@@ -25,7 +25,7 @@ jobs:
   ui:
     name: ui (${{ matrix.browser }}, shard ${{ matrix.shard }})
     if: github.repository == 'latentharbor/magpie'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -45,7 +45,15 @@ jobs:
         with:
           node-version: 24
       - name: Install pinned browser fixtures
+        timeout-minutes: 15
         run: |
+          for sources in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$sources" ]; then
+              sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' "$sources"
+            fi
+          done
+          # Bound the same intermittent runner mirror stalls as the Go job.
+          sudo sh -c 'printf "%s\n" "Acquire::Retries \"3\";" "Acquire::http::Timeout \"30\";" "Acquire::https::Timeout \"30\";" > /etc/apt/apt.conf.d/99magpie-ci'
           # package.json pins Playwright, whose core dependency uses that exact
           # same version. This upstream helper has no checked-in npm lockfile.
           npm install --ignore-scripts --no-package-lock --prefix .github/ui-preview
