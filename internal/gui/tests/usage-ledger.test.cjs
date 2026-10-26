@@ -368,7 +368,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await wheelTo(page, page.locator("#ledExport"));
         await page.locator("#ledExport").click();
         await lastAsked(page, asked, (q) => q.method === "POST" && q.get("route") === "123");
-        await page.locator("#ledRouteClear").click();
+        await click(page, page.locator("#ledRouteClear"));
         await lastAsked(page, asked, (q) => !q.has("route") && q.get("period") === originalPeriod);
         await page.waitForFunction(() => document.querySelectorAll(".led tbody tr").length === 100);
         // A pruned request stays in Usage and explains why its route cannot open.

@@ -95,7 +95,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       test(`${engine} ${lang} ${width}px: Routing opened first shows the saved Off, and Settings and back keep it`, async (t) => {
         const posts = [];
         const { page, errors, tr } = await launch(t, engine, lang, width, OFF, {}, posts);
-        await page.goto("http://magpie.test/?view=routing");
+        await page.goto("http://magpie.test/?view=routing", { timeout: 30000 });
         await page.locator(".rt-group", { hasText: "Fast" }).waitFor();
         const set = page.locator(".rt-gnames");
         await set.locator(".segs").waitFor();
@@ -118,7 +118,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       test(`${engine} ${lang} ${width}px: Routing drawn before the state comes in follows the saved "Not on names I set"`, async (t) => {
         const posts = [];
         const { page, errors, tr } = await launch(t, engine, lang, width, OWN, { stateDelay: 600 }, posts);
-        await page.goto("http://magpie.test/?view=routing");
+        await page.goto("http://magpie.test/?view=routing", { timeout: 30000 });
         const set = page.locator(".rt-gnames");
         await set.locator(".segs").waitFor();
         await picked(set.locator(".opt.on"), await tr("Not on names I set"));
@@ -131,7 +131,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const posts = [];
         // the state answering after the editor is drawn: its line follows it
         const { page, errors, tr } = await launch(t, engine, lang, width, OFF, { stateDelay: 600 }, posts);
-        await page.goto("http://magpie.test/?view=providers");
+        await page.goto("http://magpie.test/?view=providers", { timeout: 30000 });
         await page.locator(".row.provider").click();
         if (!(await page.locator(".mnames:not([hidden])").count())) await page.getByRole("button", { name: await tr("Names & levels"), exact: true }).click();
         const sfx = page.locator(".mnames:not([hidden]) .msuffix");

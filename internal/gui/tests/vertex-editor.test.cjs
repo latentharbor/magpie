@@ -14,6 +14,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const SA = "magpie@my-project-123.iam.gserviceaccount.com";
@@ -343,7 +344,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const ed = await edit(page, "google-vertex");
       for (const width of [560, 440]) {
         await page.setViewportSize({ width, height: 760 });
-        await page.waitForTimeout(150);
+        await scrollSettled(page);
         const bad = await ed.evaluate((ed, fields) => {
           const box = ed.getBoundingClientRect(), out = [];
           const inside = (e, what) => {

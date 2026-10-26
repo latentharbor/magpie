@@ -200,12 +200,14 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         page.on("pageerror", (e) => errors.push(e.message));
         await page.route("**/*", server(lang, [], asked, true));
         await page.goto("http://magpie.test/?mode=panel");
+        await page.waitForFunction(() => load.done);
         await page.locator('[data-ptab="agents"].on').waitFor();
         await page.evaluate(() => panelUseFocus("7d"));
         await page.waitForFunction(() => document.body.dataset.ptab === "stats");
         for (let i = 0; i < 60 && !asked.some((a) => a.includes("period=7d")); i++) await page.waitForTimeout(40);
         assert(asked.some((a) => a.startsWith("/api/usage/requests?") && a.includes("period=7d")), "asked: " + asked.join(" "));
         await shot(page, "panel");
+        await page.waitForLoadState("networkidle");
         // a period that isn't the panel's does nothing
         const n = asked.length;
         await page.evaluate(() => panelUseFocus("3d"));

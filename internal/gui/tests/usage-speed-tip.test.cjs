@@ -82,8 +82,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await p.locator("#ledWrap .led tbody tr").first().waitFor();
         await p.waitForTimeout(300);
         await reader.click(p, p.locator("#ledMetric .opt").filter({ hasText: SPEED[lang] }));
-        await p.waitForTimeout(150);
-        const box = await p.locator("#ledChart rect.col.all").first().boundingBox();
+        const bar = p.locator("#ledChart rect.col.all").first();
+        await reader.reach(p, bar);
+        const box = await bar.boundingBox();
         await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
         const tip = p.locator("#ledChart .tip");
         await tip.waitFor();

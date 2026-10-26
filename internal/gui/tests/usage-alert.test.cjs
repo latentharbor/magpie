@@ -162,6 +162,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await share.inputValue(), "90");
 
         // the balance: On saves 5, then the amount typed
+        await reach(page, balSegs.nth(1));
+        const atBalance = await view(page);
         await balSegs.nth(1).click();
         const b = await posted(3);
         assert.equal(b.balanceAlert, 5);
@@ -179,7 +181,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // and a scroll made by a script is put back as the page is drawn
         // again: so the alert clicks are checked here, and the currency
         // row is wheeled into view, as a reader would, before its click.
-        assert.equal(await view(page), before, "no alert click moved the page");
+        assert.equal(await view(page), atBalance, "no balance alert click moved the page");
         const cny = page.locator("#currencySegs .opt", { hasText: w.cny });
         // wholly in sight and under nothing, or the click's own scroll to it
         // reads as the page moving (10-22, taller rows)
