@@ -41,8 +41,8 @@ def approved(sha, head, runs):
                     for run in runs))
 
 
-def approved_backend(sha, head, run, jobs):
-    """An explicit manual UI exception still requires every backend job."""
+def approved_backend(sha, head, run, jobs, preparing=False):
+    """Publication requires every backend job; preparation may overlap them."""
     if (run.get("status") not in ("in_progress", "completed")
             or run.get("conclusion") not in (None, "", "success", "failure")
             or not approved(sha, head, [dict(run, status="completed", conclusion="success")])):
@@ -54,7 +54,9 @@ def approved_backend(sha, head, run, jobs):
     backend = [job for job in jobs if not job.get("name", "").startswith("ui (")]
     return (len(backend) == len(required)
             and {job.get("name") for job in backend} == required
-            and all(job.get("status") == "completed" and job.get("conclusion") == "success"
+            and all((job.get("status") == "completed" and job.get("conclusion") == "success")
+                    or (preparing and job.get("status") == "in_progress"
+                        and job.get("conclusion") in (None, ""))
                     for job in backend))
 
 
@@ -75,9 +77,11 @@ def gate(sha):
                     continue
                 result = gh(f"repos/{REPOSITORY}/actions/runs/{run['id']}/jobs?per_page=100")
                 jobs = result["jobs"]
-                if result.get("total_count") == len(jobs) and approved_backend(sha, head, run, jobs):
+                preparing = os.environ.get("FORK_RELEASE_PREPARE") == "true"
+                if result.get("total_count") == len(jobs) and approved_backend(sha, head, run, jobs, preparing):
                     allowed = True
-                    print("Manual UI exception: backend checks passed; UI acceptance is not asserted.", file=sys.stderr)
+                    print("Manual UI exception: UI acceptance is not asserted; publication requires completed backend checks."
+                          if preparing else "Manual UI exception: backend checks passed; UI acceptance is not asserted.", file=sys.stderr)
                     break
         if not allowed:
             raise ValueError("release requires successful Test on exact current main, or an explicit manual UI exception with all backend checks passed")

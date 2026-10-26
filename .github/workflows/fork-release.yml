@@ -58,6 +58,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_SHA: ${{ inputs.sha || github.event.workflow_run.head_sha }}
+          # Building may overlap pending checks. This flag is deliberately
+          # absent from publish, whose repeated gates require completed checks.
+          FORK_RELEASE_PREPARE: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_ui_failures && 'true' || 'false' }}
         run: |
           set -euo pipefail
           SHA="${REQUESTED_SHA:-$(git rev-parse HEAD)}"

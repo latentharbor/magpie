@@ -48,6 +48,12 @@ class ReleaseTests(unittest.TestCase):
         self.assertFalse(release.approved_backend(sha, sha, run, jobs + [jobs[0]]))
         self.assertFalse(release.approved_backend(sha, sha, dict(run, conclusion="cancelled"), jobs))
         self.assertFalse(release.approved_backend(sha, sha, dict(run, event="pull_request"), jobs))
+        pending = [dict(job) for job in jobs]
+        pending[0].update(status="in_progress", conclusion="")
+        self.assertFalse(release.approved_backend(sha, sha, run, pending))
+        self.assertTrue(release.approved_backend(sha, sha, run, pending, preparing=True))
+        pending[0].update(status="completed", conclusion="failure")
+        self.assertFalse(release.approved_backend(sha, sha, run, pending, preparing=True))
 
     def test_release_rerun_is_idempotent(self):
         sha = "a" * 40
