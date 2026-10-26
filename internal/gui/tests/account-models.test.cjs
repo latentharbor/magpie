@@ -118,10 +118,16 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     const still = async (page, id, b) => {
       await b.scrollIntoViewIfNeeded();
       await scrollSettled(page);
+      const geometry = () => row(page, id).evaluate(e => {
+        const d = document.querySelector("#modal").firstElementChild, body = e.closest(".ebody");
+        const box = n => { const r = n?.getBoundingClientRect(); return r && { top: r.top, height: r.height }; };
+        return { row: box(e), pill: box(e.querySelector(".amodels")), dialog: box(d), body: box(body), scroll: body?.scrollTop, hold: { off: modalHold.off, y: modalHold.y, touched: modalHold.touched } };
+      });
+      const was = await geometry();
       const before = await row(page, id).evaluate((e) => Math.round(e.getBoundingClientRect().top)), sc = await scrolled(page);
       await b.click();
       await page.waitForTimeout(200);
-      assert.equal(await row(page, id).evaluate((e) => Math.round(e.getBoundingClientRect().top)), before, `${id}'s row moved`);
+      assert.equal(await row(page, id).evaluate((e) => Math.round(e.getBoundingClientRect().top)), before, `${id}'s row moved: ${JSON.stringify({ before: was, after: await geometry() })}`);
       assert.equal(await scrolled(page), sc, "a click scrolled");
     };
     const posted = async (posts, n) => {

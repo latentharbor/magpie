@@ -153,7 +153,7 @@ function routingPage(part) {
       ...(picked ? [el("small", "", String(picked.requests))] : []), svg(CHEV, 10, 1.6));
   }
   function fitDays() {
-    if (!dayBar.clientWidth) return; // out of sight: fitted when it shows
+    if (!dayBar.clientWidth || !dayBar.firstElementChild) return; // fitted once shown and populated
     // scrollWidth rounds to whole pixels. A last pill less than a pixel
     // outside still gets clipped, especially when a selected date widens it.
     const fits = () => dayBar.scrollWidth <= dayBar.clientWidth &&

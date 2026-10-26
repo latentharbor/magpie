@@ -11,7 +11,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { watchSettingsReads, settingsDrawn } = require("./reader.cjs");
+const { watchSettingsReads, settingsDrawn, reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
@@ -65,13 +65,7 @@ const scrolls = (page) => page.evaluate(() => [scrollY, ...[...document.querySel
 
 // wheelTo scrolls the page until loc is above the window's foot
 async function wheelTo(page, loc, x) {
-  await page.mouse.move(x, 400);
-  for (let i = 0; i < 15; i++) {
-    const r = await loc.boundingBox(), foot = await page.locator("footer.foot").boundingBox();
-    if (r && foot && r.y + r.height < foot.y - 8) return;
-    await page.mouse.wheel(0, 200);
-    await page.waitForTimeout(100);
-  }
+  await reach(page, loc);
 }
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
