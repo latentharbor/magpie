@@ -419,7 +419,7 @@ func (o *observer) Serve() (stop func()) {
 			case <-done:
 				return
 			case <-written:
-			case <-beat.Next(filememo.OthersEvery):
+			case <-beat.Next(filememo.OthersEvery()):
 			}
 			written = filememo.Written()
 			o.refresh()

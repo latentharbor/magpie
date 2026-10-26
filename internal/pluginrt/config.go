@@ -360,7 +360,7 @@ func Refresh() ([]Composed, error) {
 // `magpie plugin builtin` in another process may turn a plugin on or off,
 // and what a plugin registers with the gateway (an observer) follows
 // without a restart.
-func KeepFresh(ctx context.Context, every time.Duration, also ...string) {
+func KeepFresh(ctx context.Context, every func() time.Duration, also ...string) {
 	files := append([]string{Path()}, also...)
 	stamp := func() string {
 		var b strings.Builder
@@ -388,7 +388,7 @@ func KeepFresh(ctx context.Context, every time.Duration, also ...string) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-beat.Next(every):
+		case <-beat.Next(every()):
 		case <-written:
 		}
 	}

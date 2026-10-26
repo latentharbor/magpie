@@ -135,7 +135,7 @@ func (e *otelExporter) watchSessions(ctx context.Context, started time.Time, eve
 		if err != nil || !config.Enabled || !config.Sessions {
 			reader = nil
 			e.sessions.Store(nil)
-			wait = filememo.OthersEvery
+			wait = filememo.OthersEvery()
 			continue
 		}
 		wait = every
