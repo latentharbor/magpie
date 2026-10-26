@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -133,6 +134,18 @@ func fakeServe(mode string) {
 		}
 		out.Flush()
 	}
+}
+
+// fakeGPUInstall supplies an actual GPU candidate on every test platform:
+// plain pf-serve is Metal on macOS, but CPU-only elsewhere.
+func fakeGPUInstall(t *testing.T, mode string) (log, program string) {
+	t.Helper()
+	vulkan := runtime.GOOS != "darwin"
+	program = "pf-serve"
+	if vulkan {
+		program = "pf-serve-vulkan"
+	}
+	return fakeInstall(t, mode, vulkan), program
 }
 
 // fakeInstall puts the stand-in where pf-serve goes (and as
