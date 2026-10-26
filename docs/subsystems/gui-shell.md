@@ -307,7 +307,10 @@ face missing, the page retains its name, explains the fallback and uses the
 default until the face is available or the user chooses another. A discovery
 error never clears a saved choice. The browser's own typography is unchanged.
 
-The menus support search, keyboard selection and refresh. Styles are ordered
+The menus support search, keyboard selection and refresh. Hover focus follows
+changes in client coordinates (Linux WebKit reports zero screen coordinates),
+so a list redrawn under a still pointer keeps focus in its search field.
+Styles are ordered
 by weight, then normal, italic and oblique; width and name break remaining
 ties. Family changes keep a matching style where possible, otherwise the
 nearest regular face; named variable instances are offered without arbitrary

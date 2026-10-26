@@ -14775,10 +14775,10 @@ function protoPicker(p, value, onChange) {
 }
 
 // Focus follows a real move, not a list redrawn under a still pointer.
-// Mouseenter/mousemove ordering differs between WebKit platforms.
+// Linux WebKit reports zero screen coordinates; client coordinates still move.
 let pointerAt = "", pointerMoved = false;
 addEventListener("mousemove", (e) => {
-  const at = e.screenX + "," + e.screenY;
+  const at = e.clientX + "," + e.clientY;
   pointerMoved = at !== pointerAt; pointerAt = at;
 }, true);
 function hoverFocus(b) {
