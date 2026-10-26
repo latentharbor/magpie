@@ -12,7 +12,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { reach, scrollSettled } = require("./reader.cjs");
+const { reach, scrollSettled, watchSettingsReads, settingsDrawn } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 
@@ -80,7 +80,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const errors = [], asked = [];
         page.on("pageerror", (e) => errors.push(e.message));
         await page.route("**/*", serve(lang, asked, ["a@example.com", "B@Example.com"]));
+        await watchSettingsReads(page);
         await page.goto("http://magpie.test/?view=settings&tab=usage");
+        await settingsDrawn(page);
         const rows = page.locator("#codexWarmList .warm-own");
         await rows.first().waitFor();
         assert.deepEqual(await rows.evaluateAll((rs) => rs.map((r) => r.dataset.user)), ["a@example.com", "B@Example.com"]);
@@ -104,8 +106,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await a.locator("input").press("Enter");
         for (let i = 0; i < 50 && asked.length < 2; i++) await page.waitForTimeout(40);
         assert.deepEqual(asked[1], ["a@example.com", "09:00"]);
+        assert.equal(await scrolls(page), y, "editing an account moved the page");
         // B off, by its name as it is; then back to the time above
         const b = page.locator('.warm-own[data-user="B@Example.com"]');
+        await reach(page, b.locator(".segs .opt").nth(2));
+        const bY = await scrolls(page);
         await b.locator(".segs .opt").nth(2).click();
         for (let i = 0; i < 50 && asked.length < 3; i++) await page.waitForTimeout(40);
         assert.deepEqual(asked[2], ["B@Example.com", "off"]);
@@ -115,7 +120,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.deepEqual(asked[3], ["B@Example.com", ""]);
         await page.waitForFunction((s) => document.querySelector('.warm-own[data-user="B@Example.com"] .sub')?.textContent === s, w.same);
         assert.equal(await page.locator('.warm-own[data-user="a@example.com"] input').inputValue(), "09:00");
-        assert.equal(await scrolls(page), y, "a click moved the page");
+        assert.equal(await scrolls(page), bY, "a click moved the page");
         assert.deepEqual(await sideways(page), []);
         assert.equal(await page.locator("select").count(), 0);
         assert.deepEqual(errors, []);

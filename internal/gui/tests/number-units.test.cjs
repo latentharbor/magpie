@@ -14,7 +14,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { openPart } = require("./reader.cjs");
+const { openPart, reach, scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const midnight = new Date();
@@ -177,6 +177,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           // scrolled down by a real wheel, a pick moves nothing
           await p.locator("#currencySegs").hover();
           for (let i = 0; i < 20 && !(await settingsView(p)); i++) { await p.mouse.wheel(0, 200); await p.waitForTimeout(20); }
+          await reach(p, segs.nth(1));
+          await scrollSettled(p);
           const before = await settingsView(p);
           assert(before > 0, "the settings list must be long enough to scroll");
           await segs.nth(1).click();

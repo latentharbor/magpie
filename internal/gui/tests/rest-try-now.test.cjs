@@ -105,6 +105,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           await browser.close();
         });
         await page.goto("http://magpie.test/?view=" + view);
+        await page.waitForFunction(() => load.done);
         return { page, errors, lifted };
       };
 

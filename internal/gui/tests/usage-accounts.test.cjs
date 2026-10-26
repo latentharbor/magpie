@@ -83,6 +83,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
       // Overview: one row per provider and account, the unrecorded one named so
       await page.locator("#usageAccounts .row").first().waitFor();
+      await page.locator("#usageAccountsHead").waitFor();
       assert.equal(await page.locator("#usageAccountsHead").isHidden(), false);
       assert.equal((await page.locator("#usageAccountsHead").textContent()).trim(), w.head);
       assert.deepEqual(await page.locator("#usageAccounts .name").allTextContents(), ["a@example.com", "b@example.com", w.none, "a@example.com"]);
