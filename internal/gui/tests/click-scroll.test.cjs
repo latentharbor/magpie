@@ -340,7 +340,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         if (click) await dayButtons.nth(1).click();
         const was = await scrollTop();
         await wheel(300);
-        assert((await scrollTop()) > was + 100, `the late-heard wheel must scroll the view${click ? " after a click" : ""}`);
+        assert((await scrollTop()) > was + 100, `the late-heard wheel must scroll the view${click ? " after a click" : ""}: ` + JSON.stringify(await page.locator(view).evaluate((v, was) => ({ was, top: v.scrollTop, end: v.scrollHeight - v.clientHeight, heard: window.__wheelsHeard, purposeUntil, now: performance.now() }), was)));
       }
       // a scroll by code is still put back, the wheel that follows it not
       // giving it to the reader

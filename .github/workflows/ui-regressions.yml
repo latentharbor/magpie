@@ -12,6 +12,11 @@ on:
         type: choice
         default: ubuntu-24.04
         options: [ubuntu-24.04, macos-15]
+      shards:
+        description: 'Split a larger selection across independent runners'
+        type: choice
+        default: '1'
+        options: ['1', '4']
 
 permissions:
   contents: read
@@ -28,9 +33,12 @@ jobs:
       fail-fast: false
       matrix:
         browser: [chromium, webkit]
+        shard: ${{ fromJSON(inputs.shards == '4' && '[0,1,2,3]' || '[0]') }}
     env:
       BROWSER: ${{ matrix.browser }}
       UI_FILES: ${{ inputs.files }}
+      UI_SHARD: ${{ matrix.shard }}
+      UI_SHARDS: ${{ inputs.shards || '1' }}
       NODE_PATH: ${{ github.workspace }}/.github/ui-preview/node_modules
       ARTIFACT_DIR: ${{ github.workspace }}/.ci-ui-artifacts
       SCREENSHOT_DIR: ${{ github.workspace }}/.ci-ui-artifacts
@@ -68,9 +76,15 @@ jobs:
           if (!names.length || names.some(n => !/^[a-z0-9-]+$/.test(n) || !allowed.has(n + ".test.cjs"))) {
             throw new Error("Only existing UI test basenames are accepted");
           }
+          const selected = [...new Set(names)].filter((_, i) => i % Number(process.env.UI_SHARDS) === Number(process.env.UI_SHARD));
+          if (!selected.length) {
+            console.log("No files assigned to this shard");
+            process.exit(0);
+          }
+          console.log("Selected files: " + selected.join(","));
           const run = spawnSync(process.execPath, [
-            "--test", "--test-concurrency=2", "--test-reporter=tap",
-            ...new Set(names.map(n => dir + n + ".test.cjs")),
+            "--test", "--test-concurrency=2", "--test-timeout=600000", "--test-reporter=tap",
+            ...selected.map(n => dir + n + ".test.cjs"),
           ], { stdio: "inherit" });
           if (run.error) console.error(run.error);
           process.exit(run.status ?? 1);
@@ -79,7 +93,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: manual-ui-${{ matrix.browser }}
+          name: manual-ui-${{ matrix.browser }}-${{ matrix.shard }}
           path: |
             ${{ runner.temp }}/ui.log
             ${{ github.workspace }}/.ci-ui-artifacts

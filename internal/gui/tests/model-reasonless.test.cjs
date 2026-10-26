@@ -81,7 +81,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // model-1: both unticked, no error, the hint shows
         assert.deepEqual(await ticked("model-1"), [true, true]);
         assert(!(await hint("model-1").isVisible()));
+        await page.evaluate(() => document.fonts.ready.then(() => {}));
         await boxes("model-1").nth(0).click();
+        await page.waitForFunction(() => [...document.querySelectorAll(".mname")].find(e => e.querySelector("code")?.textContent === "model-1")?.querySelector(".mlevels input")?.checked === false);
         await boxes("model-1").nth(1).click();
         assert.deepEqual(await ticked("model-1"), [false, false], "the last level unticks");
         assert(await hint("model-1").isVisible());

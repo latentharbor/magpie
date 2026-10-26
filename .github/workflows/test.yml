@@ -90,7 +90,7 @@ jobs:
           if (!files.length) throw new Error("No browser tests selected");
           console.log(`Running ${files.length} files in ${process.env.BROWSER}`);
           const run = spawnSync(process.execPath, [
-            "--test", "--test-concurrency=2", "--test-reporter=tap",
+            "--test", "--test-concurrency=2", "--test-timeout=600000", "--test-reporter=tap",
             ...files.map(f => dir + f),
           ], { stdio: "inherit" });
           if (run.error) console.error(run.error);
