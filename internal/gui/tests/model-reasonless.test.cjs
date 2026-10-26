@@ -86,8 +86,16 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await boxes("model-1").nth(0).scrollIntoViewIfNeeded();
         await boxes("model-1").nth(0).evaluate(e => {
           window.__levelClicks = [];
+          const geometry = () => {
+            const nodes = [];
+            for (let x = e; x; x = x.parentElement) {
+              const r = x.getBoundingClientRect(), c = getComputedStyle(x);
+              nodes.push({tag:x.tagName,cls:x.className,top:r.top,height:r.height,scroll:x.scrollTop,transform:c.transform});
+            }
+            return nodes;
+          };
           for (const type of ["pointerdown", "mousedown", "focusin", "pointerup", "click", "change", "scroll"])
-            e.closest(".editor").addEventListener(type, event => window.__levelClicks.push({type,tag:event.target.tagName,checked:e.checked,y:event.clientY,top:e.getBoundingClientRect().top,names:e.closest(".mnames").scrollTop,body:e.closest(".ebody").scrollTop,editor:e.closest(".editor").scrollTop,dialog:e.closest(".dialog").scrollTop}),true);
+            e.closest(".editor").addEventListener(type, event => window.__levelClicks.push({type,tag:event.target.tagName,checked:e.checked,y:event.clientY,geometry:geometry(),active:document.activeElement?.outerHTML.slice(0,300)}),true);
         });
         await scrollSettled(page);
         await boxes("model-1").nth(0).click();
