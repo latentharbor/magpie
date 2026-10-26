@@ -11,9 +11,10 @@ agents RTK, a CLI that cuts shell output down before the model reads it.
 
 ## Responsibilities and sources of truth
 
-An MCP server's heading stays at the top of its row when its tools expand,
-including beside a taller set of agent chips. The click guard does not need
-to scroll the view to compensate for a vertically recentered heading.
+An MCP server's heading has a content-independent flex basis and stays at
+the top of its row when its tools expand. A wide tools list does not wrap
+the heading onto a new flex line; the click guard need not scroll the view
+to compensate for that movement.
 
 | Part | Responsibility | Source |
 | --- | --- | --- |
