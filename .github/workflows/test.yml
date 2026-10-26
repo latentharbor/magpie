@@ -81,6 +81,7 @@ jobs:
             "panel-quota-refresh", "header-zoom-fit", "side-toggle",
             "settings-lines-wrap", "sidebar-glide", "plugin-github-wait",
             "library-mcp-tools",
+            "fonts", "rest-try-now", "bare-ids", "keep-awake",
           ].map(name => name + ".test.cjs");
           const files = process.env.FULL_UI === "true"
             ? readdirSync(dir).filter(f => f.endsWith(".test.cjs")).sort()
