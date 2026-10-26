@@ -3178,7 +3178,9 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .mfoot .text.action:disabled, .mfoot .text.action:disabled:hover { color: var(--faint); background: var(--card); border-color: var(--line); cursor: default; }
 
 /* the models' own names and reasoning levels, one row each */
-.mnames { display: grid; gap: 4px; max-height: 240px; overflow-y: auto; padding: 1px; }
+/* WebKit can reserve an auto scrollbar only on focus, narrowing a model
+   row and wrapping prices between the checkbox's press and release. */
+.mnames { display: grid; gap: 4px; max-height: 240px; overflow-y: scroll; scrollbar-gutter: stable; padding: 1px; }
 .mnames[hidden] { display: none; }
 .mnames > .hint { font-size: 11px; color: var(--faint); }
 /* its quiet title and Fold, held at the top while the rows scroll (#868) */

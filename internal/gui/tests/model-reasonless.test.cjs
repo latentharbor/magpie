@@ -84,27 +84,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert(!(await hint("model-1").isVisible()));
         await page.evaluate(() => document.fonts.ready.then(() => {}));
         await boxes("model-1").nth(0).scrollIntoViewIfNeeded();
-        await boxes("model-1").nth(0).evaluate(e => {
-          window.__levelClicks = [];
-          const geometry = () => {
-            const nodes = [];
-            for (let x = e; x; x = x.parentElement) {
-              const r = x.getBoundingClientRect(), c = getComputedStyle(x);
-              nodes.push({tag:x.tagName,cls:x.className,top:r.top,height:r.height,scroll:x.scrollTop,transform:c.transform});
-            }
-            const row = e.closest(".mname");
-            return {nodes,parts:[...row.children,...row.querySelector(".mprice").children].map(x => { const r=x.getBoundingClientRect(); return {tag:x.tagName,cls:x.className,top:r.top,width:r.width,height:r.height,hidden:x.hidden}; })};
-          };
-          for (const type of ["mousedown", "focusin"])
-            e.closest(".editor").addEventListener(type, event => window.__levelClicks.push({type,tag:event.target.tagName,checked:e.checked,y:event.clientY,geometry:geometry(),active:document.activeElement?.outerHTML.slice(0,300)}),true);
-        });
         await scrollSettled(page);
         await boxes("model-1").nth(0).click();
         await page.waitForFunction(() => [...document.querySelectorAll(".mname")].find(e => e.querySelector("code")?.textContent === "model-1")?.querySelector(".mlevels input")?.checked === false).catch(async e => {
           const detail = await boxes("model-1").nth(0).evaluate(e => {
             const box = x => { const r = x.getBoundingClientRect(); return { top:r.top,left:r.left,width:r.width,height:r.height }; };
             const r = e.getBoundingClientRect(), hit = document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
-            return { checked:e.checked,box:box(e),hit:hit?.outerHTML,modal:box(e.closest(".editor")),names:box(e.closest(".mnames")),events:window.__levelClicks,hold:{off:modalHold.off,y:modalHold.y,touched:modalHold.touched} };
+            return { checked:e.checked,box:box(e),hit:hit?.outerHTML,modal:box(e.closest(".editor")),names:box(e.closest(".mnames")) };
           });
           throw new Error(e.message + " checkbox: " + JSON.stringify(detail));
         });
