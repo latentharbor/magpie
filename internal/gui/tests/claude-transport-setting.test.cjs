@@ -49,6 +49,16 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       t.after(() => browser.close());
       const page = await (await browser.newContext({ viewport: { width, height: 900 } })).newPage();
       page.setDefaultTimeout(5000);
+      const choose = async name => {
+        const item = page.getByRole("menuitemradio", { name, exact: true });
+        await item.click().catch(async error => {
+          const detail = await item.evaluate(e => {
+            const box = e => { const r = e.getBoundingClientRect(); return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,height:r.height}; };
+            return {item:box(e),menu:box(e.closest(".proto-menu")),anchor:box(document.querySelector("#claudeTransportPick")),viewport:[innerWidth,innerHeight],view:box(document.querySelector("#view-settings")),scroll:document.querySelector("#view-settings").scrollTop};
+          });
+          throw new Error(error.message + " menu: " + JSON.stringify(detail));
+        });
+      };
       const errors = [];
       page.on("pageerror", (e) => errors.push(e.message));
       const saved = [];
@@ -75,8 +85,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       }
       const before = await page.evaluate(() => [scrollX, scrollY, document.scrollingElement.scrollTop]);
       await page.locator("#claudeTransportPick").click();
-      const http = page.getByRole("menuitemradio", { name: words[lang][1], exact: true });
-      await http.click();
+      await choose(words[lang][1]);
       await page.waitForFunction(() => document.querySelector("#claudeTransportPick")?.dataset.value === "http");
       assert.equal(saved.length, 1);
       assert.equal(saved[0].claudeTransport, "http");
@@ -94,7 +103,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.equal(saved.at(-1).claudeTransport, "http");
       await reveal(page, row, width);
       await page.locator("#claudeTransportPick").click();
-      await page.getByRole("menuitemradio", { name: "Claude Code CLI (claude -p)", exact: true }).click();
+      await choose("Claude Code CLI (claude -p)");
       await page.waitForFunction(() => document.querySelector("#claudeTransportPick")?.dataset.value === "cli");
       assert.equal(saved.at(-1).claudeTransport, "cli");
       assert.equal(await page.locator("#claudeLeanRow").isVisible(), true);

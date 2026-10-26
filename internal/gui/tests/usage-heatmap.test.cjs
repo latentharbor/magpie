@@ -145,8 +145,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const sc = await p.evaluate(() => {
           const s = document.querySelector("#ledHeatScroll"), r = s.getBoundingClientRect(), last = [...s.querySelectorAll(".heat-grid i")].at(-1).getBoundingClientRect();
           const card = document.querySelector("#ledHeat").getBoundingClientRect();
+          const v = document.querySelector("#view-usage"), vr = v.getBoundingClientRect();
           return { over: s.scrollWidth > s.clientWidth + 1, left: s.scrollLeft, sw: s.scrollWidth, cw: s.clientWidth, lr: [last.left, last.right, r.left, r.right], inView: last.right <= r.right + 1 && last.left >= r.left - 1, inCard: r.left >= card.left && r.right <= card.right,
-            page: document.documentElement.scrollWidth <= window.innerWidth + 1, view: document.querySelector("#view-usage").scrollWidth <= document.querySelector("#view-usage").clientWidth + 1 };
+            page: document.documentElement.scrollWidth <= window.innerWidth + 1, view: v.scrollWidth <= v.clientWidth + 1,
+            overflow: [...v.querySelectorAll("*")].filter(e => !e.closest(".heat-scroll") && e.getBoundingClientRect().right > vr.right + 1).slice(0,12).map(e => ({tag:e.tagName,id:e.id,cls:e.className,right:e.getBoundingClientRect().right,width:e.getBoundingClientRect().width})), viewWidths:[v.scrollWidth,v.clientWidth] };
         });
         assert(sc.inView, "the newest day in sight: " + JSON.stringify(sc));
         assert(sc.inCard && sc.page && sc.view, "no sideways scroll outside the card: " + JSON.stringify(sc));
