@@ -88,8 +88,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       });
       await page.goto("http://magpie.test/?view=routing");
       // a browser started cold draws the days late
-      await page.locator(".rt-day").nth(1).waitFor({ state: "visible", timeout: 15000 });
-      await page.locator(".rt-day").nth(1).click();
+      await page.locator(".rt-days .rt-day").nth(1).waitFor({ state: "visible", timeout: 15000 });
+      await page.locator(".rt-days .rt-day").nth(1).click();
       await page.locator(".rt-req").nth(ups.length - 1).waitFor();
 
       // the list: the one passed on says where, whole, inside its row

@@ -119,7 +119,7 @@ const pages = [
   { view: "providers", rows: ".row.provider", wait: "#view-providers .row.provider" },
   { view: "gateway", rows: ".row.gw, #gwModels .row.model, #activity .call, #gatewayKeys .acc[data-key]", wait: "#gatewayKeys .acc[data-key]" },
   // the requests are today's in the history: open the day
-  { view: "routing", rows: ".rt-req", wait: ".rt-day >> nth=1", open: (page) => page.locator(".rt-day").nth(1).click(), then: ".rt-req .upstream" },
+  { view: "routing", rows: ".rt-req", wait: ".rt-days .rt-day >> nth=1", open: (page) => page.locator(".rt-days .rt-day").nth(1).click(), then: ".rt-req .upstream" },
 ];
 const engines = process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"];
 const langs = process.env.LANGS ? process.env.LANGS.split(",") : ["en", "zh", "zh-TW", "ja", "de"];

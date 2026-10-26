@@ -5,7 +5,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { watchSettingsReads, settingsDrawn } = require("./reader.cjs");
+const { watchSettingsReads, settingsDrawn, reach } = require("./reader.cjs");
 const assets = process.env.MAGPIE_TRANSPORT_ASSETS || path.resolve(__dirname, "../assets");
 const words = {
   en: ["Claude subscription transport", "Claude Code HTTP (experimental)", "restriction or suspension", "not guaranteed", "requests already running"],
@@ -38,15 +38,8 @@ function serve(lang, settings, saved) {
   };
 }
 
-async function reveal(page, row, width) {
-  await page.mouse.move(width / 2, 450);
-  for (let i = 0; i < 60; i++) {
-    const box = await row.boundingBox();
-    if (box && box.y >= 0 && box.y + box.height <= 900) return;
-    await page.mouse.wheel(0, box && box.y < 0 ? -120 : 120);
-    await page.waitForTimeout(30);
-  }
-  assert.fail("transport row could not be reached");
+async function reveal(page, row) {
+  await reach(page, row.locator(".pick, .segs button").first());
 }
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {

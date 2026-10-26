@@ -48,6 +48,9 @@ platforms, preventing WebKit from sizing the field grid beneath the bar.
 Menu hover focus follows changes in pointer coordinates during mousemove,
 independent of platform-specific mouseenter ordering. Redrawing a search
 under a stationary pointer keeps focus in its search field.
+Tab also checks that the newly focused field is wholly visible after native
+scrolling. Long-conversation controls wrap below their explanation before
+translated choices can squeeze that explanation to a few pixels.
 `session-identity.test.cjs` and `settings-lines-wrap.test.cjs`
 cover readable labels and controls remaining within their cells.
 

@@ -67,15 +67,8 @@ const settle = (page) => page.evaluate(() => new Promise((ok) => setTimeout(ok, 
 // brought out from under the header and the foot by the reader's wheel, as
 // code's scrolls are put back, till the pointer at its middle is on it
 async function reveal(page, loc) {
-  for (let i = 0; i < 40; i++) {
-    const b = await loc.boundingBox();
-    const h = page.viewportSize().height;
-    if (b && await loc.evaluate((o, [x, y]) => o.contains(document.elementFromPoint(x, y)), mid(b))) return b;
-    await page.mouse.move(page.viewportSize().width / 2, h / 2);
-    await page.mouse.wheel(0, b && b.y < h / 2 ? -150 : 150);
-    await page.waitForTimeout(60);
-  }
-  throw new Error("could not bring the option into view");
+  await reach(page, loc);
+  return loc.boundingBox();
 }
 const mid = (b) => [b.x + b.width / 2, b.y + b.height / 2];
 

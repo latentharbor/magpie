@@ -15,6 +15,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const midnight = new Date();
@@ -477,6 +478,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await p.mouse.move(b.rank.x + b.rank.width / 2, b.rank.y + b.rank.height / 2);
       await p.mouse.wheel(0, 120);
       for (let i = 0; i < 40 && (await box()).top === 0; i++) await p.waitForTimeout(25);
+      await scrollSettled(p);
       b = await box();
       assert(b.top > 0, "the ranking scrolled");
       seen = await look();

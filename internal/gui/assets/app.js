@@ -23412,7 +23412,7 @@ addEventListener("keydown", (e) => {
   panEnds();
   const typing = e.target.closest?.("input, textarea, select, [contenteditable]");
   if (e.key === "Tab" || (!typing && SCROLL_KEYS.has(e.key))) readerScrolls(400);
-  if (e.isTrusted && e.key === "Enter") keyboardFocus(e);
+  if (e.isTrusted && (e.key === "Enter" || e.key === "Tab")) keyboardFocus(e);
 }, true);
 addEventListener("keyup", (e) => {
   if (e.isTrusted && e.key === " " && !e.target.closest?.("input, textarea, select, [contenteditable]")) keyboardFocus(e);

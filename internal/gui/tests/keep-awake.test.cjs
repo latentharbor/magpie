@@ -13,7 +13,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { watchSettingsReads, settingsDrawn } = require("./reader.cjs");
+const { watchSettingsReads, settingsDrawn, reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const words = {
@@ -83,6 +83,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.equal(await row.locator(".name").innerText(), w.name);
       assert.equal(await row.locator(".sub").innerText(), w.sub);
       const opt = (name) => row.locator("#keepAwakeSegs .opt").getByText(name, { exact: true });
+      await reach(page, opt(w.on));
       assert.equal(await row.locator("#keepAwakeSegs .opt.on").innerText(), w.off, "off by default");
       const where = () => page.evaluate(() => [scrollX, scrollY, document.scrollingElement.scrollTop, ...[...document.querySelectorAll("*")].filter((e) => e.scrollTop).map((e) => e.scrollTop)]);
       const before = await where();

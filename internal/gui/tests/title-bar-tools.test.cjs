@@ -101,7 +101,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           if (p.init) await page.evaluate(([k, v]) => localStorage.setItem(k, v), p.init).catch(() => {});
           await page.goto("http://magpie.test/" + p.url);
           await page.waitForLoadState("networkidle");
-          if (p.init) { await page.evaluate(([k, v]) => localStorage.setItem(k, v), p.init); await page.reload(); }
+          if (p.init) {
+            await page.evaluate(([k, v]) => localStorage.setItem(k, v), p.init);
+            await page.reload();
+            await page.waitForLoadState("networkidle");
+          }
           // Built-in has no tools. When its title fills the bar its empty
           // head has zero width, so presence, not visibility, is correct.
           await page.locator(p.head).waitFor({ state: p.name === "plugins builtin" ? "attached" : "visible" });

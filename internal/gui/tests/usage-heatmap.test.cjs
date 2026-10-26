@@ -18,6 +18,7 @@ async function pointTo(p, loc) {
   await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 2 });
 }
 const { chromium, webkit } = require("playwright");
+const { reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -157,13 +158,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const cell = heat.locator(`.heat-grid i[data-date="${busy.date}"]`);
         // the reader wheels the page to the card (magpie puts back a scroll by
         // code), and the pointer then rests on a day
-        await p.mouse.move(width / 2, 300);
-        for (let i = 0; i < 20; i++) {
-          const b = await heat.boundingBox();
-          if (b.y >= 60 && b.y + b.height <= 800) break;
-          await p.mouse.wheel(0, b.y < 60 ? -120 : 120);
-          await p.waitForTimeout(60);
-        }
+        await reach(p, cell);
         await pointTo(p, cell);
         const tip = heat.locator("#ledHeatTip");
         await tip.waitFor();

@@ -218,12 +218,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // down
         const below = (id) => page.evaluate((id) => { const r = document.querySelector(`#builtinList [data-id="${id}"] [role="switch"]`).getBoundingClientRect(), foot = document.querySelector("footer.foot"); return r.bottom > Math.min(document.getElementById("view-plugins").getBoundingClientRect().bottom, foot && foot.offsetParent ? foot.getBoundingClientRect().top : Infinity); }, id);
         const wheelTo = async (id) => {
-          for (let i = 0; i < 5 && await below(id); i++) {
-            const at = await page.evaluate(() => { const l = document.getElementById("builtinList").getBoundingClientRect(), v = document.getElementById("view-plugins").getBoundingClientRect(); return { x: l.x + 20, y: (Math.max(l.top, v.top) + Math.min(l.bottom, v.bottom)) / 2 }; });
-            await page.mouse.move(at.x, at.y);
-            await page.mouse.wheel(0, 400);
-            await page.waitForFunction(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true)))));
-          }
+          await reach(page, page.locator(`#builtinList [data-id="${id}"] [role="switch"]`));
           assert.equal(await below(id), false, `${where}: ${id}'s row reached by the wheel`);
         };
         // and Observability: its Settings tab is back

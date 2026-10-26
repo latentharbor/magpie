@@ -113,7 +113,7 @@ async function scrollSettled(page) {
     const start = performance.now();
     let last = "", since = start;
     function frame(now) {
-      const at = JSON.stringify([scrollX, scrollY, ...[...document.querySelectorAll(".view,.ebody")].map(e => [e.scrollLeft, e.scrollTop])]);
+      const at = JSON.stringify([scrollX, scrollY, ...[...document.querySelectorAll(".view,.ebody,#ledRank,#ledHeatScroll")].map(e => [e.scrollLeft, e.scrollTop])]);
       if (at !== last) { last = at; since = now; }
       if (now - since >= 250) return resolve();
       if (now - start >= 5000) return reject(new Error("scroll did not settle"));

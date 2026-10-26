@@ -9,7 +9,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { openPart } = require("./reader.cjs");
+const { openPart, reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 
@@ -119,6 +119,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           await page.mouse.wheel(0, -60);
           await page.waitForTimeout(30);
         }
+        await reach(page, segs.nth(1));
         const before = await view(page);
         assert(before > 0, "the settings list must be long enough to scroll");
         const tall = () => page.locator("#view-settings").evaluate((v) => v.getBoundingClientRect().height);

@@ -11,6 +11,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { reach, scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(process.env.ASSETS || path.join(__dirname, "../assets"));
 const models = [
@@ -87,6 +88,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // the grip shows on the rule under the pointer only
       await page.mouse.move(1, 1);
       await page.waitForFunction(() => [...document.querySelectorAll(".rt-rhandle")].map((h) => getComputedStyle(h, "::before").opacity).join() === "0,0,0");
+      await reach(page, rule("two").locator(".rt-then"));
       await rule("two").locator(".rt-then").hover();
       await page.waitForFunction(() => [...document.querySelectorAll(".rt-rhandle")].map((h) => getComputedStyle(h, "::before").opacity).join() === "0,1,0");
 
@@ -101,7 +103,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.mouse.wheel(0, Math.sign(d) * Math.min(Math.abs(d), 300));
         await page.waitForTimeout(60);
       }
-      await page.waitForTimeout(200);
+      await scrollSettled(page);
       const at = () => page.evaluate(() => [...document.querySelectorAll("*")].filter((e) => e.scrollTop).map((e) => [e.id || e.className, e.scrollTop]).join(";") + "|" + Math.round(document.querySelector(".rt-gedit").getBoundingClientRect().top));
       const before = await at();
       // drag "three" above "one"

@@ -16,6 +16,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const fresh = () => ({
@@ -116,7 +117,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     // a click that leaves the row where it was and scrolls nothing
     const still = async (page, id, b) => {
       await b.scrollIntoViewIfNeeded();
-      await page.waitForTimeout(150);
+      await scrollSettled(page);
       const before = await row(page, id).evaluate((e) => Math.round(e.getBoundingClientRect().top)), sc = await scrolled(page);
       await b.click();
       await page.waitForTimeout(200);

@@ -14,7 +14,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { click, inView } = require("./reader.cjs");
+const { click, inView, reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const now = Date.now();
@@ -120,14 +120,7 @@ const scrolled = (page) => page.locator("#view-usage").evaluate((v) => v.scrollT
 // the reader wheels a control out from under the header or the footer, as
 // a reader would: the dashboard above the table leaves its first rows low
 async function wheelTo(page, loc) {
-  await page.mouse.move(600, 300);
-  for (let i = 0; i < 50; i++) {
-    const b = await loc.boundingBox(), v = await page.locator("#view-usage").boundingBox();
-    if (b && b.y >= v.y && b.y + b.height < v.y + v.height - 40) return;
-    await page.mouse.wheel(0, b && b.y < v.y ? -120 : 120);
-    await page.waitForTimeout(30);
-  }
-  assert.fail("the row never came up");
+  await reach(page, loc);
 }
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {

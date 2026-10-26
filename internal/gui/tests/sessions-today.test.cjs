@@ -79,6 +79,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await page.addInitScript(() => { localStorage.setItem("magpie.usageTab", "sessions"); localStorage.setItem("magpie.sessRange", "30d"); });
       t.after(() => browser.close());
       await page.goto("http://magpie.test/?view=usage");
+      await page.waitForLoadState("networkidle");
       const bars = page.locator("#sessChart .bars > .bar");
       await page.waitForFunction(() => document.querySelectorAll("#sessChart .bars > .bar").length === 30);
       const last = bars.last();

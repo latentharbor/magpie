@@ -9,7 +9,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { wheelTo, watchSettingsReads, settingsDrawn } = require("./reader.cjs");
+const { wheelTo, watchSettingsReads, settingsDrawn, reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const settings = (lang) => ({ lang, theme: "light", redact: true, redactRules: [{ kind: "GATEWAY_KEY", prefix: "oc_sk_" }] });
@@ -91,6 +91,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         else assert(next.under && next.flush && next.right, `the added rule's Remove is under its name, on the right: ${JSON.stringify(next)}`);
 
         // Regex picked: the match's hint changes, nothing moves
+        await reach(page, row.locator(".segs button", { hasText: w.regex }));
         const before = await page.evaluate(() => [scrollX, scrollY, document.querySelector("#view-settings")?.closest("[class]")?.scrollTop]);
         const b = await row.locator(".segs button", { hasText: w.regex }).boundingBox();
         await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
