@@ -27,8 +27,8 @@ jobs:
       BROWSER: ${{ matrix.browser }}
       UI_FILES: ${{ inputs.files }}
       NODE_PATH: ${{ github.workspace }}/.github/ui-preview/node_modules
-      ARTIFACT_DIR: ${{ runner.temp }}/ui-artifacts
-      SCREENSHOT_DIR: ${{ runner.temp }}/ui-artifacts
+      ARTIFACT_DIR: ${{ github.workspace }}/.ci-ui-artifacts
+      SCREENSHOT_DIR: ${{ github.workspace }}/.ci-ui-artifacts
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,6 +75,6 @@ jobs:
           name: manual-ui-${{ matrix.browser }}
           path: |
             ${{ runner.temp }}/ui.log
-            ${{ runner.temp }}/ui-artifacts
+            ${{ github.workspace }}/.ci-ui-artifacts
           if-no-files-found: ignore
           retention-days: 7
