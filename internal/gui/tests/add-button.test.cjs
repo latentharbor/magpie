@@ -19,6 +19,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const presets = ["anthropic", "openai", "deepseek", "moonshot", "xai", "openrouter", "siliconflow", "groq"]
@@ -85,7 +86,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // and at the end, where it is, not a pixel off
         await page.mouse.move(450, 400);
         for (let i = 0; i < 12; i++) await page.mouse.wheel(0, 400);
-        await page.waitForTimeout(500);
+        await scrollSettled(page);
         s = await at();
         assert(s.top >= s.end - 1, "scrolled to the end");
         assert(Math.abs(s.bar) <= 1, "the bar at the end: " + s.bar);
@@ -110,7 +111,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
         // scrolled back up, the button is there again and takes the view to the sheet
         for (let i = 0; i < 12; i++) await page.mouse.wheel(0, -400);
-        await page.waitForTimeout(500);
+        await scrollSettled(page);
         s = await at();
         assert(s.top < 5 && s.sheet > 700 && !s.away, JSON.stringify(s));
         await page.locator("#addProvider").click();

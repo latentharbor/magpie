@@ -105,7 +105,7 @@ async function fits(page, row, width) {
   assert.ok(box.x >= 0 && box.x + box.width <= width + 0.5, `row ${box.x}+${box.width} past ${width}`);
   for (const b of await row.locator("button, .segs").all()) {
     segs = await b.boundingBox();
-    if (segs) assert.ok(segs.x >= box.x - 0.5 && segs.x + segs.width <= box.x + box.width + 0.5, "a control past its row");
+    if (segs) assert.ok(segs.x >= box.x - 0.5 && segs.x + segs.width <= box.x + box.width + 0.5, "a control past its row: " + JSON.stringify({ row: box, control: segs, html: await b.evaluate(e => e.outerHTML) }));
   }
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the page scrolls sideways");
 }

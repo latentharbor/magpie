@@ -100,7 +100,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const pill = pills.find((p) => p.more);
         assert(pill.on, `${width}px: the pill holding the day looked at is pressed`);
         assert.match(pill.text, new RegExp(String(allDays.at(-1).requests)), `${width}px: the pill is named by the day: ${pill.text}`);
-        assert(!pills.some((p) => p.cut), `${width}px: picking a day cut a pill off`);
+        assert(!pills.some((p) => p.cut), `${width}px: picking a day cut a pill off: ${JSON.stringify(pills)}`);
         assert(Math.abs(await page.locator(".rt-days").evaluate((e) => e.getBoundingClientRect().top) - was.bar) <= 1, `${width}px: picking a day moved the bar`);
 
         // Live, back in the bar: the pill no longer pressed

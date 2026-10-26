@@ -24,6 +24,12 @@ three.
 
 ## Runtime path
 
+Routing's history day bar (`fitDays` in `plugins/routing/client.js`) fits the
+last visible pill using its fractional bounding box as well as `scrollWidth`.
+The latter rounds to whole pixels and can otherwise leave a selected date
+clipped at narrow widths. `routing-days-fit.test.cjs` covers selecting an
+older date in every supported test language.
+
 1. `magpie` with no arguments, `magpie app` or `magpie tray` calls `runGUI`, which calls `gui.Run`. A `nogui` build runs the TUI instead. A second launch hands over to the instance already running. On Windows, before any window is made, `webView2Check` asks Wails whether the WebView2 runtime is there (`Env.Info().PlatformInfo["WebView2"]`, "" when its lookup fails; a key Wails doesn't set counts as there). Without it Wails would exit on the first window with nothing on screen, so magpie logs it, shows a Windows message box in the reader's language naming the runtime, Microsoft's download page (`webView2Page`) and `magpie web` / `magpie tui`, opens the page on Yes, and `Run` ends (#1806, `webview2.go`, `TestWebView2MissingFromWails` on Windows). The box can't come from `ErrorHandler`, which runs on the thread Wails makes its windows on.
 2. `startBackend` brings up the gateway, or finds another magpie serving it.
 3. The panel and the window load `index.html` from `Handler`. `boot.js` passes the saved language, theme, colorblind mode, text size and desktop font choices before the first paint.

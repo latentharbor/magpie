@@ -12,6 +12,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { reach, scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const HOME = "/Users/nf";
@@ -112,9 +113,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // every switch in sight below the library's stuck head. Clicking the
         // pill can scroll it into view first (WebKit, now and then), which
         // left read_text_file under the head and the click on the head
+        await reach(page, sw(tools[2].name));
         await page.mouse.move(Math.min(490, width / 2), 250);
-        await page.mouse.wheel(0, 40);
-        await page.waitForFunction(() => document.querySelector("#view-library").scrollTop > 0);
+        const canScroll = await page.locator("#view-library").evaluate(v => v.scrollHeight > v.clientHeight);
+        if (canScroll) {
+          await page.mouse.wheel(0, 40);
+          await scrollSettled(page);
+        }
         const placed = () => page.evaluate(() => {
           const v = document.querySelector("#view-library").getBoundingClientRect();
           const head = document.querySelector("#view-library .lib-head").getBoundingClientRect();
@@ -130,7 +135,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           await page.mouse.wheel(0, 40 * p);
         }
         assert.equal(await placed(), 0, "the switches in sight");
-        await page.waitForTimeout(400);
+        await scrollSettled(page);
         const scrollTop = () => page.evaluate(() => document.querySelector("#view-library").scrollTop);
         const where = () => sw(tools[2].name).evaluate((b) => b.getBoundingClientRect().top);
         const top = await scrollTop(), at = await where();

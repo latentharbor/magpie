@@ -154,17 +154,21 @@ function routingPage(part) {
   }
   function fitDays() {
     if (!dayBar.clientWidth) return; // out of sight: fitted when it shows
+    // scrollWidth rounds to whole pixels. A last pill less than a pixel
+    // outside still gets clipped, especially when a selected date widens it.
+    const fits = () => dayBar.scrollWidth <= dayBar.clientWidth &&
+      dayBar.lastElementChild.getBoundingClientRect().right <= dayBar.getBoundingClientRect().right;
     const pills = [...dayBar.children].filter((x) => x !== moreDays);
     for (const x of pills) x.hidden = false;
     unseenDays = [];
-    if (dayBar.scrollWidth <= dayBar.clientWidth + 1) { moreDays.remove(); return; }
+    if (fits()) { moreDays.remove(); return; }
     dayBar.append(moreDays);
     // pills[0] is Live, pills[i] days[i - 1], newest first: the oldest go
     for (let i = pills.length - 1; i >= 1; i--) {
       pills[i].hidden = true;
       unseenDays.unshift(days[i - 1]);
       nameMoreDays();
-      if (dayBar.scrollWidth <= dayBar.clientWidth + 1) break;
+      if (fits()) break;
     }
   }
   new ResizeObserver(() => fitDays()).observe(dayBar);
