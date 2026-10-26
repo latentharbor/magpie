@@ -14,6 +14,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { reach } = require("./reader.cjs");
 
 const assets = path.resolve(process.env.ASSETS || path.join(__dirname, "../assets"));
 const models = [
@@ -83,16 +84,8 @@ function serve(lang, posts) {
 // wheel to a control, as the reader would (the page keeps still for any
 // other scroll), and click it where it is
 async function press(page, loc) {
-  const height = page.viewportSize().height;
-  await page.mouse.move(Math.min(550, (page.viewportSize().width / 2) | 0), 300);
-  for (let i = 0; i < 30; i++) {
-    const y = (await loc.boundingBox()).y;
-    if (y > 80 && y < height - 160) break;
-    await page.mouse.wheel(0, y < 80 ? -300 : 300);
-    await page.waitForTimeout(150);
-  }
-  const b = await loc.boundingBox();
-  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+  await reach(page, loc);
+  await loc.click();
 }
 const pick = async (page, label) => {
   const li = page.locator("#list li", { hasText: label });
@@ -129,7 +122,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await page.locator("select").count(), 0, "the app menu, not a native select");
 
         // the × takes one out; the last has none
-        await row.locator(".rt-c", { has: page.locator(".rt-model", { hasText: "flash" }) }).hover();
+        const flash = row.locator(".rt-c", { has: page.locator(".rt-model", { hasText: "flash" }) });
+        await reach(page, flash);
+        await flash.hover();
         await press(page, row.locator(`.rt-cx[title="${w.rm}"]`));
         assert.deepEqual(await chips(row), ["mini"]);
         assert.equal(await row.locator(".rt-then .rt-cx").count(), 0, "a rule's one model can't be taken out");

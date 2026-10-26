@@ -13,7 +13,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { watchSettingsReads, settingsDrawn } = require("./reader.cjs");
+const { watchSettingsReads, settingsDrawn, reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 
@@ -106,13 +106,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           const anthropic = page.locator("#lanList .lan-address-controls .segs .opt").nth(1);
           // scrolled with the wheel, as a reader would (a script's scroll
           // is put back), until the switch is well inside the view
-          await page.locator("#view-settings").hover();
-          for (let i = 0; i < 40; i++) {
-            const box = await anthropic.boundingBox();
-            if (box && box.y > 80 && box.y + box.height < 340 && (await scroll()) > 0) break;
-            await page.mouse.wheel(0, 120);
-            await page.waitForTimeout(30);
-          }
+          await reach(page, anthropic);
           const before = await scroll();
           assert(before > 0, "the settings must be scrolled to the switch");
           await anthropic.click();

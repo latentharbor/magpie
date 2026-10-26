@@ -65,7 +65,18 @@ async function reach(page, locator) {
     });
     // drawn again between two looks, or not drawn yet: look again
     if (!at) { await page.waitForTimeout(40); continue; }
-    if (at.clear) { await page.waitForTimeout(300); return; }
+    if (at.clear) {
+      await scrollSettled(page);
+      const clear = await locator.evaluateAll(es => {
+        const e = es.length === 1 ? es[0] : null, view = e?.closest(".view");
+        if (!view) return false;
+        const b = e.getBoundingClientRect(), v = view.getBoundingClientRect();
+        const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+        return b.top >= v.top && b.bottom <= v.bottom && !!hit && (e === hit || e.contains(hit));
+      });
+      if (clear) return;
+      continue;
+    }
     // landed, or the view is at its end and the wheel moves nothing: three
     // of those in turn and the control can't be brought clear
     stalls = (await wheeled(page, id, at.down ? 20 : -20)) ? 0 : stalls + 1;
@@ -92,6 +103,24 @@ async function wheeled(page, id, dy) {
   const was = await page.locator("#" + id).evaluate((v) => v.scrollTop);
   await page.mouse.wheel(0, dy);
   return page.waitForFunction(([id, was]) => document.getElementById(id).scrollTop !== was, [id, was], { timeout: 1000 }).then(() => true, () => false);
+}
+
+// WebKit wheels animate: the first changed scrollTop is not the landing
+// position. Capture click baselines only once every scroller has stood still.
+async function scrollSettled(page) {
+  await page.evaluate(() => document.fonts.ready.then(() => {}));
+  await page.evaluate(() => new Promise((resolve, reject) => {
+    const start = performance.now();
+    let last = "", since = start;
+    function frame(now) {
+      const at = JSON.stringify([scrollX, scrollY, ...[...document.querySelectorAll(".view,.ebody")].map(e => [e.scrollLeft, e.scrollTop])]);
+      if (at !== last) { last = at; since = now; }
+      if (now - since >= 250) return resolve();
+      if (now - start >= 5000) return reject(new Error("scroll did not settle"));
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }));
 }
 
 // wheelTo scrolls the page the way a reader does, down till the control's
@@ -176,4 +205,4 @@ async function openAgentSettings(page, id = "codex") {
   await page.waitForFunction(() => __settingsReads.asked > 0 && __settingsReads.asked === __settingsReads.drawn);
 }
 
-module.exports = { inView, reach, wheelTo, click, openPart, watchSettingsReads, settingsDrawn, agentRow, openAgentSettings };
+module.exports = { inView, reach, wheelTo, click, openPart, watchSettingsReads, settingsDrawn, agentRow, openAgentSettings, scrollSettled };

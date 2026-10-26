@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
 const { fixture } = require("./fixtures/caller-keys.cjs");
+const { scrollSettled } = require("./reader.cjs");
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
   for (const lang of ["en", "zh"]) {
@@ -36,7 +37,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const scrolled = async () => [await view.evaluate((v) => v.scrollTop), await page.evaluate(() => window.scrollY)];
       await page.mouse.move(500, 300);
       await page.mouse.wheel(0, 120);
-      await page.waitForTimeout(100);
+      await scrollSettled(page);
       const at = await scrolled();
       // the app's menu, not a native select
       await row("work").hover();

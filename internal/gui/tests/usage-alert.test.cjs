@@ -63,17 +63,10 @@ function server(lang, posts, problem) {
 
 const view = (page) => page.locator("#view-settings").evaluate((v) => v.scrollTop);
 
-// wheelTo scrolls the settings with the wheel, as a reader would (a script
-// setting scrollTop is put back), until the alert rows are mid-page.
+// Use the shared reader: an unfinished wheel burst can carry the switch
+// behind Settings' sticky tabs after this helper has returned.
 async function wheelTo(page) {
-  await page.locator("#view-settings").hover();
-  for (let i = 0; i < 40; i++) {
-    const box = await page.locator("#balanceAlertRow").boundingBox();
-    if (box && box.y + box.height < 300 && await view(page) > 0) return;
-    await page.mouse.wheel(0, 120);
-    await page.waitForTimeout(30);
-  }
-  throw new Error("couldn't scroll the alert rows into view");
+  await reach(page, page.locator("#usageAlertSegs .opt").nth(1));
 }
 
 const words = {

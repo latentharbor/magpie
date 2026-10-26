@@ -12,6 +12,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { reach, scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 
@@ -90,8 +91,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
         // Own: the time above to start from, then its own
         // the reader scrolls down to it (the view keeps the reader's place, not a script's)
-        await page.mouse.move(220, 400);
-        for (let i = 0; i < 12; i++) { await page.mouse.wheel(0, 400); await page.waitForTimeout(20); }
+        await reach(page, rows.first().locator(".segs .opt").nth(1));
+        await scrollSettled(page);
         if (process.env.ARTIFACT_DIR) await page.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `warm-at-own-${engine}-${lang}-${width}.png`) });
         const y = await scrolls(page);
         await rows.first().locator(".segs .opt").nth(1).click();

@@ -301,8 +301,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await page.evaluate(() => savePrefs({ ...prefsKeep(prefs), noStats: true }));
       assert.equal(posted.at(-1).searcher, "off");
       await page.reload();
-      await row.waitFor();
-      await row.scrollIntoViewIfNeeded();
+      await settingsDrawn(page);
+      await reach(page, row.locator("button.searcher-pick"));
       assert.equal(await row.locator("button.searcher-pick").innerText(), w.off);
       assert.equal(await row.locator(".searcher-own, .searcher-unused, .searcher-relays, .searcher-left-out").count(), 0);
       assert.equal(await page.locator("#searchFirstRow").count(), 0);

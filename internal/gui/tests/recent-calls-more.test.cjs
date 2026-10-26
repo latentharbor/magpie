@@ -5,6 +5,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { reach, scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const now = Date.now();
@@ -54,8 +55,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     assert.equal(await more.textContent(), "Show 20 more");
     // reach it as a reader does, with the wheel: the page holds its scroll
     // against a scroll nobody asked for, which a locator's click would be
-    await page.mouse.move(450, 300);
-    for (let i = 0; i < 10 && !(await more.evaluate((b) => b.getBoundingClientRect().bottom <= innerHeight)); i++) await page.mouse.wheel(0, 300);
+    await reach(page, more);
+    await scrollSettled(page);
     const top = () => page.evaluate(() => document.querySelector("#view-gateway").scrollTop);
     const before = await top();
     await more.click();
