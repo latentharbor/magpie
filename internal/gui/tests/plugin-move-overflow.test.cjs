@@ -63,6 +63,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         page.on("pageerror", (e) => errors.push(e.message));
         await page.route("**/*", serve(lang));
         await page.goto("http://magpie.test/?view=plugins");
+        await page.waitForFunction(() => load.done);
         await page.locator("#view-plugins button", { hasText: card[lang] }).first().waitFor();
         if (process.env.ARTIFACT_DIR) await page.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `plugin-move-overflow-${engine}-${lang}-${width}.png`) });
 

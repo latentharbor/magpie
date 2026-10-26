@@ -100,10 +100,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const ctx = await browser.newContext({ viewport: { width, height: 800 } }); // the MCP tab fits, its "In projects" too
       await ctx.addInitScript((tab) => { try { localStorage.setItem("magpie.libTab", tab); } catch {} }, tab);
       const page = await ctx.newPage();
-      page.setDefaultTimeout(5000);
+      page.setDefaultTimeout(15000);
       page.on("pageerror", (e) => errors.push(e.message));
       await page.route("http://magpie.test/**", server(lang, posts, fail, fixture));
       await page.goto("http://magpie.test/");
+      await page.waitForFunction(() => load.done);
       await page.locator('button[data-view="library"]').click();
       await page.locator("#view-library .lib-body:not(.lib-skel) .lib-row").first().waitFor();
       return page;

@@ -109,7 +109,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await selectOf(row), "none");
         assert.equal(await drag(page, row.locator(".to")), "");
         await drag(page, said);
-        await page.locator(".rt-req").nth(1).evaluate((e) => e.scrollIntoView({ block: "center", behavior: "instant" }));
+        await reach(page, page.locator(".rt-req").nth(1));
         await page.locator(".rt-req").nth(1).click();
         await page.waitForFunction(() => document.querySelector(".rt-req[aria-pressed=true]") === document.querySelectorAll(".rt-req")[1]);
 

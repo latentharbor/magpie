@@ -82,8 +82,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await p.locator("#ledWrap .led tbody tr").first().waitFor();
         await p.waitForTimeout(300);
         await reader.click(p, p.locator("#ledMetric .opt").filter({ hasText: SPEED[lang] }));
-        // The chart's transparent day hit area overlays its painted columns.
-        const hit = p.locator("#ledChart .led-day").first();
+        // Pointer handlers belong to the SVG, above its painted decorations.
+        const hit = p.locator("#ledChart svg").first();
         await reader.reach(p, hit);
         const box = await hit.boundingBox();
         await p.mouse.move(0, 0);

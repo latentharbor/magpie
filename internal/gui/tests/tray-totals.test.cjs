@@ -12,7 +12,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { openPart, reach } = require("./reader.cjs"); // reach: wheeled to as a reader would, rows taller since their lines wrap whole (arculongus on Discord); a Playwright scroll is undone
+const { openPart, reach, scrollSettled } = require("./reader.cjs"); // reach: wheeled to as a reader would, rows taller since their lines wrap whole (arculongus on Discord); a Playwright scroll is undone
 
 const assets = path.resolve(__dirname, "../assets");
 
@@ -112,6 +112,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           await pill.waitFor();
           await pillIs(page, w.off);
           await reach(page, pill);
+          await scrollSettled(page);
           const before = await view(page);
           const pillY = (await pill.boundingBox()).y;
 

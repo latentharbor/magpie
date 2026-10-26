@@ -82,9 +82,19 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // a wheel turned slowly, a notch every 400ms (a run broken on a loaded
         // Mac looks the same): every notch still lands
         const before = await rested(p, view);
-        for (let i = 0; i < 5; i++) { await p.mouse.wheel(0, 20); await p.waitForTimeout(400); }
+        for (let i = 0; i < 5; i++) {
+          const at = await view.evaluate(v => v.scrollTop);
+          await p.mouse.wheel(0, 20);
+          await p.waitForFunction(at => document.querySelector("#view-agents").scrollTop >= at + 19, at);
+          await p.waitForTimeout(400);
+        }
         assert(await rested(p, view) >= before + 95, "five slow notches of 20px land");
-        for (let i = 0; i < 5; i++) { await p.mouse.wheel(0, -20); await p.waitForTimeout(400); }
+        for (let i = 0; i < 5; i++) {
+          const at = await view.evaluate(v => v.scrollTop);
+          await p.mouse.wheel(0, -20);
+          await p.waitForFunction(at => document.querySelector("#view-agents").scrollTop <= at - 19, at);
+          await p.waitForTimeout(400);
+        }
         const down = await rested(p, view);
         assert.equal(await p.evaluate(() => window.__heard()), 0, "the page heard none of the wheels");
         assert(down >= 190, `ten wheels of 20px scroll the view the page never heard them in: left at ${down}`);

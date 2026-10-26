@@ -9,6 +9,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { watchSettingsReads, settingsDrawn } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 function server(lang, posts, proxy = "") {
@@ -63,7 +64,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const posts = [], errors = [];
       page.on("pageerror", (e) => errors.push(e.message));
       await page.route("**/*", server(lang, posts));
+      await watchSettingsReads(page);
       await page.goto("http://magpie.test/?view=settings&tab=network");
+      await settingsDrawn(page);
       const box = page.locator("#proxySegs");
       const address = box.locator("input.proxy");
       const user = box.getByRole("textbox", { name: l.user, exact: true });
@@ -73,6 +76,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const response = page.waitForResponse((r) => r.url().endsWith("/api/settings") && r.request().method() === "POST");
         await action();
         await response;
+        await page.waitForFunction(() => prefsQueued === 0);
         await page.waitForFunction((word) => document.querySelector("#status")?.textContent.includes(word), l.saved);
         assert.equal(posts.length, count + 1, "save once for the whole proxy");
         assert.equal(posts.at(-1).proxy, want);
@@ -93,6 +97,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.locator("#proxySub").click();
       }, encoded);
       await page.reload();
+      await settingsDrawn(page);
       assert.equal(await address.inputValue(), "socks5://127.0.0.1:1080");
       assert.equal(await user.inputValue(), "a@b:/% 用户");
       assert.equal(await pass.inputValue(), "p@ss:/% #密码");
@@ -115,6 +120,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await pass.fill("");
       await saved(() => pass.press("Enter"), "socks5://127.0.0.1:1080");
       await page.reload();
+      await settingsDrawn(page);
       assert.equal(await user.inputValue(), "");
       assert.equal(await pass.inputValue(), "");
 

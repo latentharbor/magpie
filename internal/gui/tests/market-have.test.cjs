@@ -95,6 +95,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       });
       t.after(() => browser.close());
       await page.goto("http://magpie.test/?view=library");
+      await page.waitForFunction(() => load.done);
       const view = page.locator("#view-library");
       const card = (kind, id) => view.locator(`.mk[data-market="${kind}"] .mk-card[data-id="${id}"]`);
       await card("mcp", "playwright").locator(".mk-have").waitFor();
