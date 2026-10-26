@@ -317,7 +317,17 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const heard = (fn, e) => { try { fn(e); } finally { window.__wheelsHeard++; } };
         window.addEventListener = function (type, fn, o) {
           if (type !== "wheel") return add.call(this, type, fn, o);
-          return add.call(this, type, (e) => (window.__lateWheel ? setTimeout(() => heard(fn, e), 60) : heard(fn, e)), o);
+          return add.call(this, type, (e) => {
+            if (!window.__lateWheel) return heard(fn, e);
+            // Inject the complete compositor step before delivering its
+            // trusted event. WPE smooth-wheels deliver the first 9–18px
+            // frame, then cancel the remaining animation when the guard
+            // puts that frame back. That does not model the complete scroll
+            // arriving before the event that this case is meant to cover.
+            e.preventDefault();
+            e.target.closest(".view").scrollTop += e.deltaY;
+            setTimeout(() => heard(fn, e), 60);
+          }, { ...o, passive: false });
         };
       });
       await reset();
