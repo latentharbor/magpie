@@ -112,6 +112,17 @@ usage. A real successful reading replaces the estimate.
 blocking window has reset. Revoked/expired credentials are not automatically
 cleared merely because an account receives a Premium seat.
 
+A confirmed sign-out of a selected Premium member also triggers replacement,
+even when its quota is usable or its previous window has reset. Explicit native
+or HTTP credential revocation, and an authoritative credential store cleared by
+Claude Code, close stale admissions and wake this organization's controller.
+The same drain, verified seat transaction and request handoff apply. Existing
+persisted sign-outs are recognized at startup and periodic reconciliation.
+Temporary refresh contention, network/read failures and a refusal of an older
+credential do not revoke the current credential or move its seat. If no usable
+standby exists, authentication failure remains an authentication failure, never
+a fabricated allowance reset.
+
 The persisted snapshots feed ordinary account quota displays and routing even
 in held/read-only mode before the generic quota cache warms up. Unassigned
 accounts do not call `/usage` for ordinary display; legacy snapshots with no
@@ -144,7 +155,8 @@ Ordinary inference only updates a local in-flight counter. A stale plan that
 still names a draining account is rejected locally before launching inference.
 A failed managed Claude request whose output has not been committed can wait
 for the current bounded handoff, re-resolve that provider's enabled accounts,
-and continue with its original body. The final candidate's refusal is held
+and continue with its original body, including a confirmed authentication loss.
+The final candidate's refusal is held
 too. Visible text, reasoning and tool calls are not replayed. Account/model
 scopes, pinned/strict affinity and sealed conversation ownership still apply.
 

@@ -3472,7 +3472,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			stopAlive()
 		}
 		if teamRetry &&
-			(failure(hw.code(), hw.errBody()) == failQuota || hw.code() == 429 && provider.ClaudeTeamExhausted(c.p.Account.User) || strings.Contains(call.Error, "Claude Team seat rotation in progress")) {
+			(failure(hw.code(), hw.errBody()) == failQuota || hw.code() == 429 && provider.ClaudeTeamExhausted(c.p.Account.User) ||
+				provider.ClaudeSignInRequired(call.Error) || strings.Contains(call.Error, "Claude Team seat rotation in progress")) {
 			stopAlive := hw.keepQueued()
 			fresh := s.teamSuccessors(r, from, c, cands)
 			stopAlive()

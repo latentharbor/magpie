@@ -170,7 +170,7 @@ func nativeTeamFixture(t *testing.T) *nativeTeamTransport {
 }
 
 func TestClaudeTeamNativeLimitRetainsRequest(t *testing.T) {
-	for _, window := range []string{"five_hour", "seven_day", "session-refusal", "weekly-refusal"} {
+	for _, window := range []string{"five_hour", "seven_day", "session-refusal", "weekly-refusal", "auth-refusal"} {
 		t.Run(window, func(t *testing.T) {
 			f := nativeTeamFixture(t)
 			refusal := `echo '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"` + window + `","utilization":0.97,"resetsAt":` + strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10) + `}}'
@@ -182,6 +182,9 @@ echo '{"type":"result","is_error":true,"result":"You have hit your ` + window + 
 				}
 				refusal = `echo '{"type":"assistant","error":"rate_limit"}'
 echo "{\"type\":\"result\",\"is_error\":true,\"result\":\"You've hit your ` + name + ` limit · resets 3:40am (Australia/Perth)\"}"`
+			}
+			if window == "auth-refusal" {
+				refusal = `echo '{"type":"result","is_error":true,"result":"OAuth token revoked"}'`
 			}
 			bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
 			testenv.Program(t, filepath.Join(bin, "claude"), `#!/bin/sh

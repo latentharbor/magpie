@@ -665,6 +665,25 @@ func teamSpent(ws []ClaudeLimit, threshold float64, now time.Time) bool {
 	return false
 }
 
+// A confirmed sign-out closes stale admissions immediately and wakes the
+// existing background transfer. Call only after releasing credential locks;
+// temporary refresh/read errors and stale credential refusals never enter here.
+func noteClaudeTeamSignInFailure(user string) {
+	t := claudeTeamForUser(user)
+	t.mu.Lock()
+	id := t.users[strings.ToLower(user)]
+	wake := t.cfg.Enabled && slices.Contains(t.cfg.Members, id) &&
+		t.seats[id] == "team_tier_1" && !t.closed[id]
+	if wake {
+		t.closed[id], t.requested = true, true
+		t.signalLocked()
+	}
+	t.mu.Unlock()
+	if wake {
+		t.notify()
+	}
+}
+
 func teamBack(ws []ClaudeLimit, threshold float64, now time.Time) (time.Time, bool) {
 	var at time.Time
 	for _, w := range ws {
@@ -972,7 +991,8 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 		if !slices.Contains(c.Members, s.AccountID) {
 			continue
 		}
-		if s.SeatTier == "team_tier_1" && (manual != "" && manual == s.AccountID || manual == "" && teamSpent(t.disk.Limits[s.AccountID], c.Threshold, now)) && from == "" {
+		if s.SeatTier == "team_tier_1" && (manual != "" && manual == s.AccountID ||
+			manual == "" && (identities[s.AccountID].Lapsed != "" || teamSpent(t.disk.Limits[s.AccountID], c.Threshold, now))) && from == "" {
 			from = s.AccountID
 		}
 		if s.SeatTier != "unassigned" || identities[s.AccountID].Lapsed != "" || teamSpent(t.disk.Limits[s.AccountID], c.Threshold, now) {

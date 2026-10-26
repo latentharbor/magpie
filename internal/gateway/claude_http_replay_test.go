@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,79 @@ import (
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/settings"
 )
+
+func TestClaudeHTTPAuthHandoffRetainsRequest(t *testing.T) {
+	for _, kind := range []string{"cleared-store", "upstream-revoked"} {
+		t.Run(kind, func(t *testing.T) {
+			f := nativeTeamFixture(t)
+			cfg := settings.Load()
+			cfg.ClaudeTransport = "http"
+			if err := settings.Save(cfg); err != nil {
+				t.Fatal(err)
+			}
+			oldAuth := claudeHTTPAuth
+			claudeHTTPAuth = func(_ context.Context, a *provider.Account) (provider.ClaudeHTTPCredentials, error) {
+				version := provider.ClaudeLoginVersion(a.User)
+				if kind == "cleared-store" && a.User == "a@example.com" {
+					provider.NoteClaudeSignInFailure(a.User, version, "OAuth token revoked")
+					return provider.ClaudeHTTPCredentials{}, errors.New("Claude Code could not authenticate this account; sign in again in magpie")
+				}
+				return provider.ClaudeHTTPCredentials{Token: a.User, AccountUUID: a.User, DeviceID: "fixture-device", LoginVersion: version}, nil
+			}
+			t.Cleanup(func() { claudeHTTPAuth = oldAuth })
+			var calls atomic.Int32
+			s := New()
+			t.Cleanup(s.subscription.abortAll)
+			s.client = &http.Client{Transport: claudeHTTPRoundTrip(func(r *http.Request) (*http.Response, error) {
+				calls.Add(1)
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					return nil, err
+				}
+				if !strings.Contains(string(body), "retain-auth-failed-request") {
+					t.Error("handoff lost original request")
+				}
+				status := 200
+				reply := `{"id":"msg_auth","type":"message","role":"assistant","content":[{"type":"text","text":"replacement-answered"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`
+				if r.Header.Get("Authorization") == "Bearer a@example.com" {
+					status = 401
+					reply = `{"type":"error","error":{"type":"authentication_error","message":"OAuth access token has been revoked."}}`
+				}
+				return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(reply)), Request: r}, nil
+			})}
+			h := httptest.NewServer(s.Handler())
+			defer h.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			r, _ := http.NewRequestWithContext(ctx, "POST", h.URL+"/v1/messages", strings.NewReader(`{"model":"claude/claude-sonnet-5","max_tokens":128,"messages":[{"role":"user","content":"retain-auth-failed-request"}]}`))
+			r.Header.Set("Content-Type", "application/json")
+			res, err := http.DefaultClient.Do(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := io.ReadAll(res.Body)
+			res.Body.Close()
+			wantCalls := int32(2)
+			if kind == "cleared-store" {
+				wantCalls = 1 // failed before any upstream inference
+			}
+			if err != nil || res.StatusCode != 200 || !strings.Contains(string(body), "replacement-answered") || calls.Load() != wantCalls {
+				t.Fatalf("auth handoff failed: %d calls=%d %s %v", res.StatusCode, calls.Load(), body, err)
+			}
+			f.mu.Lock()
+			writes := f.writes
+			f.mu.Unlock()
+			if writes != 2 {
+				t.Fatalf("authentication failure did not transfer exactly one seat: %d writes", writes)
+			}
+			for _, l := range provider.Logins("claude") {
+				if l.User == "a@example.com" && l.Lapsed == "" {
+					t.Fatal("seat transfer cleared genuine credential refusal")
+				}
+			}
+		})
+	}
+}
 
 func TestClaudeHTTPVisibleOutputIsNeverReplayed(t *testing.T) {
 	for _, tc := range []struct{ name, event, visible string }{

@@ -18,6 +18,7 @@ import (
 // token: Claude Code remains the only owner of refresh-token rotation.
 type ClaudeHTTPCredentials struct {
 	Token, AccountUUID, OrganizationUUID, DeviceID string
+	LoginVersion                                   string
 }
 
 var errClaudeHTTPExpired = errors.New("Claude HTTP OAuth access token expired; refresh this account in Claude Code, then retry")
@@ -163,5 +164,5 @@ func readClaudeHTTPAuth(ctx context.Context, a *Account) (ClaudeHTTPCredentials,
 	if c.OAuth.ExpiresAt <= time.Now().UnixMilli() {
 		return ClaudeHTTPCredentials{}, errClaudeHTTPExpired
 	}
-	return ClaudeHTTPCredentials{Token: c.OAuth.AccessToken, AccountUUID: id.AccountID, OrganizationUUID: id.OrganizationID, DeviceID: device}, nil
+	return ClaudeHTTPCredentials{Token: c.OAuth.AccessToken, AccountUUID: id.AccountID, OrganizationUUID: id.OrganizationID, DeviceID: device, LoginVersion: c.version()}, nil
 }

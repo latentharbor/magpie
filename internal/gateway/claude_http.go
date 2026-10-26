@@ -60,12 +60,17 @@ func usesClaudeHTTP(ctx context.Context) bool {
 	return mode == "http"
 }
 
-func (s *Server) serveClaudeHTTP(w http.ResponseWriter, r *http.Request, from provider.Protocol, p provider.Provider, model string, body []byte, usage *Usage) (int, string) {
+func (s *Server) serveClaudeHTTP(w http.ResponseWriter, r *http.Request, from provider.Protocol, p provider.Provider, model string, body []byte, usage *Usage) (status int, message string) {
 	auth, err := claudeHTTPAuth(p.Via(r.Context()), p.Account)
 	if err != nil {
 		msg := "Claude Code HTTP: " + err.Error()
 		return writeError(w, from, http.StatusServiceUnavailable, msg), msg
 	}
+	defer func() {
+		if status >= 400 {
+			provider.NoteClaudeSignInFailure(p.Account.User, auth.LoginVersion, message)
+		}
+	}()
 	owner := claudeOwner(p, model, auth)
 	owner.grant = modelOf(body)
 	if from == provider.Anthropic && s.claudeThreadMoved(r, body, owner) {

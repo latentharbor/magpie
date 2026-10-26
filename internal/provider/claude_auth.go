@@ -90,16 +90,24 @@ func refuseClaudeLogin(l *savedLogin, version string) bool {
 // (version): one started on an older credential says nothing of this one.
 // The run's own error stays in the request's trace.
 func NoteClaudeSignInFailure(user, version, message string) {
-	if !ClaudeSignInRequired(message) {
+	if version == "" || !ClaudeSignInRequired(message) {
 		return
 	}
+	refused := false
+	defer func() {
+		if refused {
+			noteClaudeTeamSignInFailure(user)
+		}
+	}()
 	loginsMu.Lock()
 	defer loginsMu.Unlock()
 	ls := readLogins()
 	for i := range ls {
 		if ls[i].Agent == "claude" && strings.EqualFold(ls[i].User, user) && claudeLoginVersion(ls[i]) == version {
 			if refuseClaudeLogin(&ls[i], version) {
-				_ = writeLogins(ls)
+				refused = writeLogins(ls) == nil
+			} else {
+				refused = ls[i].Lapsed != ""
 			}
 			return
 		}

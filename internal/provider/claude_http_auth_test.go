@@ -45,7 +45,8 @@ func TestClaudeHTTPAuthOwnAndNativeRotation(t *testing.T) {
 			Scopes: []string{"user:inference"}, SubscriptionType: "max",
 		}})
 		got, err := ClaudeHTTPAuth(context.Background(), a)
-		if err != nil || got != (ClaudeHTTPCredentials{Token: token, AccountUUID: "own-account", OrganizationUUID: "own-org", DeviceID: strings.Repeat("a", 64)}) {
+		version := (claudeCredentials{OAuth: claudeAuth{AccessToken: token, RefreshToken: "never-spent"}}).version()
+		if err != nil || got != (ClaudeHTTPCredentials{Token: token, AccountUUID: "own-account", OrganizationUUID: "own-org", DeviceID: strings.Repeat("a", 64), LoginVersion: version}) {
 			t.Fatalf("current sign-in = %+v, %v", got, err)
 		}
 	}
@@ -71,7 +72,7 @@ func TestClaudeHTTPAuthSavedUsesItsIdentityAndKeepsNativeRotation(t *testing.T) 
 			writeFile(t, filepath.Join(claudeAccountDir(l.User), ".credentials.json"), map[string]any{"claudeAiOauth": claudeAuth{AccessToken: token, RefreshToken: "rotated-refresh", ExpiresAt: time.Now().Add(time.Hour).UnixMilli(), Scopes: []string{"user:inference"}}})
 		}
 		got, err := ClaudeHTTPAuth(context.Background(), a)
-		if err != nil || got != (ClaudeHTTPCredentials{Token: token, AccountUUID: "side-account", OrganizationUUID: "side-org", DeviceID: strings.Repeat("a", 64)}) {
+		if err != nil || got != (ClaudeHTTPCredentials{Token: token, AccountUUID: "side-account", OrganizationUUID: "side-org", DeviceID: strings.Repeat("a", 64), LoginVersion: ClaudeLoginVersion(l.User)}) {
 			t.Fatalf("saved sign-in = %+v, %v", got, err)
 		}
 	}
@@ -142,7 +143,8 @@ func TestClaudeHTTPAuthUsesConfiguredClaudeDirectory(t *testing.T) {
 		"userID": "configured-device", "oauthAccount": map[string]any{"emailAddress": a.User, "accountUuid": "configured-account", "organizationUuid": "configured-org"},
 	})
 	got, err := ClaudeHTTPAuth(context.Background(), a)
-	if err != nil || got != (ClaudeHTTPCredentials{Token: "configured-access", AccountUUID: "configured-account", OrganizationUUID: "configured-org", DeviceID: "configured-device"}) {
+	version := (claudeCredentials{OAuth: claudeAuth{AccessToken: "configured-access"}}).version()
+	if err != nil || got != (ClaudeHTTPCredentials{Token: "configured-access", AccountUUID: "configured-account", OrganizationUUID: "configured-org", DeviceID: "configured-device", LoginVersion: version}) {
 		t.Fatalf("configured sign-in = %+v, %v", got, err)
 	}
 }
