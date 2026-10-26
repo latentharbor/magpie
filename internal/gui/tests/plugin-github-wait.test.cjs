@@ -21,6 +21,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { reach } = require("./reader.cjs");
 
 const assets = path.resolve(process.env.MAGPIE_WAIT_ASSETS || path.resolve(__dirname, "../assets"));
 
@@ -152,8 +153,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           assert.match(await f.sec.locator(".pm-ghnone").innerText(), w.failed);
           assert.equal(await f.sec.locator(".pm-card").count(), 0);
           await shot(f.sec, `failed-${engine}-${lang}-${width}`);
+          const retry = f.sec.getByRole("button", { name: w.again });
+          await reach(f.page, retry);
           const before = await f.page.evaluate(() => [window.scrollY, ...[...document.querySelectorAll("*")].filter((e) => e.scrollTop > 0).map((e) => (e.id || e.className) + ":" + e.scrollTop)].join());
-          await f.sec.getByRole("button", { name: w.again }).click();
+          await retry.click();
           await f.sec.locator(".pm-ghlook").waitFor();
           assert.equal(await f.page.evaluate(() => [window.scrollY, ...[...document.querySelectorAll("*")].filter((e) => e.scrollTop > 0).map((e) => (e.id || e.className) + ":" + e.scrollTop)].join()), before, "nothing scrolls on Try again");
           again.go();

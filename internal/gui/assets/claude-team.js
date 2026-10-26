@@ -66,11 +66,15 @@ function claudeTeamSignedInProvider(st) {
   return st.agent === "claude" && providers.providers.find((p) => p.team?.members?.some((m) => m.selected && m.user === st.user));
 }
 
-async function addClaudeTeamAccount(organizationId) {
+async function addClaudeTeamAccount(organizationId, event) {
+  const reveal = scrollOnPurpose(event, 3000);
   editing = null; draft = null; adding = false;
   await closeModal();
   editing = "claude-team-" + organizationId;
   await startSignIn("claude", false, undefined, { organizationId });
+  // Returning from Team settings opens a fresh provider editor. A large
+  // account list must not leave the requested sign-in below its viewport.
+  if (reveal) $("#modal .signing")?.scrollIntoView({ block: "center" });
 }
 
 function renderTeamAccounts(a, p) {
@@ -113,7 +117,7 @@ function drawTeamAccounts(list, p) {
     const add = el("button", "acc add team-add-account");
     const dot = el("span", "dot"); dot.append(svg(PLUS, 10, 1.8));
     add.append(dot, el("span", "n", t("Add another {name} account", { name: "Claude" })));
-    add.onclick = () => addClaudeTeamAccount(p.teamOrganization);
+    add.onclick = (event) => addClaudeTeamAccount(p.teamOrganization, event);
     list.append(add);
   }
 }
@@ -217,7 +221,7 @@ async function openClaudeTeam(organizationId = "") {
     if (organizationId) {
       const add = el("button", "text team-add-account", t("Add another {name} account", { name: "Claude" }));
       add.disabled = pending;
-      add.onclick = () => addClaudeTeamAccount(organizationId);
+      add.onclick = (event) => addClaudeTeamAccount(organizationId, event);
       pool.append(add);
     }
     if (view.history?.length) {

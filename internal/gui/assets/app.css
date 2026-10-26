@@ -1965,7 +1965,7 @@ body.panel .profiles #save { height: 25px; } /* the field's: the line keeps its 
 /* even to the eye: the rule above is a pixel of the top's space, and the
    panel's rim takes about one off the bottom's, so 1+5 over, 7 under */
 body.panel .foot { min-height: 0; padding: 5px 8px 7px 14px; border-top: 1px solid var(--line-2); }
-.pq-age { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.pq-age { min-width: 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .pq-age:not([hidden]) + .status:empty { display: none; }
 #view-agents.loading .panel-quota { visibility: hidden; }
 

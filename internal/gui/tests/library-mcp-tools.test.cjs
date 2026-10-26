@@ -115,6 +115,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.mouse.wheel(0, 30);
         await page.waitForFunction(() => document.querySelector("#view-library").scrollTop > 0);
         await page.waitForTimeout(400);
+        await reach(page, status("filesystem"));
         const top = await scrollTop(), pillAt = await where();
 
         // a click shows each tool's name and description, and asks nothing

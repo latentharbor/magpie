@@ -25,7 +25,7 @@ function page() {
     const t = x => x;
     const calm = () => true;
     const document = { querySelectorAll: () => [] };
-    const el = () => ({ dataset: {}, classList: { add() {}, remove() {} }, setAttribute() {} });
+    const el = () => ({ dataset: {}, classList: { add() {}, remove() {}, toggle() {} }, setAttribute() {} });
     function renderQuotas() {}
     function loadUpstream() {}
     function status(x) { errors.push(x); }

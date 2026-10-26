@@ -105,7 +105,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           if (p.init) await page.evaluate(([k, v]) => localStorage.setItem(k, v), p.init).catch(() => {});
           await page.goto("http://magpie.test/" + p.url);
           if (p.init) { await page.evaluate(([k, v]) => localStorage.setItem(k, v), p.init); await page.reload(); }
-          await page.locator(p.head).waitFor();
+          // Built-in has no tools. When its title fills the bar its empty
+          // head has zero width, so presence, not visibility, is correct.
+          await page.locator(p.head).waitFor({ state: p.name === "plugins builtin" ? "attached" : "visible" });
           await page.locator("#crumb b").waitFor();
           // the Library's buttons have their tooltips once it has loaded
           if (p.name.startsWith("library")) await page.locator("#view-library .lib-more:not([disabled])").waitFor();

@@ -260,7 +260,16 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       await dialog.locator(".team-member").nth(12).waitFor();
       assert(!(await dialog.innerText()).includes("fixture-secret-value"));
       await dialog.getByRole("button",{name:tr("Rotate seat now"),exact:true}).click();
-      await dialog.getByText(tr("Recent seat changes"),{exact:true}).waitFor();
+      await dialog.getByText(tr("Recent seat changes"),{exact:true}).waitFor().catch(async error => {
+        const layout = await dialog.evaluate(e => ({
+          connected:e.isConnected, history:e.querySelector(".team-history")?.outerHTML,
+          bodyScroll:e.querySelector(".ebody")?.scrollTop,
+          buttons:[...e.querySelectorAll("button")].filter(b=>b.textContent.includes("Rotate")).map(b=>({
+            text:b.textContent,disabled:b.disabled,rect:b.getBoundingClientRect().toJSON(),
+          })),
+        }));
+        throw new Error(JSON.stringify({posts:f.posts,layout}),{cause:error});
+      });
       assert.deepEqual(f.posts[1],{path:"/api/claude-team/rotate",body:{organizationId:org,from:id(2)}});
       const failed=f.views.get(org).members[1];
       failed.quotaError="Quota collection failed; retry while this account has Premium access";

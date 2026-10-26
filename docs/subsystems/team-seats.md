@@ -197,7 +197,9 @@ second automatic seat controller on the same pool.
 An existing organization's ordinary account list and its Team settings both
 offer Add another Claude account at the bottom. They run the existing Claude
 Code browser sign-in with an organization UUID constraint, retained through
-retry and proxy changes. A foreign profile fails before being saved. Successful
+retry and proxy changes. The initiating click reveals the sign-in inside the
+provider editor even when a long account list puts it below the viewport.
+A foreign profile fails before being saved. Successful
 login or file import automatically joins the matching configured organization,
 persists membership locally, queues quota collection and returns the editor to
 that organization. Joining does not need an administrator network request or

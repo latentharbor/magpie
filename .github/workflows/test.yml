@@ -77,7 +77,9 @@ jobs:
             "claude-team", "claude-login",
             "found-skill-pick-remove", "quota-refresh-order", "routing-pause",
             "search-first", "session-identity", "agent-update-all",
-            "panel-quota-refresh",
+            "panel-quota-refresh", "header-zoom-fit", "side-toggle",
+            "settings-lines-wrap", "sidebar-glide", "plugin-github-wait",
+            "library-mcp-tools",
           ].map(name => name + ".test.cjs");
           const files = process.env.FULL_UI === "true"
             ? readdirSync(dir).filter(f => f.endsWith(".test.cjs")).sort()
