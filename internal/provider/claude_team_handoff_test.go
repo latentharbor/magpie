@@ -62,6 +62,27 @@ func TestClaudeTeamInvalidStandbyStoreIsPreserved(t *testing.T) {
 	}
 }
 
+func TestClaudeTeamReauthRequiresSelectedMember(t *testing.T) {
+	_, _, c := teamFixture(t)
+	ls := readLogins()
+	member := ls[1]
+	if err := claudeTeamLoginMatches(member, c.OrganizationID, member.User); err != nil {
+		t.Fatal(err)
+	}
+	if err := claudeTeamLoginMatches(ls[2], c.OrganizationID, member.User); err == nil {
+		t.Fatal("another member silently completed reauthentication")
+	}
+	if err := claudeTeamLoginMatches(ls[2], c.OrganizationID, ""); err != nil {
+		t.Fatal("ordinary organization login was restricted to a previous member")
+	}
+	if err := claudeTeamLoginMatches(member, teamID(99), member.User); err == nil {
+		t.Fatal("foreign organization completed reauthentication")
+	}
+	if err := claudeTeamLoginMatches(member, c.OrganizationID, "removed@example.com"); err == nil {
+		t.Fatal("missing original identity accepted")
+	}
+}
+
 func TestClaudeTeamSmartTrustAndDwell(t *testing.T) {
 	tm, _, c := teamFixture(t)
 	now := time.Now()

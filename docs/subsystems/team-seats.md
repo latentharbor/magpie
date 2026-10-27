@@ -142,7 +142,9 @@ quota windows, including through recovery. Older entries retain an unknown
 reason. The provider summary and member lists identify confirmed sign-outs;
 both the provider editor and Team settings offer the existing sign-in flow
 with the exact account and organization retained. Viewing a warning never
-starts sign-in or changes assignments.
+starts sign-in or changes assignments. Completion verifies the original saved
+account UUID as well as the organization; selecting another member in the
+browser cannot clear the original member's reauthentication warning.
 There is no preferred/current-CLI-login account or account-switch action in the
 Team UI. An unknown reset on a known exhausted account is not assumed reset.
 Quota reads for unassigned or draining accounts do not invoke inference.

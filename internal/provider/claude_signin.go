@@ -30,6 +30,30 @@ import (
 	"github.com/yetone/magpie/internal/wslrun"
 )
 
+// A Team reauthentication repairs the selected member, rather than silently
+// adding whichever other member is signed in in the browser. Ordinary additions
+// have no expected user and still accept any member of the selected organization.
+func claudeTeamLoginMatches(l savedLogin, organization, user string) error {
+	id, ok := savedSessionIdentity(l)
+	if !ok || !strings.EqualFold(id.OrganizationID, organization) {
+		return errors.New("this Claude account does not belong to the selected organization; sign in to an account in that organization")
+	}
+	if user == "" {
+		return nil
+	}
+	for _, previous := range readLogins() {
+		if previous.Agent != "claude" || !strings.EqualFold(previous.User, user) {
+			continue
+		}
+		want, ok := savedSessionIdentity(previous)
+		if ok && strings.EqualFold(want.OrganizationID, id.OrganizationID) && strings.EqualFold(want.AccountID, id.AccountID) {
+			return nil
+		}
+		return errors.New("sign in to the selected Claude account to reauthenticate it")
+	}
+	return errors.New("the Claude account selected for reauthentication is no longer saved")
+}
+
 // claudeCLISignIn is a `claude auth login` magpie is running.
 type claudeCLISignIn struct {
 	mu   sync.Mutex
@@ -232,10 +256,7 @@ func startClaudeSignIn(s *signInFlow) error {
 		if err == nil {
 			l, lerr := claudeSignedIn(cli, dir, s.proxy)
 			if lerr == nil && s.teamOrganization != "" {
-				id, ok := savedSessionIdentity(l)
-				if !ok || !strings.EqualFold(id.OrganizationID, s.teamOrganization) {
-					lerr = errors.New("this Claude account does not belong to the selected organization; sign in to an account in that organization")
-				}
+				lerr = claudeTeamLoginMatches(l, s.teamOrganization, s.user)
 			}
 			if lerr == nil {
 				var using bool
