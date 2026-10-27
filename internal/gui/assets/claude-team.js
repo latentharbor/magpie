@@ -250,7 +250,7 @@ async function openClaudeTeam(organizationId = "") {
       const history = el("details", "team-history"); history.append(el("summary", "", t("Recent seat changes")));
       const who = (id) => view.members.find((m) => m.accountId === id)?.user || id;
       const result = { assigned: "Assigned", rolled_back: "Rolled back", unchanged: "Unchanged" };
-      const reasons = { manual: "Manual", authentication: "Sign-in expired", exhausted: "Quota exhausted", expiry: "Expiring allowance" };
+      const reasons = { manual: "Manual", authentication: "Sign-in ran out", exhausted: "Quota exhausted", expiry: "Expiring allowance" };
       for (const h of view.history.slice(-5).reverse()) history.append(el("p", "hint", date(h.at) + " · " + who(h.from) + " → " + who(h.to) + " · " + t(result[h.result] || "Not verified") + (reasons[h.reason] ? " · " + t(reasons[h.reason]) : "")));
       pool.append(history);
     }
