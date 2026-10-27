@@ -50,9 +50,17 @@ func TestClaudeTeamRefusalDuringReconcileKeepsHandoffPending(t *testing.T) {
 	if err := tm.reconcile(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
-	if tm.requested || tm.rotating || tm.seats[teamID(3)] != "team_tier_1" || len(admin.writes) != 2 {
+	if tm.rotating || tm.seats[teamID(3)] != "team_tier_1" || len(admin.writes) != 2 {
 		t.Fatalf("next pass did not complete the pending handoff: requested=%v rotating=%v seats=%v writes=%v enabled=%v lapse=%q",
 			tm.requested, tm.rotating, tm.seats, admin.writes, tm.routeEnabled(tm.cfg), claudeLapseOf(user))
+	}
+	// Reading the refused source's native store can wake the controller
+	// again during that transfer. Consume it without making another transfer.
+	if err := tm.reconcile(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if tm.requested || tm.rotating || len(admin.writes) != 2 {
+		t.Fatal("the duplicate refusal did not settle after one handoff")
 	}
 }
 
