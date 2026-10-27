@@ -333,11 +333,12 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       failed.quotaError="Quota collection failed; retry while this account has Premium access";
       await dialog.getByRole("button",{name:tr("Refresh"),exact:true}).click();
       await dialog.getByText(tr(failed.quotaError),{exact:true}).waitFor();
+      assert.deepEqual(f.posts.at(-1),{path:"/api/claude-team/refresh",body:{organizationId:org}});
       const failedRow=dialog.locator('.team-member[data-account="'+id(3)+'"]');
       assert((await failedRow.innerText()).includes("67%"),"failure retains cached usage");
       await failedRow.getByRole("button",{name:tr("Retry usage collection"),exact:true}).click();
       await failedRow.getByText(tr("Collecting usage…"),{exact:true}).waitFor();
-      assert.deepEqual(f.posts[2],{path:"/api/claude-team/quota",body:{organizationId:org,accountId:id(3)}});
+      assert.deepEqual(f.posts.at(-1),{path:"/api/claude-team/quota",body:{organizationId:org,accountId:id(3)}});
       assert.equal(f.views.get(org).history.length,1,"retry never rotates seats");
       failed.quotaPending=false;
       if(process.env.SCREENSHOT_DIR && lang==="zh") {
@@ -367,8 +368,7 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       await dialog.waitFor({state:"detached"});
       await page.locator('#providers .row[data-id="claude-team-'+second+'"]').waitFor();
       assert.equal(f.providers.length,2,"adding an organization does not replace the first");
-      assert.equal(f.posts[3].body.organizationId,second);
-      assert.deepEqual(f.posts[3],{path:"/api/claude-team/create",body:{organizationId:second,sessionKey:"fixture-second-admin"}});
+      assert.deepEqual(f.posts.at(-1),{path:"/api/claude-team/create",body:{organizationId:second,sessionKey:"fixture-second-admin"}});
       assert.equal(f.views.get(org).config.threshold,95,"other organization remains unchanged");
       assert.deepEqual(errors,[]);
     });
