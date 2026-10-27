@@ -201,6 +201,9 @@ still names a draining account is rejected locally before launching inference.
 A failed managed Claude request whose output has not been committed can wait
 for the current bounded handoff, re-resolve that provider's enabled accounts,
 and continue with its original body, including a confirmed authentication loss.
+Reconciliation consumes its wake at entry. A refusal or limit received during
+that pass stays pending for the next pass, so completion cannot briefly release
+handoff waiters before the new event has been handled.
 The final candidate's refusal is held
 too. Visible text, reasoning and tool calls are not replayed. Account/model
 scopes, pinned/strict affinity and sealed conversation ownership still apply.

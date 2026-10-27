@@ -1148,10 +1148,12 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 func (t *claudeTeamController) reconcile(ctx context.Context, manual string) error {
 	t.mu.Lock()
 	c, pending := t.cfg, t.disk.Pending
-	t.rotating = true
+	// Consume only the wake this pass handles. A refusal or limit arriving
+	// during the pass belongs to the next one and must keep waiters held.
+	t.rotating, t.requested = true, false
 	t.signalLocked()
 	t.mu.Unlock()
-	defer func() { t.mu.Lock(); t.rotating, t.requested = false, false; t.signalLocked(); t.mu.Unlock() }()
+	defer func() { t.mu.Lock(); t.rotating = false; t.signalLocked(); t.mu.Unlock() }()
 	if !c.Enabled {
 		return t.restoreRemoved(c)
 	}

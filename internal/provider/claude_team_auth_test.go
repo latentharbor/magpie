@@ -2,12 +2,58 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+type refusingTeamRead struct {
+	claudeTeamAdmin
+	refuse func()
+}
+
+func (f refusingTeamRead) Members(context.Context) ([]claudeTeamSeat, error) {
+	f.refuse()
+	return nil, errors.New("fixture member read failed")
+}
+
+func TestClaudeTeamRefusalDuringReconcileKeepsHandoffPending(t *testing.T) {
+	tm, admin, _ := teamFixture(t)
+	old := UsageClaudeVia(func(context.Context, string) (string, error) {
+		return "", errors.New("fixture quota unavailable")
+	})
+	t.Cleanup(func() { UsageClaudeVia(old) })
+	user := "u2@example.com · Team"
+	tm.running, tm.requested = true, true
+	newClaudeTeamAdmin = func(ClaudeTeamConfig) claudeTeamAdmin {
+		return refusingTeamRead{admin, func() {
+			NoteClaudeSignInFailure(user, ClaudeLoginVersion(user), "OAuth token revoked")
+		}}
+	}
+	if err := tm.reconcile(context.Background(), ""); err == nil {
+		t.Fatal("fixture member failure was lost")
+	}
+	// The in-flight pass failed to observe or transfer the revoked seat.
+	// Its completion must not release the request waiting for that transfer.
+	if !tm.requested || tm.rotating || !tm.status().Rotating {
+		t.Fatal("reconciliation discarded the concurrent sign-out handoff")
+	}
+	select {
+	case <-tm.wake:
+	default:
+		t.Fatal("concurrent sign-out did not schedule another pass")
+	}
+	newClaudeTeamAdmin = func(ClaudeTeamConfig) claudeTeamAdmin { return admin }
+	if err := tm.reconcile(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if tm.requested || tm.rotating || tm.seats[teamID(3)] != "team_tier_1" || len(admin.writes) != 2 {
+		t.Fatal("next pass did not complete the pending handoff")
+	}
+}
 
 func TestClaudeTeamSignedOutPremiumHandsOffWithoutExhaustion(t *testing.T) {
 	for _, source := range []string{"refusal", "cleared-store", "capture-cleared-store", "already-refused"} {

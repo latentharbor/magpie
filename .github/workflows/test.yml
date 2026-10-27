@@ -170,6 +170,12 @@ jobs:
         if: runner.os != 'Windows'
         run: go test -timeout 45m -tags "${{ steps.tags.outputs.tags }}" ./...
 
+      - name: Repeat Claude Team handoff regressions
+        if: runner.os != 'Windows'
+        run: |
+          go test -race -count=20 -timeout 5m -tags "${{ steps.tags.outputs.tags }}" ./internal/provider/ -run '^TestClaudeTeamRefusalDuringReconcileKeepsHandoffPending$'
+          go test -race -count=20 -timeout 10m -tags "${{ steps.tags.outputs.tags }}" ./internal/gateway/ -run '^TestClaudeTeamNativeLimitRetainsRequest$'
+
       # Windows skips the Test step above, so the two plugin stderr tests run
       # here. The end-to-end one needs bun on PATH; without it it skips.
       - name: Plugin stderr tests (Windows)
