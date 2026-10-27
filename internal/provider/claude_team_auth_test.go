@@ -51,7 +51,8 @@ func TestClaudeTeamRefusalDuringReconcileKeepsHandoffPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	if tm.requested || tm.rotating || tm.seats[teamID(3)] != "team_tier_1" || len(admin.writes) != 2 {
-		t.Fatal("next pass did not complete the pending handoff")
+		t.Fatalf("next pass did not complete the pending handoff: requested=%v rotating=%v seats=%v writes=%v enabled=%v lapse=%q",
+			tm.requested, tm.rotating, tm.seats, admin.writes, tm.routeEnabled(tm.cfg), claudeLapseOf(user))
 	}
 }
 
