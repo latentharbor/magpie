@@ -63,6 +63,7 @@ type ClaudeTeamView struct {
 	InUse      int                `json:"inUse"`
 	Rotating   bool               `json:"rotating"`
 	Running    bool               `json:"running"`
+	Refreshing bool               `json:"refreshing"`
 	Error      string             `json:"error,omitempty"`
 	NextReset  *time.Time         `json:"nextReset,omitempty"`
 	History    []ClaudeTeamEvent  `json:"history"`
@@ -103,6 +104,7 @@ type claudeTeamController struct {
 	wake                         chan struct{}
 	changed                      chan struct{}
 	running, requested, rotating bool
+	refreshRequested, refreshing bool
 	err                          string
 	manual                       string
 	loaded                       bool
@@ -306,6 +308,7 @@ func (t *claudeTeamController) selectPath() error {
 	t.seats, t.users, t.closed = map[string]string{}, map[string]string{}, map[string]bool{}
 	t.quotaDue, t.quotaAttempted, t.quotaBusy = map[string]bool{}, map[string]bool{}, ""
 	t.quotaChecks = nil
+	t.refreshRequested, t.refreshing = false, false
 	t.legacyRoutes = nil
 	t.loaded, t.requested, t.rotating, t.manual, t.err = false, false, false, "", ""
 	return nil
@@ -572,6 +575,10 @@ func (t *claudeTeamController) route(c ClaudeTeamConfig, states map[string]bool)
 }
 
 func (t *claudeTeamController) synchronize(c ClaudeTeamConfig, seats []claudeTeamSeat) error {
+	return t.synchronizeSeats(c, seats, true)
+}
+
+func (t *claudeTeamController) synchronizeSeats(c ClaudeTeamConfig, seats []claudeTeamSeat, route bool) error {
 	if err := teamMembersPresent(c, seats); err != nil {
 		return err
 	}
@@ -594,7 +601,10 @@ func (t *claudeTeamController) synchronize(c ClaudeTeamConfig, seats []claudeTea
 	if err := t.persist(); err != nil {
 		return err
 	}
-	return t.route(c, states)
+	if route {
+		return t.route(c, states)
+	}
+	return nil
 }
 
 // TrackClaudeTeamRequest is local request accounting, not a control-plane
@@ -1333,19 +1343,31 @@ func (t *claudeTeamController) keep(ctx context.Context) {
 		t.mu.Lock()
 		manual := t.manual
 		t.manual = ""
+		refresh := t.refreshRequested
+		t.refreshRequested = false
 		t.mu.Unlock()
 		// Once accepted, transfer reconciliation has an independent bounded
 		// lifetime; shutdown waits for it before releasing the controller lock.
-		t.collectQuotaDue(ctx)
-		work, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
-		err := t.reconcile(work, manual)
-		cancel()
+		var err error
+		if refresh && manual == "" {
+			err = t.refreshSnapshot(ctx)
+		} else {
+			t.collectQuotaDue(ctx)
+			work, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+			err = t.reconcile(work, manual)
+			cancel()
+			if refresh {
+				err = errors.Join(err, t.refreshSnapshot(ctx))
+			}
+		}
 		if err == nil {
 			err = joinErr
 		}
 		// New logins/members and externally observed assignments share the
 		// same capture queue as internal assignments, independent of history.
-		t.collectQuotaDue(ctx)
+		if !refresh {
+			t.collectQuotaDue(ctx)
+		}
 		if saveErr := t.persist(); err == nil {
 			err = saveErr
 		}
@@ -1369,7 +1391,7 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 	}
 	t.mu.Lock()
 	c := t.cfg
-	v := ClaudeTeamView{Config: c, SessionSet: c.SessionKey != "", Running: t.running, Rotating: t.rotating || t.requested, Error: t.err,
+	v := ClaudeTeamView{Config: c, SessionSet: c.SessionKey != "", Running: t.running, Rotating: t.rotating || t.requested, Refreshing: t.refreshing || t.refreshRequested, Error: t.err,
 		Members: []ClaudeTeamMember{}, History: slices.Clone(t.disk.History)}
 	v.Config.SessionKey = ""
 	seats, limits, active := map[string]string{}, map[string][]ClaudeLimit{}, map[string]int{}

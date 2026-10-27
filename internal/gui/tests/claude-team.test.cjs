@@ -58,6 +58,11 @@ function fixture(lang) {
           if (f.failCaptureOnSave) v.members[1].quotaError="Quota collection failed; retry while this account has Premium access";
           let index=providers.findIndex(p=>p.teamOrganization===body.organizationId);
           if(index<0) providers.push(provider(v)); else providers[index]=provider(v);
+        } else if(url.pathname.endsWith("refresh")) {
+          if(f.refreshError) return route.fulfill({status:502,json:{error:f.refreshError}});
+          v.members[0].seatTier="unassigned"; v.members[0].on=false;
+          v.members[1].seatTier="team_tier_1"; v.members[1].on=true;
+          v.members[1].limits[0].used=.29;
         } else if(url.pathname.endsWith("quota")) {
           const m=v.members.find(m=>m.accountId===body.accountId);
           delete m.quotaError; m.quotaPending=true;
@@ -76,6 +81,30 @@ function fixture(lang) {
 }
 for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webkit"])) {
   for(const lang of (process.env.LANG_ONLY?[process.env.LANG_ONLY]:["en","zh","zh-TW","ja","de"])) {
+    test(engine+" "+lang+": Team refresh reads cloud state from both views", {timeout:30000}, async t=>{
+      const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
+      t.after(()=>browser.close());
+      const page=await browser.newPage({viewport:{width:1000,height:850},reducedMotion:"reduce"});
+      const words=strings().I18N[lang]||{}, tr=s=>words[s]||s, f=fixture(lang);
+      await page.route("**/*",f.route);
+      for(const settings of [false,true]) {
+        await page.goto("http://magpie.test/?view=providers&edit=claude-team-"+org);
+        if(settings) await page.locator(".team-accts > button").first().click();
+        const refresh=settings?page.locator(".claude-team .bar").getByRole("button",{name:tr("Refresh"),exact:true}):page.locator(".team-refresh");
+        await refresh.click();
+        const rows=page.locator(settings?".team-member":".team-accts .acc");
+        await rows.nth(0).getByText(tr("Unassigned"),{exact:true}).waitFor();
+        await rows.nth(1).getByText("Premium",{exact:true}).waitFor();
+        assert(/29(?:\.0)?%/.test(await rows.nth(1).innerText()),"Premium usage was not refreshed");
+        assert.deepEqual(f.posts.at(-1),{path:"/api/claude-team/refresh",body:{organizationId:org}});
+        f.refreshError="fixture member refresh failed";
+        await refresh.click();
+        await page.getByText(f.refreshError,{exact:true}).waitFor();
+        await rows.nth(1).getByText("Premium",{exact:true}).waitFor();
+        f.refreshError=null;
+      }
+      assert(f.posts.every(p=>p.path.endsWith("/refresh")),"refresh changed configuration or seats");
+    });
     test(engine+" "+lang+": Team reauth keeps the account and organization", {timeout:30000}, async t=>{
       const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
       t.after(()=>browser.close());

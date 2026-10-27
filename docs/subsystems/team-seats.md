@@ -270,12 +270,26 @@ unrelated vendors' model fetches, and invalidates account caches after automatic
 Team membership has been saved. Open account lists poll local snapshots faster
 while quota collection is pending, retaining the prior view on a read failure.
 Manual rotation posts a background request; status polling makes no cloud
-calls. The API is `GET /api/claude-team/subscriptions`,
+calls. Both member views offer Refresh, which posts an explicit background
+read rather than merely rereading the local snapshot. The owning controller
+serializes it with transfers, reads the full organization member list, updates
+selected members' verified seat tiers, then reads usage only for selected
+members currently reported as Premium. Unassigned/Standard members retain
+their historical quota; outside-pool Premium members are not probed.
+The refresh path makes no seat writes or rotation decision. Disabled controllers
+can refresh observations without changing login switches. An unfinished seat
+transaction must recover before a refresh can proceed. Concurrent refresh clicks
+coalesce; `refreshing` keeps controls disabled and accelerates local polling.
+Member-read failure preserves known assignments; individual quota failures keep
+the prior snapshot and remain visible. Refresh does not save an open form's
+unsaved settings or member choices. The API is `GET /api/claude-team/subscriptions`,
 `GET /api/claude-team/{config|members}?organizationId={UUID}` (or `?new=1` for
 saved public identities),
 `POST /api/claude-team/discover` (`sessionKey`),
 `POST /api/claude-team/create` (`sessionKey`, `organizationId`),
 `POST /api/claude-team/config`, `POST /api/claude-team/rotate`, and
+`POST /api/claude-team/refresh` (`organizationId`) for explicit member and
+current Premium usage refresh, plus
 `POST /api/claude-team/quota` (`organizationId`, `accountId`) for a background
 read-only retry. The editor polls pending collections and shows failures while
 retaining the last successful values; saving with pending/failed collection
