@@ -52,6 +52,13 @@ func TestClaudeTeamAPIKeepsAdministratorCredentialPrivate(t *testing.T) {
 			t.Fatalf("GET unsafe: %d %s", w.Code, w.Body)
 		}
 	}
+	for _, body := range []string{`{broken`, `{"organizationId":"invalid"}`, `{"organizationId":"` + org + `"}`} {
+		w = httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/claude-team/refresh", strings.NewReader(body)))
+		if w.Code < 400 || strings.Contains(w.Body.String(), key) {
+			t.Fatalf("invalid or unowned refresh accepted or leaked credentials: %d %s", w.Code, w.Body)
+		}
+	}
 	w = post(`{"enabled":false,"organizationId":"` + org + `","sessionKey":"","threshold":100,"members":[]}`)
 	if w.Code != 200 {
 		t.Fatal(w.Body)

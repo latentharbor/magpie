@@ -117,6 +117,34 @@ healthy member. Every voluntary transfer uses the same admission close, drain,
 fresh member verification and transaction recovery as exhaustion handoff. No
 request performs an administrator check. Explicit in-order, rotation and other
 policies retain their semantics and do not trigger voluntary expiry rebalancing.
+Voluntary rebalancing additionally requires a complete quota observation from
+the last 24 hours without a subsequent collection error, at least one hour of
+deadline gain, and no successful pool handoff in the last 15 minutes. An earlier
+week must reset within five hours; when weeks tie, the earlier five-hour window
+must reset within one hour. This bounds the benefit to capacity about to expire,
+rather than treating every better sort position as a reason to move a healthy
+seat. Exhaustion, confirmed sign-out and manual requests bypass these guards.
+For Smart exhaustion handoff, reliable complete observations precede failed or
+old observations; the latter remain fallback probes when reliable capacity is
+unavailable. These limits are conservative heuristics, not a learned consumption
+rate or a guarantee that all remaining capacity can be spent.
+
+Background candidate selection synchronizes parked accounts' native credential
+stores before ranking them, and transfer repeats this local check before
+closing source admissions. A cleared or unreadable store never receives a seat.
+Confirmed credential refusal remains marked for reauthentication; a temporary
+read error does not manufacture a sign-out. This local check cannot prove that
+the server will accept a token or grant inference access. No paid inference probe
+is made and Unassigned accounts need not return a successful quota response.
+New transaction journals and history entries retain the trigger (`manual`,
+`authentication`, `exhausted`, or `expiry`) and both accounts' raw decision-time
+quota windows, including through recovery. Older entries retain an unknown
+reason. The provider summary and member lists identify confirmed sign-outs;
+both the provider editor and Team settings offer the existing sign-in flow
+with the exact account and organization retained. Viewing a warning never
+starts sign-in or changes assignments. Completion verifies the original saved
+account UUID as well as the organization; selecting another member in the
+browser cannot clear the original member's reauthentication warning.
 There is no preferred/current-CLI-login account or account-switch action in the
 Team UI. An unknown reset on a known exhausted account is not assumed reset.
 Quota reads for unassigned or draining accounts do not invoke inference.
@@ -173,6 +201,9 @@ still names a draining account is rejected locally before launching inference.
 A failed managed Claude request whose output has not been committed can wait
 for the current bounded handoff, re-resolve that provider's enabled accounts,
 and continue with its original body, including a confirmed authentication loss.
+Reconciliation consumes its wake at entry. A refusal or limit received during
+that pass stays pending for the next pass, so completion cannot briefly release
+handoff waiters before the new event has been handled.
 The final candidate's refusal is held
 too. Visible text, reasoning and tool calls are not replayed. Account/model
 scopes, pinned/strict affinity and sealed conversation ownership still apply.
@@ -242,12 +273,26 @@ unrelated vendors' model fetches, and invalidates account caches after automatic
 Team membership has been saved. Open account lists poll local snapshots faster
 while quota collection is pending, retaining the prior view on a read failure.
 Manual rotation posts a background request; status polling makes no cloud
-calls. The API is `GET /api/claude-team/subscriptions`,
+calls. Both member views offer Refresh, which posts an explicit background
+read rather than merely rereading the local snapshot. The owning controller
+serializes it with transfers, reads the full organization member list, updates
+selected members' verified seat tiers, then reads usage only for selected
+members currently reported as Premium. Unassigned/Standard members retain
+their historical quota; outside-pool Premium members are not probed.
+The refresh path makes no seat writes or rotation decision. Disabled controllers
+can refresh observations without changing login switches. An unfinished seat
+transaction must recover before a refresh can proceed. Concurrent refresh clicks
+coalesce; `refreshing` keeps controls disabled and accelerates local polling.
+Member-read failure preserves known assignments; individual quota failures keep
+the prior snapshot and remain visible. Refresh does not save an open form's
+unsaved settings or member choices. The API is `GET /api/claude-team/subscriptions`,
 `GET /api/claude-team/{config|members}?organizationId={UUID}` (or `?new=1` for
 saved public identities),
 `POST /api/claude-team/discover` (`sessionKey`),
 `POST /api/claude-team/create` (`sessionKey`, `organizationId`),
 `POST /api/claude-team/config`, `POST /api/claude-team/rotate`, and
+`POST /api/claude-team/refresh` (`organizationId`) for explicit member and
+current Premium usage refresh, plus
 `POST /api/claude-team/quota` (`organizationId`, `accountId`) for a background
 read-only retry. The editor polls pending collections and shows failures while
 retaining the last successful values; saving with pending/failed collection

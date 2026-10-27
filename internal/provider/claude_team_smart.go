@@ -77,3 +77,23 @@ func claudeTeamQuotaKnown(ls []ClaudeLimit) bool {
 	}
 	return true
 }
+
+// A better sort position alone does not justify disrupting a healthy seat.
+// Rebalance an expiring week within one prospective 5h work window, or a
+// same-week 5h window in its last hour, with at least an hour of deadline gain.
+// Exhaustion, authentication failures and manual transfers bypass this guard.
+func claudeTeamExpiryWorthwhile(active, standby routes.Seat, now time.Time) bool {
+	for i := 0; i < len(active.Soon) && i < len(standby.Soon); i++ {
+		a, b := active.Soon[i], standby.Soon[i]
+		if a.Truncate(time.Hour).Equal(b.Truncate(time.Hour)) {
+			continue
+		}
+		urgent := 5 * time.Hour
+		if i > 0 {
+			urgent = time.Hour
+		}
+		return !a.IsZero() && !b.IsZero() && b.After(now) &&
+			b.Sub(now) <= urgent && a.Sub(b) >= time.Hour
+	}
+	return false
+}

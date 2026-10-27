@@ -166,6 +166,12 @@ jobs:
         with:
           bun-version: 1.4.2
 
+      - name: Repeat Claude Team handoff regressions
+        if: runner.os != 'Windows'
+        run: |
+          go test -race -count=20 -timeout 5m -tags "${{ steps.tags.outputs.tags }}" ./internal/provider/ -run '^TestClaudeTeamRefusalDuringReconcileKeepsHandoffPending$'
+          go test -race -count=20 -timeout 10m -tags "${{ steps.tags.outputs.tags }}" ./internal/gateway/ -run '^TestClaudeTeamNativeLimitRetainsRequest$'
+
       - name: Test
         if: runner.os != 'Windows'
         run: go test -timeout 45m -tags "${{ steps.tags.outputs.tags }}" ./...

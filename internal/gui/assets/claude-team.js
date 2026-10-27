@@ -4,7 +4,9 @@ function claudeTeamRoutingHint(routing) {
 }
 
 function claudeTeamSummary(p) {
-  return t("Seats in use: {used}/{total}", {used:p.team.inUse,total:p.team.seats});
+  const summary = t("Seats in use: {used}/{total}", {used:p.team.inUse,total:p.team.seats});
+  const count = p.team.members?.filter(m => m.selected && m.lapsed).length || 0;
+  return count ? summary + " · " + t("Sign-in required") + " (" + count + ")" : summary;
 }
 
 function claudeTeamTile() {
@@ -66,12 +68,19 @@ function claudeTeamSignedInProvider(st) {
   return st.agent === "claude" && providers.providers.find((p) => p.team?.members?.some((m) => m.selected && m.user === st.user));
 }
 
-async function addClaudeTeamAccount(organizationId, event) {
+async function addClaudeTeamAccount(organizationId, event, user) {
   scrollOnPurpose(event, 3000);
   editing = null; draft = null; adding = false;
   await closeModal();
   editing = "claude-team-" + organizationId;
-  await startSignIn("claude", false, undefined, { organizationId });
+  await startSignIn("claude", false, undefined, { organizationId, ...(user ? { user } : {}) });
+}
+
+function claudeTeamReauth(m, organizationId) {
+  const again = el("button", "text team-reauth", t("Sign in again"));
+  again.title = m.user;
+  again.onclick = event => addClaudeTeamAccount(organizationId, event, m.user);
+  return again;
 }
 
 function renderTeamAccounts(a, p) {
@@ -86,9 +95,9 @@ function renderTeamAccounts(a, p) {
         p = {...p, team}; drawTeamAccounts(list, p);
       }
     } catch { /* Keep the last snapshot; a failed read is not an empty pool. */ }
-    if (list.isConnected) setTimeout(poll, p.team?.members?.some(m => m.quotaPending) ? 1500 : 10000);
+    if (list.isConnected) setTimeout(poll, p.team?.refreshing || p.team?.members?.some(m => m.quotaPending) ? 1500 : 10000);
   };
-  setTimeout(poll, p.team?.members?.some(m => m.quotaPending) ? 1500 : 10000);
+  setTimeout(poll, p.team?.refreshing || p.team?.members?.some(m => m.quotaPending) ? 1500 : 10000);
   return list;
 }
 
@@ -100,16 +109,38 @@ function drawTeamAccounts(list, p) {
   const settings = el("button", "text", "Claude Team");
   settings.onclick = async () => { editing = null; draft = null; await closeModal(); openClaudeTeam(p.teamOrganization); };
   rows.append(settings);
+  const refresh = el("button", "text team-refresh", t(p.team?.refreshing ? "Loading…" : "Refresh"));
+  refresh.title = t("Refresh seat assignments and Premium usage");
+  refresh.disabled = !!p.team?.refreshing;
+  refresh.onclick = async () => {
+    refresh.disabled = true;
+    try {
+      const team = await api("claude-team/refresh", {organizationId:p.teamOrganization});
+      if (list.isConnected) { p.team = team; drawTeamAccounts(list, p); }
+    } catch (e) {
+      if (list.isConnected) rowsError(e.message);
+      refresh.disabled = false;
+    }
+  };
+  const rowsError = text => {
+    let hint = list.querySelector(".team-refresh-error");
+    if (!hint) { hint = el("p", "hint team-refresh-error"); hint.setAttribute("role", "status"); list.prepend(hint); }
+    hint.textContent = text;
+  };
+  rows.append(refresh);
+  if (p.team?.error) rows.append(el("p", "hint team-refresh-error", p.team.error));
   if (p.team) rows.append(el("div", "hint", t("Seats in use: {used}/{total}", { used: p.team.inUse, total: p.team.seats })));
-  rows.append(el("p", "hint", t("Cached usage; refreshed when a seat is assigned")));
+  rows.append(el("p", "hint", t("Unassigned accounts retain their last usage snapshot")));
   for (const m of (p.team?.members || []).filter((m) => m.selected)) {
     const row = el("div", "acc with-aq"), dot = el("span", "dot tick fixed");
     if (m.on) dot.append(svg(CHECK, 10, 2.2));
-    const state = m.seatTier === "team_tier_1" ? "Premium" : t("Unassigned");
+    const state = m.lapsed ? t("Sign-in required") : m.seatTier === "team_tier_1" ? "Premium" : m.seatTier === "unassigned" ? t("Unassigned") : m.seatTier ? t("Other seat tier") : t("Not verified");
     row.append(dot, el("span", "rename", m.user), el("span", "grow"), el("span", "plan", state));
     const q = { windows: m.windows || (m.limits || []).map((w) => ({ name: w.kind === "five_hour" ? "5 hours" : w.kind === "seven_day" ? "7 days" : w.kind,
-      used: w.used * 100, resetsAt: w.resetsAt ? new Date(w.resetsAt * 1000).toISOString() : null })), readDeferred: true, asOf: m.observedAt };
+      used: w.used * 100, resetsAt: w.resetsAt ? new Date(w.resetsAt * 1000).toISOString() : null })) };
     const quota = accountQuota({ [m.user]: q }, m.user);
+    if (m.observedAt) quota.prepend(el("span", "aq-asof", t("Last observed: {time}", {time:new Date(m.observedAt).toLocaleString(intlLang())})));
+    if (m.lapsed) quota.prepend(el("span", "aq-asof", t("Sign in again to use this account")), claudeTeamReauth(m, p.teamOrganization));
     if (m.quotaError || m.quotaPending) quota.append(el("span", "aq-asof", t(m.quotaPending ? "Collecting usage…" : m.quotaError)));
     row.append(quota);
     rows.append(row);
@@ -163,8 +194,15 @@ async function openClaudeTeam(organizationId = "") {
   const draw = () => {
     panel.replaceChildren(); pool.replaceChildren();
     if (!view) return;
+    refresh.disabled = pending || !!view.refreshing;
+    refresh.textContent = t(view.refreshing ? "Loading…" : "Refresh");
+    refresh.title = t("Refresh seat assignments and Premium usage");
     panel.append(el("b", "", t("Seats in use: {used}/{total}", { used: view.inUse || 0, total: view.seats || 0 })));
     if (view.error) panel.append(el("p", "hint", view.error));
+    if (view.members?.some(m => m.selected && m.lapsed)) {
+      const notice = el("p", "hint team-auth-notice", t("Sign in again to use this account"));
+      notice.setAttribute("role", "status"); panel.append(notice);
+    }
     if (view.nextReset) panel.append(el("p", "hint", t("Earliest reset: {time}", { time: date(view.nextReset) })));
     pool.append(el("h3", "", t("Seat pool")));
     const members = (view.members || []).filter((m) => m.organizationId.toLowerCase() === org.value.trim().toLowerCase());
@@ -199,6 +237,7 @@ async function openClaudeTeam(organizationId = "") {
       if (m.observedAt) foot.append(el("span", "hint", t("Last observed: {time}", { time: date(m.observedAt) })));
       if (m.quotaError && !m.quotaPending) foot.append(el("span", "hint", t(m.quotaError)));
       if (m.quotaPending) foot.append(el("span", "hint", t("Collecting usage…")));
+      if (m.lapsed) foot.append(claudeTeamReauth(m, organizationId));
       if (m.selected) {
         const retry = el("button", "text", t("Retry usage collection"));
         retry.disabled = pending || m.quotaPending;
@@ -235,7 +274,8 @@ async function openClaudeTeam(organizationId = "") {
       const history = el("details", "team-history"); history.append(el("summary", "", t("Recent seat changes")));
       const who = (id) => view.members.find((m) => m.accountId === id)?.user || id;
       const result = { assigned: "Assigned", rolled_back: "Rolled back", unchanged: "Unchanged" };
-      for (const h of view.history.slice(-5).reverse()) history.append(el("p", "hint", date(h.at) + " · " + who(h.from) + " → " + who(h.to) + " · " + t(result[h.result] || "Not verified")));
+      const reasons = { manual: "Manual", authentication: "Sign-in ran out", exhausted: "Usage threshold reached", expiry: "Expiring allowance" };
+      for (const h of view.history.slice(-5).reverse()) history.append(el("p", "hint", date(h.at) + " · " + who(h.from) + " → " + who(h.to) + " · " + t(result[h.result] || "Not verified") + (reasons[h.reason] ? " · " + t(reasons[h.reason]) : "")));
       pool.append(history);
     }
   };
@@ -267,10 +307,18 @@ async function openClaudeTeam(organizationId = "") {
   const poll = () => {
     clearTimeout(timer);
     if (ed.isConnected) timer = setTimeout(() => { if (ed.isConnected && !$("#modal").hidden) load(); },
-      view?.rotating || view?.members?.some((m) => m.quotaPending) ? 1500 : 30000);
+      view?.refreshing || view?.rotating || view?.members?.some((m) => m.quotaPending) ? 1500 : 30000);
   };
   org.oninput = draw;
-  refresh.onclick = () => load();
+  refresh.onclick = async () => {
+    if (pending || view?.refreshing) return;
+    pending = true; draw(); message.textContent = "";
+    try {
+      view = await api("claude-team/refresh", {organizationId});
+      for (const id of view.config.members || []) if (!changed.has(id)) selected.add(id);
+    } catch (e) { fail(e); }
+    finally { pending = false; draw(); poll(); }
+  };
   save.onclick = async () => {
     if (pending) return;
     const value = decimalOf(threshold.value);

@@ -11,6 +11,27 @@ import (
 )
 
 func claudeTeamRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/claude-team/refresh", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			OrganizationID string `json:"organizationId"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil {
+			fail(w, err)
+			return
+		}
+		if err := provider.RefreshClaudeTeamOrganization(in.OrganizationID); err != nil {
+			fail(w, err)
+			return
+		}
+		v, err := provider.ClaudeTeamOrganization(in.OrganizationID)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusAccepted)
+		writeJSON(w, v)
+	})
 	for _, action := range []string{"discover", "create"} {
 		mux.HandleFunc("POST /api/claude-team/"+action, func(w http.ResponseWriter, r *http.Request) {
 			var in struct {

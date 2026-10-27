@@ -4,6 +4,8 @@
 // works. {name} slots are filled by t(str, vars).
 const I18N = {
   zh: {
+    "Usage threshold reached": "已达到用量阈值",
+    "Expiring allowance": "优先使用即将重置的额度",
     "Other seat tier": "其他坐席类型",
     "Waiting for Unassigned": "等待取消坐席分配",
     "Choose model": "选择模型",
@@ -2280,6 +2282,8 @@ const I18N = {
     "Add model": "添加模型",
     "Add a model the list doesn't have, by its id (several: comma separated)": "按 ID 添加列表里没有的模型（多个用逗号分隔）",
     "Refresh": "刷新",
+    "Refresh seat assignments and Premium usage": "刷新所有账号的坐席状态及 Premium 额度",
+    "Unassigned accounts retain their last usage snapshot": "未分配账号保留上次采集的额度快照",
     "Ask the vendor for its model list with the key typed here, and again after the key moves to another group: picks it no longer lists are dropped, ids added by hand stay": "用这里填的 Key 向供应商获取模型列表；Key 换了分组后再获取一次即可：新列表里没有的勾选会去掉，手动添加的 ID 保留",
     "Fetch models again": "重新获取模型",
     "{p}: {n} models": "{p}：{n} 个模型",
@@ -4060,6 +4064,8 @@ const I18N = {
     "Where": "位置",
   },
   "zh-TW": {
+    "Usage threshold reached": "已達到用量門檻",
+    "Expiring allowance": "優先使用即將重設的額度",
     "Choose model": "選擇模型",
     "Search models…": "搜尋模型…",
     "Routing group": "路由群組",
@@ -6304,6 +6310,8 @@ const I18N = {
     "Add model": "新增模型",
     "Add a model the list doesn't have, by its id (several: comma separated)": "按 ID 新增列表裡沒有的模型（多個用逗號分隔）",
     "Refresh": "重新整理",
+    "Refresh seat assignments and Premium usage": "重新整理所有帳號的席位狀態及 Premium 額度",
+    "Unassigned accounts retain their last usage snapshot": "未分配帳號保留上次取得的額度快照",
     "Ask the vendor for its model list with the key typed here, and again after the key moves to another group: picks it no longer lists are dropped, ids added by hand stay": "用這裡填的 Key 向供應商取得模型列表；Key 換了分組後再取得一次即可：新列表裡沒有的勾選會移除，手動新增的 ID 保留",
     "Fetch models again": "重新取得模型",
     "{p}: {n} models": "{p}：{n} 個模型",
@@ -8101,6 +8109,8 @@ const I18N = {
     "Where": "位置",
   },
   ja: {
+    "Usage threshold reached": "使用量のしきい値に達しました",
+    "Expiring allowance": "リセットが近い利用枠を優先",
     "Choose model": "モデルを選択",
     "Search models…": "モデルを検索…",
     "Routing group": "ルーティンググループ",
@@ -10347,6 +10357,8 @@ const I18N = {
     "Add model": "モデルを追加",
     "Add a model the list doesn't have, by its id (several: comma separated)": "一覧にないモデルを ID で追加します（複数の場合はカンマ区切り）",
     "Refresh": "更新",
+    "Refresh seat assignments and Premium usage": "全アカウントの席の割り当てと Premium の使用量を更新",
+    "Unassigned accounts retain their last usage snapshot": "未割り当てのアカウントには前回取得した使用量を表示します",
     "Ask the vendor for its model list with the key typed here, and again after the key moves to another group: picks it no longer lists are dropped, ids added by hand stay": "ここに入力したキーでベンダーのモデル一覧を取得します。キーを別のグループに移したら再取得してください。一覧から消えた選択は外れ、手動で追加した ID は残ります",
     "Fetch models again": "モデルを再取得",
     "{p}: {n} models": "{p}：{n} 個のモデル",
@@ -12144,6 +12156,8 @@ const I18N = {
     "Where": "場所",
   },
   de: {
+    "Usage threshold reached": "Nutzungsschwelle erreicht",
+    "Expiring allowance": "Bald zurückgesetztes Kontingent bevorzugen",
     "Choose model": "Modell auswählen",
     "Search models…": "Modelle suchen…",
     "Routing group": "Routing-Gruppe",
@@ -14400,6 +14414,8 @@ const I18N = {
     "Add model": "Modell hinzufügen",
     "Add a model the list doesn't have, by its id (several: comma separated)": "Ein Modell, das in der Liste fehlt, über seine ID hinzufügen (mehrere: kommagetrennt)",
     "Refresh": "Aktualisieren",
+    "Refresh seat assignments and Premium usage": "Sitzzuweisungen aller Konten und Premium-Nutzung aktualisieren",
+    "Unassigned accounts retain their last usage snapshot": "Nicht zugewiesene Konten behalten den zuletzt erfassten Nutzungsstand",
     "Ask the vendor for its model list with the key typed here, and again after the key moves to another group: picks it no longer lists are dropped, ids added by hand stay": "Die Modellliste beim Anbieter mit dem hier eingegebenen Schlüssel abrufen, und erneut, wenn der Schlüssel in eine andere Gruppe wechselt: Auswahlen, die er nicht mehr listet, entfallen; von Hand hinzugefügte IDs bleiben",
     "Fetch models again": "Modelle erneut abrufen",
     "{p}: {n} models": "{p}: {n} Modelle",

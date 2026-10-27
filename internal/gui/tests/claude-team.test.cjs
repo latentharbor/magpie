@@ -58,6 +58,11 @@ function fixture(lang) {
           if (f.failCaptureOnSave) v.members[1].quotaError="Quota collection failed; retry while this account has Premium access";
           let index=providers.findIndex(p=>p.teamOrganization===body.organizationId);
           if(index<0) providers.push(provider(v)); else providers[index]=provider(v);
+        } else if(url.pathname.endsWith("refresh")) {
+          if(f.refreshError) return route.fulfill({status:502,json:{error:f.refreshError}});
+          v.members[0].seatTier="unassigned"; v.members[0].on=false;
+          v.members[1].seatTier="team_tier_1"; v.members[1].on=true;
+          v.members[1].limits[0].used=.29;
         } else if(url.pathname.endsWith("quota")) {
           const m=v.members.find(m=>m.accountId===body.accountId);
           delete m.quotaError; m.quotaPending=true;
@@ -76,6 +81,54 @@ function fixture(lang) {
 }
 for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webkit"])) {
   for(const lang of (process.env.LANG_ONLY?[process.env.LANG_ONLY]:["en","zh","zh-TW","ja","de"])) {
+    test(engine+" "+lang+": Team refresh reads cloud state from both views", {timeout:30000}, async t=>{
+      const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
+      t.after(()=>browser.close());
+      const page=await browser.newPage({viewport:{width:1000,height:850},reducedMotion:"reduce"});
+      const words=strings().I18N[lang]||{}, tr=s=>words[s]||s, f=fixture(lang);
+      await page.route("**/*",f.route);
+      for(const settings of [false,true]) {
+        await page.goto("http://magpie.test/?view=providers&edit=claude-team-"+org);
+        if(settings) await page.locator(".team-accts > button").first().click();
+        const refresh=settings?page.locator(".claude-team .bar").getByRole("button",{name:tr("Refresh"),exact:true}):page.locator(".team-refresh");
+        await refresh.click();
+        const rows=page.locator(settings?".team-member":".team-accts .acc");
+        await rows.nth(0).getByText(tr("Unassigned"),{exact:true}).waitFor();
+        await rows.nth(1).getByText("Premium",{exact:true}).waitFor();
+        assert(/29(?:\.0)?%/.test(await rows.nth(1).innerText()),"Premium usage was not refreshed");
+        assert.deepEqual(f.posts.at(-1),{path:"/api/claude-team/refresh",body:{organizationId:org}});
+        f.refreshError="fixture member refresh failed";
+        await refresh.click();
+        await page.getByText(f.refreshError,{exact:true}).waitFor();
+        await rows.nth(1).getByText("Premium",{exact:true}).waitFor();
+        f.refreshError=null;
+      }
+      assert(f.posts.every(p=>p.path.endsWith("/refresh")),"refresh changed configuration or seats");
+    });
+    test(engine+" "+lang+": Team reauth keeps the account and organization", {timeout:30000}, async t=>{
+      const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
+      t.after(()=>browser.close());
+      const page=await browser.newPage({viewport:{width:1000,height:850},reducedMotion:"reduce"});
+      const words=strings().I18N[lang]||{}, tr=s=>words[s]||s, f=fixture(lang);
+      const member=f.views.get(org).members[1];
+      member.lapsed=true; member.state="signed_out";
+      await page.route("**/*",f.route);
+      for(const settings of [false,true]) {
+        await page.goto("http://magpie.test/?view=providers&edit=claude-team-"+org);
+        let row=page.locator(".team-accts .acc").filter({hasText:member.user});
+        await row.getByText(tr("Sign-in required"),{exact:true}).waitFor();
+        if(settings) {
+          await page.locator(".team-accts > button").first().click();
+          await page.locator(".team-auth-notice").waitFor();
+          row=page.locator('.team-member[data-account="'+member.accountId+'"]');
+        }
+        await row.locator(".team-reauth").click();
+        await page.getByRole("button",{name:tr("Sign in anyway"),exact:true}).click();
+        await page.locator(".signing .signlink").waitFor();
+        assert.deepEqual(f.starts.at(-1),{agent:"claude",user:member.user,organizationId:org});
+        assert.equal(f.posts.length,0,"reauth changed Team configuration or seats");
+      }
+    });
     test(engine+" "+lang+": elapsed Team windows show estimates and an unstarted 5h", {timeout:30000}, async t=>{
       const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
       t.after(()=>browser.close());
@@ -280,11 +333,12 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       failed.quotaError="Quota collection failed; retry while this account has Premium access";
       await dialog.getByRole("button",{name:tr("Refresh"),exact:true}).click();
       await dialog.getByText(tr(failed.quotaError),{exact:true}).waitFor();
+      assert.deepEqual(f.posts.at(-1),{path:"/api/claude-team/refresh",body:{organizationId:org}});
       const failedRow=dialog.locator('.team-member[data-account="'+id(3)+'"]');
       assert((await failedRow.innerText()).includes("67%"),"failure retains cached usage");
       await failedRow.getByRole("button",{name:tr("Retry usage collection"),exact:true}).click();
       await failedRow.getByText(tr("Collecting usage…"),{exact:true}).waitFor();
-      assert.deepEqual(f.posts[2],{path:"/api/claude-team/quota",body:{organizationId:org,accountId:id(3)}});
+      assert.deepEqual(f.posts.at(-1),{path:"/api/claude-team/quota",body:{organizationId:org,accountId:id(3)}});
       assert.equal(f.views.get(org).history.length,1,"retry never rotates seats");
       failed.quotaPending=false;
       if(process.env.SCREENSHOT_DIR && lang==="zh") {
@@ -314,8 +368,7 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       await dialog.waitFor({state:"detached"});
       await page.locator('#providers .row[data-id="claude-team-'+second+'"]').waitFor();
       assert.equal(f.providers.length,2,"adding an organization does not replace the first");
-      assert.equal(f.posts[3].body.organizationId,second);
-      assert.deepEqual(f.posts[3],{path:"/api/claude-team/create",body:{organizationId:second,sessionKey:"fixture-second-admin"}});
+      assert.deepEqual(f.posts.at(-1),{path:"/api/claude-team/create",body:{organizationId:second,sessionKey:"fixture-second-admin"}});
       assert.equal(f.views.get(org).config.threshold,95,"other organization remains unchanged");
       assert.deepEqual(errors,[]);
     });
