@@ -955,7 +955,7 @@ func (t *claudeTeamController) transfer(ctx context.Context, c ClaudeTeamConfig,
 	if !ok {
 		return errors.New("replacement identity unavailable; no assignment was changed")
 	}
-	if _, err := claudeSavedDir(target.User); err != nil {
+	if err := claudeTeamStandbyReady(target.User); err != nil {
 		t.notify()
 		return errors.New("replacement sign-in unavailable; no assignment was changed")
 	}
@@ -996,6 +996,26 @@ func (t *claudeTeamController) transfer(ctx context.Context, c ClaudeTeamConfig,
 	return t.finish(c, seats, p, "assigned")
 }
 
+// Do not let the native store's legacy missing-file fallback overwrite a
+// malformed or unreadable credential file during candidate validation.
+func claudeTeamStandbyReady(user string) error {
+	c, ok := readClaudeDir(claudeAccountDir(user))
+	if !ok && !c.cleared() {
+		if c.raw != nil {
+			return errors.New("incomplete replacement sign-in")
+		}
+		_, err := readAccountFile(filepath.Join(claudeAccountDir(user), ".credentials.json"))
+		if err == nil {
+			return errors.New("invalid replacement sign-in")
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	_, err := claudeSavedDir(user)
+	return err
+}
+
 func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat, manual string) (string, string, error) {
 	identities, err := teamIdentities(c)
 	if err != nil {
@@ -1016,7 +1036,7 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 			l, ok := identities[s.AccountID]
 			if !ok || l.Lapsed != "" {
 				unavailable[s.AccountID] = true
-			} else if _, err := claudeSavedDir(l.User); err != nil {
+			} else if err := claudeTeamStandbyReady(l.User); err != nil {
 				unavailable[s.AccountID] = true
 			}
 		}

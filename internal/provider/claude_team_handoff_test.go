@@ -41,6 +41,27 @@ func TestClaudeTeamStandbyClearedBeforeAssignment(t *testing.T) {
 	}
 }
 
+func TestClaudeTeamInvalidStandbyStoreIsPreserved(t *testing.T) {
+	tm, admin, c := teamFixture(t)
+	dir, err := claudeSavedDir("u3@example.com · Team")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".credentials.json")
+	if err := os.WriteFile(path, []byte("{broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := tm.transfer(context.Background(), c, admin, admin.seats, teamID(2), teamID(3)); err == nil || len(admin.writes) != 0 {
+		t.Fatal("released source for unreadable candidate")
+	}
+	if b, err := os.ReadFile(path); err != nil || string(b) != "{broken" {
+		t.Fatal("validation replaced malformed store")
+	}
+	if claudeLapseOf("u3@example.com · Team") != "" {
+		t.Fatal("parse failure fabricated credential refusal")
+	}
+}
+
 func TestClaudeTeamSmartTrustAndDwell(t *testing.T) {
 	tm, _, c := teamFixture(t)
 	now := time.Now()
