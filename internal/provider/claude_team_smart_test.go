@@ -51,6 +51,7 @@ func TestClaudeTeamSmartRebalancesExpiringWeekWithoutChurn(t *testing.T) {
 	tm, _, c := teamFixture(t)
 	now := time.Now().Truncate(time.Hour).Add(10 * time.Minute)
 	set := func(id string, week float64, reset time.Time) {
+		tm.disk.Observed[id] = time.Now()
 		tm.disk.Limits[id] = []ClaudeLimit{{Kind: "five_hour", Used: .1, ResetsAt: now.Add(4 * time.Hour).Unix()}, {Kind: "seven_day", Used: week, ResetsAt: reset.Unix()}}
 	}
 	set(teamID(2), .2, now.Add(72*time.Hour))
@@ -121,6 +122,7 @@ func TestClaudeTeamSmartKeepsOtherPremiumSeats(t *testing.T) {
 	tm, _, c := teamFixture(t)
 	now := time.Now().Truncate(time.Hour)
 	for n, week := range map[int]time.Duration{2: 24 * time.Hour, 3: 2 * time.Hour, 4: 72 * time.Hour} {
+		tm.disk.Observed[teamID(n)] = time.Now()
 		tm.disk.Limits[teamID(n)] = []ClaudeLimit{{Kind: "five_hour", Used: .1, ResetsAt: now.Add(4 * time.Hour).Unix()}, {Kind: "seven_day", Used: .1, ResetsAt: now.Add(week).Unix()}}
 	}
 	seats := []claudeTeamSeat{{teamID(2), "team_tier_1"}, {teamID(3), "unassigned"}, {teamID(4), "team_tier_1"}, {teamID(9), "team_tier_1"}}
@@ -149,8 +151,11 @@ func TestClaudeTeamSmartExpiryTransferDrainsBeforeAdminWrite(t *testing.T) {
 	t.Cleanup(func() { UsageClaudeVia(oldUsage) })
 	now := time.Now()
 	for n, week := range map[int]time.Duration{2: 24 * time.Hour, 3: 2 * time.Hour, 4: 72 * time.Hour} {
+		tm.disk.Observed[teamID(n)] = time.Now()
 		tm.disk.Limits[teamID(n)] = []ClaudeLimit{{Kind: "five_hour", Used: .1, ResetsAt: now.Add(4 * time.Hour).Unix()}, {Kind: "seven_day", Used: .1, ResetsAt: now.Add(week).Unix()}}
 	}
+	// The complete observations above satisfy the initial join captures.
+	tm.quotaDue = map[string]bool{}
 	release, ok := tm.track("u4@example.com · Team")
 	if !ok {
 		t.Fatal("active seat rejected")
@@ -196,5 +201,8 @@ func TestClaudeTeamSmartExpiryTransferDrainsBeforeAdminWrite(t *testing.T) {
 	defer f.mu.Unlock()
 	if len(f.writes) != 2 || f.writes[0] != teamID(4)+":unassigned" || f.writes[1] != teamID(3)+":team_tier_1" {
 		t.Fatalf("wrong expiry transfer: %v", f.writes)
+	}
+	if h := tm.disk.History[len(tm.disk.History)-1]; h.Reason != "expiry" || len(h.FromLimits) != 2 || len(h.ToLimits) != 2 {
+		t.Fatalf("missing decision evidence: %+v", h)
 	}
 }

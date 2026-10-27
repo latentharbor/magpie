@@ -4,6 +4,8 @@
 // works. {name} slots are filled by t(str, vars).
 const I18N = {
   zh: {
+    "Quota exhausted": "额度已用尽",
+    "Expiring allowance": "优先使用即将重置的额度",
     "Other seat tier": "其他坐席类型",
     "Waiting for Unassigned": "等待取消坐席分配",
     "Choose model": "选择模型",
@@ -4060,6 +4062,8 @@ const I18N = {
     "Where": "位置",
   },
   "zh-TW": {
+    "Quota exhausted": "額度已用盡",
+    "Expiring allowance": "優先使用即將重設的額度",
     "Choose model": "選擇模型",
     "Search models…": "搜尋模型…",
     "Routing group": "路由群組",
@@ -8101,6 +8105,8 @@ const I18N = {
     "Where": "位置",
   },
   ja: {
+    "Quota exhausted": "利用枠を使い切りました",
+    "Expiring allowance": "リセットが近い利用枠を優先",
     "Choose model": "モデルを選択",
     "Search models…": "モデルを検索…",
     "Routing group": "ルーティンググループ",
@@ -12144,6 +12150,8 @@ const I18N = {
     "Where": "場所",
   },
   de: {
+    "Quota exhausted": "Kontingent aufgebraucht",
+    "Expiring allowance": "Bald zurückgesetztes Kontingent bevorzugen",
     "Choose model": "Modell auswählen",
     "Search models…": "Modelle suchen…",
     "Routing group": "Routing-Gruppe",

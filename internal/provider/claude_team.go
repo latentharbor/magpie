@@ -46,10 +46,13 @@ type ClaudeTeamMember struct {
 }
 
 type ClaudeTeamEvent struct {
-	At     time.Time `json:"at"`
-	From   string    `json:"from"`
-	To     string    `json:"to"`
-	Result string    `json:"result"`
+	At         time.Time     `json:"at"`
+	From       string        `json:"from"`
+	To         string        `json:"to"`
+	Result     string        `json:"result"`
+	Reason     string        `json:"reason,omitempty"`
+	FromLimits []ClaudeLimit `json:"fromLimits,omitempty"`
+	ToLimits   []ClaudeLimit `json:"toLimits,omitempty"`
 }
 
 type ClaudeTeamView struct {
@@ -67,9 +70,11 @@ type ClaudeTeamView struct {
 
 type claudeTeamFlags struct{ On, Paused, TeamOff bool }
 type claudeTeamPending struct {
-	OrganizationID string `json:"organizationId"`
-	From, To       string
-	Baseline       []string
+	OrganizationID       string `json:"organizationId"`
+	From, To             string
+	Baseline             []string
+	Reason               string
+	FromLimits, ToLimits []ClaudeLimit
 }
 type claudeTeamDisk struct {
 	MembershipInitialized bool                       `json:"membershipInitialized,omitempty"`
@@ -884,7 +889,7 @@ func (t *claudeTeamController) finish(c ClaudeTeamConfig, seats []claudeTeamSeat
 		return err
 	}
 	t.mu.Lock()
-	t.disk.History = append(t.disk.History, ClaudeTeamEvent{time.Now().UTC(), p.From, p.To, result})
+	t.disk.History = append(t.disk.History, ClaudeTeamEvent{At: time.Now().UTC(), From: p.From, To: p.To, Result: result, Reason: p.Reason, FromLimits: p.FromLimits, ToLimits: p.ToLimits})
 	if len(t.disk.History) > 30 {
 		t.disk.History = slices.Clone(t.disk.History[len(t.disk.History)-30:])
 	}
@@ -939,7 +944,21 @@ func (t *claudeTeamController) recover(ctx context.Context, c ClaudeTeamConfig, 
 	}
 }
 
-func (t *claudeTeamController) transfer(ctx context.Context, c ClaudeTeamConfig, client claudeTeamAdmin, seats []claudeTeamSeat, from, to string) error {
+func (t *claudeTeamController) transfer(ctx context.Context, c ClaudeTeamConfig, client claudeTeamAdmin, seats []claudeTeamSeat, from, to string, trigger ...string) error {
+	// Synchronize the candidate's native store before closing a healthy source.
+	// A reset estimate is not evidence that its saved sign-in still exists.
+	identities, err := teamIdentities(c)
+	if err != nil {
+		return err
+	}
+	target, ok := identities[to]
+	if !ok {
+		return errors.New("replacement identity unavailable; no assignment was changed")
+	}
+	if _, err := claudeSavedDir(target.User); err != nil {
+		t.notify()
+		return errors.New("replacement sign-in unavailable; no assignment was changed")
+	}
 	if err := t.route(c, map[string]bool{from: false, to: false}); err != nil {
 		return err
 	}
@@ -947,7 +966,15 @@ func (t *claudeTeamController) transfer(ctx context.Context, c ClaudeTeamConfig,
 		_ = t.synchronize(c, seats)
 		return err
 	}
-	p := claudeTeamPending{OrganizationID: c.OrganizationID, From: from, To: to, Baseline: premiumSet(seats)}
+	reason := "manual"
+	if len(trigger) > 0 {
+		reason = trigger[0]
+	}
+	p := claudeTeamPending{OrganizationID: c.OrganizationID, From: from, To: to, Baseline: premiumSet(seats), Reason: reason}
+	t.mu.Lock()
+	p.FromLimits = slices.Clone(t.disk.Limits[from])
+	p.ToLimits = slices.Clone(t.disk.Limits[to])
+	t.mu.Unlock()
 	if _, err := teamVerify(ctx, client, p, "original"); err != nil {
 		return err
 	}
@@ -962,7 +989,7 @@ func (t *claudeTeamController) transfer(ctx context.Context, c ClaudeTeamConfig,
 		return t.recover(ctx, c, client, p)
 	}
 	_ = client.SetTier(ctx, to, "team_tier_1")
-	seats, err := teamVerify(ctx, client, p, "assigned")
+	seats, err = teamVerify(ctx, client, p, "assigned")
 	if err != nil {
 		return t.recover(ctx, c, client, p)
 	}
@@ -981,12 +1008,26 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 			break
 		}
 	}
+	// Only the background decision touches stores. Catch a CLI-cleared or
+	// unreadable parked sign-in before spending a cloud seat to discover it.
+	unavailable := map[string]bool{}
+	for _, s := range seats {
+		if s.SeatTier == "unassigned" && slices.Contains(c.Members, s.AccountID) {
+			l, ok := identities[s.AccountID]
+			if !ok || l.Lapsed != "" {
+				unavailable[s.AccountID] = true
+			} else if _, err := claudeSavedDir(l.User); err != nil {
+				unavailable[s.AccountID] = true
+			}
+		}
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := time.Now()
 	from, to := "", ""
 	var candidates []string
 	var weights []routes.Seat
+	var reliable []bool
 	for _, s := range seats {
 		if !slices.Contains(c.Members, s.AccountID) {
 			continue
@@ -995,7 +1036,7 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 			manual == "" && (identities[s.AccountID].Lapsed != "" || teamSpent(t.disk.Limits[s.AccountID], c.Threshold, now))) && from == "" {
 			from = s.AccountID
 		}
-		if s.SeatTier != "unassigned" || identities[s.AccountID].Lapsed != "" || teamSpent(t.disk.Limits[s.AccountID], c.Threshold, now) {
+		if s.SeatTier != "unassigned" || unavailable[s.AccountID] || teamSpent(t.disk.Limits[s.AccountID], c.Threshold, now) {
 			continue
 		}
 		ws := claudeLimitWindows(t.disk.Limits[s.AccountID])
@@ -1007,6 +1048,8 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 			pace = FreshPace
 		}
 		candidates = append(candidates, s.AccountID)
+		reliable = append(reliable, t.disk.QuotaErrors[s.AccountID] == "" &&
+			!t.disk.Observed[s.AccountID].IsZero() && now.Sub(t.disk.Observed[s.AccountID]) <= 24*time.Hour)
 		if c.Routing == "" {
 			known = claudeTeamQuotaKnown(t.disk.Limits[s.AccountID])
 		}
@@ -1015,7 +1058,16 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 	if len(candidates) > 0 {
 		to = candidates[0]
 		if c.Routing == "" {
-			to = candidates[ClaudeTeamSmart(weights)[0]]
+			order := ClaudeTeamSmart(weights)
+			to = candidates[order[0]]
+			// Failed reads/old snapshots are probes after observed usable
+			// alternatives, even when their projected reset sorts earlier.
+			for _, i := range order {
+				if reliable[i] && weights[i].Known {
+					to = candidates[i]
+					break
+				}
+			}
 		} else if strategy, ok := routes.Find(c.Routing); ok {
 			if order := routes.Apply(strategy, claudeTeamPrefix+c.OrganizationID+"/standby", weights); len(order) > 0 {
 				to = candidates[order[0]]
@@ -1029,7 +1081,13 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 	if from == "" && to != "" && manual == "" && c.Routing == "" {
 		var latest routes.Seat
 		standby := weights[slices.Index(candidates, to)]
-		if standby.Known {
+		recent := false
+		for _, h := range t.disk.History {
+			if h.Result == "assigned" && now.Sub(h.At) < 15*time.Minute {
+				recent = true
+			}
+		}
+		if standby.Known && reliable[slices.Index(candidates, to)] && !recent {
 			for _, s := range seats {
 				ls := t.disk.Limits[s.AccountID]
 				if s.SeatTier != "team_tier_1" || !slices.Contains(c.Members, s.AccountID) || identities[s.AccountID].Lapsed != "" || !claudeTeamQuotaKnown(ls) {
@@ -1037,6 +1095,9 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 				}
 				active := routes.Seat{Key: s.AccountID, Known: true, Soon: allowanceOf(claudeLimitWindows(ls), now).Renewal("", now)}
 				if ClaudeTeamSmart([]routes.Seat{active, standby})[0] != 1 {
+					continue
+				}
+				if !claudeTeamExpiryWorthwhile(active, standby, now) {
 					continue
 				}
 				if from == "" || ClaudeTeamSmart([]routes.Seat{active, latest})[0] == 1 {
@@ -1113,7 +1174,19 @@ func (t *claudeTeamController) reconcile(ctx context.Context, manual string) err
 	if from == "" || to == "" {
 		return nil
 	}
-	return t.transfer(ctx, c, client, seats, from, to)
+	reason := "manual"
+	if manual == "" {
+		t.mu.Lock()
+		spent := teamSpent(t.disk.Limits[from], c.Threshold, time.Now())
+		t.mu.Unlock()
+		reason = "expiry"
+		if identities[from].Lapsed != "" {
+			reason = "authentication"
+		} else if spent {
+			reason = "exhausted"
+		}
+	}
+	return t.transfer(ctx, c, client, seats, from, to, reason)
 }
 
 // RotateClaudeTeam asks the gateway's one background controller to move one

@@ -76,6 +76,30 @@ function fixture(lang) {
 }
 for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webkit"])) {
   for(const lang of (process.env.LANG_ONLY?[process.env.LANG_ONLY]:["en","zh","zh-TW","ja","de"])) {
+    test(engine+" "+lang+": Team reauth keeps the account and organization", {timeout:30000}, async t=>{
+      const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
+      t.after(()=>browser.close());
+      const page=await browser.newPage({viewport:{width:1000,height:850},reducedMotion:"reduce"});
+      const words=strings().I18N[lang]||{}, tr=s=>words[s]||s, f=fixture(lang);
+      const member=f.views.get(org).members[1];
+      member.lapsed=true; member.state="signed_out";
+      await page.route("**/*",f.route);
+      for(const settings of [false,true]) {
+        await page.goto("http://magpie.test/?view=providers&edit=claude-team-"+org);
+        let row=page.locator(".team-accts .acc").filter({hasText:member.user});
+        await row.getByText(tr("Sign-in required"),{exact:true}).waitFor();
+        if(settings) {
+          await page.locator(".team-accts > button").first().click();
+          await page.locator(".team-auth-notice").waitFor();
+          row=page.locator('.team-member[data-account="'+member.accountId+'"]');
+        }
+        await row.locator(".team-reauth").click();
+        await page.getByRole("button",{name:tr("Sign in anyway"),exact:true}).click();
+        await page.locator(".signing .signlink").waitFor();
+        assert.deepEqual(f.starts.at(-1),{agent:"claude",user:member.user,organizationId:org});
+        assert.equal(f.posts.length,0,"reauth changed Team configuration or seats");
+      }
+    });
     test(engine+" "+lang+": elapsed Team windows show estimates and an unstarted 5h", {timeout:30000}, async t=>{
       const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
       t.after(()=>browser.close());
