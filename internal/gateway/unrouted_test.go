@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -313,6 +314,25 @@ func routesOf(s *Server, model string) []Route {
 	return out
 }
 
+// A timeout's response can reach the client before its final trace update.
+// Observe trace events, not HTTP completion or a fixed sleep, for that update.
+func completedRoutesOf(t *testing.T, s *Server, model string) []Route {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var seq int64
+	for {
+		rs := routesOf(s, model)
+		if len(rs) > 0 && !slices.ContainsFunc(rs, func(r Route) bool { return !r.Done }) {
+			return rs
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("the request's trace never completed: %+v", rs)
+		}
+		seq = s.Trace(ctx, seq, time.Second).Seq
+	}
+}
+
 // heyusaku6 on X: Codex thought for over ten minutes on a model served
 // through magpie, the Routing page showed nothing, and only restarting
 // both ended it. A request held before any route is begun for it shows on
@@ -365,7 +385,7 @@ func TestUnroutedRequestShownThenAnswered(t *testing.T) {
 	if r.err != nil || r.code != http.StatusGatewayTimeout || !strings.Contains(r.body, "without routing it to any provider") {
 		t.Fatalf("held request answered %d %q %v", r.code, r.body, r.err)
 	}
-	rs := routesOf(s, "probe/text")
+	rs := completedRoutesOf(t, s, "probe/text")
 	if len(rs) != 1 || !rs[0].Done || rs[0].Status != http.StatusGatewayTimeout || !strings.Contains(rs[0].Error, "without routing") {
 		t.Fatalf("the held request's route: %+v", rs)
 	}

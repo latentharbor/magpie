@@ -99,20 +99,7 @@ func TestHeldForTheMaskingModelSaysSo(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the request's wait for the model went on after magpie answered it")
 	}
-	// The complete HTTP body can reach the client (and closing its connection
-	// can cancel the masker) before giveUp publishes the route's final state.
-	// Wait for that trace event rather than assuming either means it is done.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	var rs []Route
-	var seq int64
-	for {
-		rs = routesOf(s, "probe/text")
-		if len(rs) == 1 && rs[0].Done || ctx.Err() != nil {
-			break
-		}
-		seq = s.Trace(ctx, seq, time.Second).Seq
-	}
+	rs := completedRoutesOf(t, s, "probe/text")
 	if len(rs) != 1 || !rs[0].Done || rs[0].Status != http.StatusGatewayTimeout ||
 		!strings.Contains(rs[0].Error, "waiting for the local masking model") {
 		t.Fatalf("its route: %+v", rs)
