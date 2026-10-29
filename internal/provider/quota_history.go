@@ -177,7 +177,7 @@ func newCycle(a, b QuotaPoint) bool {
 // the card shows, where its models' own windows are not (max2020 on
 // Discord: an Antigravity card had no curve and no "runs out" line).
 func pointOf(w QuotaWindow, at, now time.Time) (QuotaPoint, bool) {
-	if w.Estimated || w.Unlimited || w.Aside || w.Family != "" || w.Name == "" || math.IsNaN(w.Used) {
+	if w.Estimated || w.Unlimited || w.Aside && !w.PoolWindow() || w.Family != "" || w.Name == "" || math.IsNaN(w.Used) {
 		return QuotaPoint{}, false
 	}
 	p := QuotaPoint{At: at.UTC().Truncate(time.Second), Left: math.Round(max(0, min(100, 100-w.Used))*100) / 100}

@@ -1325,6 +1325,15 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		if _, sent := fields["classifyTimeout"]; !sent {
 			in.ClassifyTimeout = cur.ClassifyTimeout
 		}
+		if _, sent := fields["reduceMotion"]; !sent {
+			in.ReduceMotion = cur.ReduceMotion
+		}
+		if _, sent := fields["noBird"]; !sent {
+			in.NoBird = cur.NoBird
+		}
+		if _, sent := fields["maskAlert"]; !sent {
+			in.MaskAlert = cur.MaskAlert
+		}
 		// Older pages do not send the Claude subscription's transport.
 		if _, sent := fields["claudeTransport"]; !sent {
 			in.ClaudeTransport = cur.ClaudeTransport

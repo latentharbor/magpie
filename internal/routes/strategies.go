@@ -5,6 +5,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/yetone/magpie/internal/provider"
 )
 
 // Shares of an allowance past which an account is kept for when the others
@@ -12,7 +14,7 @@ import (
 // in to it is signed in to another, too (provider.SpentShare).
 const (
 	LowShare  = 90
-	UsedShare = 98
+	UsedShare = provider.SpentShare
 )
 
 // tier is 0 for a share with room, 1 for low, 2 for all but used up.
@@ -346,10 +348,11 @@ var FreeFirst = Strategy{ByFree: true, Order: func(_ string, seats []Seat) []int
 // Builtin are the routings besides Smart and their strategies, as
 // plugins/rotation registers them.
 var Builtin = map[string]Strategy{
-	"order":  Ordered,
-	"rotate": Rotate,
-	"usage":  LeastUsed,
-	"pace":   Pace,
-	"weight": Weighted,
-	"free":   FreeFirst,
+	provider.Ordered:   Ordered,
+	provider.Rotate:    Rotate,
+	provider.LeastUsed: LeastUsed,
+	provider.Pace:      Pace,
+	provider.Weighted:  Weighted,
+	provider.FreeFirst: FreeFirst,
+	provider.Fastest:   Fastest,
 }

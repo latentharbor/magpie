@@ -2400,7 +2400,7 @@ func (h *holdWriter) keepAlive() {
 	a := h.alive
 	// a Gemini stream has none, as geminiEncoder.keepalive: agy fails on
 	// the comment ("invalid stream chunk: : keepalive", #934)
-	if a == nil || a.proto == provider.Gemini || time.Since(a.at) < keepaliveEvery || a.thread && (h.status == 0 || h.status >= 400) {
+	if a == nil || a.proto == provider.Gemini || time.Since(a.at) < min(keepaliveEvery, keepHeldEvery) || a.thread && (h.status == 0 || h.status >= 400) {
 		return
 	}
 	if !a.sent {

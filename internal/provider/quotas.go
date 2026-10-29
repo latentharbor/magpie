@@ -124,6 +124,7 @@ type Quota struct {
 // left, in percent, and when it starts again.
 type QuotaSpan struct {
 	Unlimited bool       `json:"unlimited,omitempty"`
+	Estimated bool       `json:"estimated,omitempty"`
 	Name      string     `json:"name"`
 	Used      float64    `json:"used"`
 	Remaining float64    `json:"remaining"`
@@ -202,7 +203,7 @@ func quotaReport(subs, plans, balances []SubscriptionQuota, now time.Time) []Quo
 			// a pool's own windows stand in for the models' drawing on it,
 			// as the usage page shows them
 			for _, w := range PooledWindows(q.Windows) {
-				s := QuotaSpan{Unlimited: w.Unlimited, Name: w.Name, Used: w.Used, Remaining: max(0, 100-w.Used), ResetsAt: w.ResetsAt, Display: w.Display, Text: w.Text,
+				s := QuotaSpan{Unlimited: w.Unlimited, Estimated: w.Estimated, Name: w.Name, Used: w.Used, Remaining: max(0, 100-w.Used), ResetsAt: w.ResetsAt, Display: w.Display, Text: w.Text,
 					Amount: w.Amount, Limit: w.Limit, Unit: w.Unit, Pool: w.Pool, RunsOutAt: w.RunsOutAt, RunsOut: w.RunsOut, Balance: w.Balance, Holds: w.Holds, HoldsWhy: w.HoldsWhy}
 				if s.ResetsAt == nil && w.ResetSecs > 0 {
 					t := now.Add(time.Duration(w.ResetSecs) * time.Second)

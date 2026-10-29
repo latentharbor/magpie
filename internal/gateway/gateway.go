@@ -641,14 +641,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	// loops' next look (#3185)
 	go filememo.Watch(freshCtx, pluginrt.Path(), settings.Path(), provider.Path(), plugin.ListPath(), plugin.ToolsPath(), access.Path())
 	go pluginrt.KeepFresh(freshCtx, filememo.OthersEvery, settings.Path(), provider.Path(), plugin.ListPath(), plugin.ToolsPath(), access.Path())
-	var connections handoverConnections
-	handler := s.Front()
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.handedOff.Load() && r.ProtoMajor == 1 {
-			w.Header().Set("Connection", "close")
-		}
-		handler.ServeHTTP(w, r)
-	}), ConnState: connections.state, ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 5 * time.Minute}
+	go keepHubPruned(freshCtx)
+	srv := &http.Server{Handler: s.closesWhenHandedOff(s.Front()), ConnState: s.unread.note, ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 5 * time.Minute}
 	// the magpie serving the gateway, and only it, keeps the saved accounts
 	// signed in, so two never refresh one sign-in at once
 	go provider.KeepLoginsAlive(ctx)
@@ -711,24 +705,17 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	// and, on Windows, serves WSL distros under NAT at Windows' address on
 	// their network (wsl.go)
 	go s.serveWSL(ctx, srv)
-	acceptStopped := make(chan struct{})
 	drained := make(chan struct{})
 	go func() {
 		defer close(drained)
 		<-ctx.Done()
 		c, cancel := context.WithTimeout(context.Background(), s.drainFor())
 		defer cancel()
-		if s.handedOff.Load() {
-			// Stop accepting before Shutdown marks the HTTP server closed.
-			// Otherwise an Accept already returning a connection can reach
-			// Serve after that mark and be reset without reading its request.
-			// The successor keeps the listening socket open meanwhile.
-			s.lnMu.Lock()
-			current := s.ln
-			s.lnMu.Unlock()
-			current.Close()
-			<-acceptStopped
-			connections.wait(c)
+		if s.handingOver() {
+			// A connection already accepted by this server may have a final
+			// request in flight when the successor takes the listening socket.
+			s.stopAccepting()
+			s.unread.wait(c)
 		}
 		srv.Shutdown(c)
 		s.subscription.abortAll()
@@ -737,30 +724,22 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		// the MCP servers the hub started end with the gateway
 		StopHub()
 	}()
-	err = func() error {
-		defer close(acceptStopped)
-		for {
-			err := srv.Serve(ln)
-			if err == nil || errors.Is(err, http.ErrServerClosed) {
-				return nil
-			}
-			// Relisten closed it to move the gateway: serve the one it opened
-			s.lnMu.Lock()
-			next := s.ln
-			s.lnMu.Unlock()
-			if next == ln {
-				return err
-			}
-			ln = next
-		}
-	}()
-	if ctx.Err() != nil {
-		<-drained
-		if errors.Is(err, net.ErrClosed) {
+	for {
+		err := srv.Serve(ln)
+		if err == nil || errors.Is(err, http.ErrServerClosed) || s.notAccepting.Load() {
+			s.unread.stop()
+			<-drained
 			return nil
 		}
+		// Relisten closed it to move the gateway: serve the one it opened.
+		s.lnMu.Lock()
+		next := s.ln
+		s.lnMu.Unlock()
+		if next == ln {
+			return err
+		}
+		ln = next
 	}
-	return err
 }
 
 // Handler routes the client APIs.
@@ -2247,7 +2226,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	var group *GroupRef
 	// An empty Team route can be between seats. Keep only these waiting
 	// streams alive; normal routing never contacts or waits for the admin.
-	kept := &keptAlive{proto: from, told: start, streams: streamOf(body), thread: from == provider.Anthropic && gjson.GetBytes(body, "thread.type").Exists()}
+	kept := &keptAlive{proto: from, model: askedFor, told: start, streams: streamOf(body), thread: from == provider.Anthropic && gjson.GetBytes(body, "thread.type").Exists()}
 	if k := handedOnOf(r); k != nil {
 		kept = k
 	}
@@ -2307,14 +2286,24 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			scope += "|" + words
 		}
 	} else {
-		cands, pl = s.plan(p, model, from)
+		plan := func(p provider.Provider, model string) ([]candidate, planned) {
+			return s.planPaused(p, model, from, func(fg provider.Group, fms []provider.Member) []provider.Member {
+				folder := ""
+				if provider.PausesByFolder(fg, fms) {
+					folder = factsOf(from, body).dir
+				}
+				kept, _ := provider.PausedOut(fg, fms, agent, folder, ruleClock())
+				return kept
+			})
+		}
+		cands, pl = plan(p, model)
 		if len(cands) == 0 && p.Account != nil && p.Account.Agent == "claude" && provider.ClaudeTeamManaged(p.Account.User) {
 			// The one seat is between accounts. Only an empty route waits;
 			// a healthy normal request never waits for the control plane.
 			waitTeam(p.Account.User)
 			if fresh, m, ready := provider.Resolve(asked); ready {
 				p, model = fresh, m
-				cands, pl = s.plan(p, model, from)
+				cands, pl = plan(p, model)
 			}
 		}
 		if handedOnOf(r) != nil {
@@ -3802,7 +3791,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		if teamRetry && hw.code() == 429 && !provider.ClaudeTeamExhausted(c.p.Account.User) {
 			retryHeader = claudeTeamRateHeaders(retryHeader)
 		}
-		if wait, ok := passing(hw.code(), retryHeader, hw.errBody(), again); ok && !protected && !hw.turnedAway && hw.failed() && waitFrom.IsZero() && !kept.tooQuiet(wait) {
+		if wait, ok := passing(hw.code(), retryHeader, hw.errBody(), again); ok && !protected && !hw.turnedAway && hw.failed() && (waitFrom.IsZero() || teamRetry) && !kept.tooQuiet(wait) {
 			// nobody else is left: the same one again, after a moment (not
 			// what Antigravity turned away: it turns it away again; nor
 			// once the group's patience is spent)

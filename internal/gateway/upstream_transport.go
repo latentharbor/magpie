@@ -30,8 +30,10 @@ var upstreamTLS *tls.Config
 // Image generation timeout gives it (drawWithin), up to 60 minutes.
 func upstreamTransport() http.RoundTripper {
 	next := drawsApart{
-		any:   codexSocket{replayable{netproxy.Dispatch(vendorTransport(upstreamHeaderWait))}},
-		draws: replayable{netproxy.Dispatch(vendorTransport(0))},
+		any:     codexSocket{replayable{netproxy.Dispatch(vendorTransport(upstreamHeaderWait))}},
+		draws:   replayable{netproxy.Dispatch(vendorTransport(0))},
+		uploads: codexSocket{replayable{netproxy.Dispatch(uploadTransport(upstreamHeaderWait))}},
+		slow:    new(atomic.Int64),
 	}
 	var roots *x509.CertPool
 	if upstreamTLS != nil {

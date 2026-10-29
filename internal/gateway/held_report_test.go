@@ -61,7 +61,7 @@ func TestUnroutedHeldReportSaved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("its report %q: %v", rs[0].Held, err)
 	}
-	for _, want := range []string{"POST /v1/chat/completions", "probe/text", "image description", "(under way)", "body room:", "goroutine profile:"} {
+	for _, want := range []string{"POST /v1/chat/completions", "probe/text", "image description", "known waits:", "body room:", "goroutine profile:"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the report doesn't say %q:\n%.2000s", want, text)
 		}
