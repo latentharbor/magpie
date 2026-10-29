@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"regexp"
@@ -53,10 +54,17 @@ var srv struct {
 	mu   sync.Mutex
 	h    *helper
 	idle *time.Timer
-	// cpu is set once pf-serve died on the GPU: from then on it runs on
-	// the CPU; gpuLost says why
-	cpu     bool
-	gpuLost string
+	// cpu is set once pf-serve died on the GPU, didn't load there, or
+	// hung there twice in a row: it runs on the CPU until gpuAgain, when
+	// the GPU is tried again (gpuRetryAfter); gpuLost says why, gpuFails
+	// how many times in a row the GPU was lost. A GPU that answers clears
+	// them. Before, nothing did short of a restart of magpie, and one
+	// request too slow for its time on a weak GPU left every request after
+	// it on a CPU 3x slower (#3682).
+	cpu      bool
+	gpuLost  string
+	gpuFails int
+	gpuAgain time.Time
 	// failed is why the last request got no answer, until one does;
 	// lastErr is that error, fails how many requests in a row got none,
 	// and retryAt when the model is tried again: until then a request
@@ -94,10 +102,10 @@ var loadTimeout = 3 * time.Minute
 
 // gpuLoadTimeout is how long it has on a GPU, where it takes seconds
 // (0.9-10s on an M4 Pro): one that takes longer is taken for hung, and
-// the CPU is tried, for the rest of magpie's run. It is well under the 2
-// minutes the gateway holds a request for (unroutedMost), so a GPU's
-// hung load and the CPU's after it fit in one request's wait: with 3
-// minutes for either, every request in a hung load was answered 504.
+// the CPU is tried, until the GPU is tried again. With 3 minutes for
+// either, every request in a hung load waited out the gateway's 2
+// minutes and was answered 504; the gateway no longer counts masking's
+// time (#3682), and 40s still keeps a hung GPU's wait short.
 var gpuLoadTimeout = 40 * time.Second
 
 // giveUp is when a load is given up on; a test ends one when its state
@@ -115,6 +123,26 @@ func retryAfter(n int) time.Duration {
 		d *= 2
 	}
 	return min(d, 10*time.Minute)
+}
+
+// gpuRetryAfter is how long after the GPU was lost, the n-th time in a
+// row, the GPU is tried again: 10 minutes, doubled each time, 2 hours at
+// most. A try costs a load (seconds; gpuLoadTimeout for one that hangs)
+// and the request it is for goes on to the CPU's if it fails.
+func gpuRetryAfter(n int) time.Duration {
+	d := 10 * time.Minute
+	for i := 1; i < n && d < 2*time.Hour; i++ {
+		d *= 2
+	}
+	return min(d, 2*time.Hour)
+}
+
+// lostGPULocked moves the model to the CPU, why being what went wrong on
+// the GPU, until the GPU is tried again; mu is held.
+func lostGPULocked(why string) {
+	srv.gpuFails++
+	srv.cpu, srv.gpuLost = true, why
+	srv.gpuAgain = time.Now().Add(gpuRetryAfter(srv.gpuFails))
 }
 
 // classifyTimeout is how long one request may take before pf-serve is
@@ -165,10 +193,11 @@ func start(cpu bool, stop <-chan struct{}) (*helper, error) {
 		h, err := startOne(c.path, c.cpu, stop)
 		if err == nil {
 			if gpuLost != "" {
-				// the GPU's failed and the CPU's loaded: the CPU for
-				// the rest of the run, as for a GPU that dies answering
+				// the GPU's failed and the CPU's loaded: the CPU until
+				// the GPU is tried again, as for a GPU that dies
+				// answering
 				srv.mu.Lock()
-				srv.cpu, srv.gpuLost = true, gpuLost
+				lostGPULocked(gpuLost)
 				srv.mu.Unlock()
 			}
 			return h, nil
@@ -199,6 +228,12 @@ func startOne(path string, cpu bool, stop <-chan struct{}) (*helper, error) {
 	// second, and the first request after an idle spell takes 0.1-0.45s
 	// more (51-78ms hot either way).
 	cmd.Env = append(os.Environ(), "GGML_METAL_NO_RESIDENCY=1")
+	// PF_MOE_CHUNK is left at the engine's default (the window, 4096) on
+	// every device: on an RX 470 through Vulkan, interleaved A/B in one
+	// session read the same spans 6-9% faster at 4096 than at 2048 (#3682;
+	// the 1.77x once measured for 2048 was the machine's own 2x swing
+	// between runs hours apart), and on an M4 Pro's Metal 2048 was ~6%
+	// slower. A PF_MOE_CHUNK the user set is inherited through Environ.
 	if cpu {
 		cmd.Env = append(cmd.Env, "PF_DEVICE=cpu")
 	}
@@ -397,8 +432,11 @@ func end(h *helper) {
 }
 
 // classify asks pf-serve, started if it isn't, what is in texts. One that
-// fails is ended and started again; one that failed on the GPU is started
-// on the CPU, for good. The caller holds turn.
+// fails is ended and started again; one that died on the GPU is started
+// on the CPU, until the GPU is tried again. One that magpie ended on the
+// GPU for taking too long is started again on the GPU: a request too
+// slow for its time is no lost GPU. Twice in a row there is, and the CPU
+// is tried for the next. The caller holds turn.
 func classify(texts []string) ([][]redact.Found, error) {
 	out, err := classifyTurn(texts)
 	srv.mu.Lock()
@@ -435,10 +473,21 @@ func classifyTurn(texts []string) ([][]redact.Found, error) {
 	for try := 0; try < 2; try++ {
 		srv.mu.Lock()
 		h, cpu, stop := srv.h, srv.cpu, stopCh()
+		var gone *helper
+		if cpu && !time.Now().Before(srv.gpuAgain) {
+			// the GPU is tried again: a pf-serve on the CPU makes way.
+			// One that fails there moves back to the CPU (start, or
+			// below), with longer until the next try.
+			cpu = false
+			if h != nil && !h.hello.GPU {
+				gone, h = detachLocked(), nil
+			}
+		}
 		if h == nil {
 			srv.loading = true
 		}
 		srv.mu.Unlock()
+		end(gone)
 		if h == nil {
 			var err error
 			h, err = start(cpu, stop)
@@ -463,6 +512,10 @@ func classifyTurn(texts []string) ([][]redact.Found, error) {
 			if srv.h == h {
 				idleLocked(h)
 			}
+			if h.hello.GPU {
+				// the GPU answers: it is the model's again
+				srv.cpu, srv.gpuLost, srv.gpuFails = false, "", 0
+			}
 			srv.mu.Unlock()
 			return out, nil
 		}
@@ -476,7 +529,13 @@ func classifyTurn(texts []string) ([][]redact.Found, error) {
 			return nil, errStopped
 		}
 		if h.hello.GPU {
-			srv.cpu, srv.gpuLost = true, err.Error()
+			if h.slow.Load() != nil && try == 0 {
+				// ended for taking too long: a slow request, or a
+				// GPU's hang that a new pf-serve gets past, is no lost
+				// GPU, and the try again is on the GPU
+			} else {
+				lostGPULocked(err.Error())
+			}
 		}
 		srv.mu.Unlock()
 		h.kill()
@@ -561,9 +620,10 @@ func (h *helper) classify(texts []string) ([][]redact.Found, error) {
 		}
 		for j := 0; j < n && r.err == nil; j++ {
 			start, end := int32(r.u32()), int32(r.u32())
-			r.u32() // the score: pf-serve sends only those over its threshold
+			// pf-serve sends only those over its default threshold, 0.5: Floor
+			score := math.Float32frombits(r.u32())
 			label := string(r.bytes(int(r.u8())))
-			out[i] = append(out[i], redact.Found{Start: int(start), End: int(end), Label: label})
+			out[i] = append(out[i], redact.Found{Start: int(start), End: int(end), Label: label, Score: float64(score)})
 		}
 	}
 	if status != 0 && r.err == nil {

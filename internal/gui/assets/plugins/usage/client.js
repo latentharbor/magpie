@@ -50,6 +50,7 @@ magpie.plugin("usage", (ctx) => {
     <div class="row-head" id="usageKeysHead" hidden><button class="fold" type="button" data-fold="keys" aria-expanded="true" aria-controls="usageKeys"><span class="label" data-t>Gateway keys</span></button></div>
     <div class="list" id="usageKeys" hidden></div>
     <p class="usage-note" id="usageNote"></p>
+    <p class="usage-clear"><button class="text" id="usageClear" type="button" hidden><span data-t>Clear all usage…</span></button></p>
     <div class="plugin-slot" data-slot="usage" hidden></div>
   </div>
   <div class="usage-pane" id="ledgerPane" hidden>
@@ -58,6 +59,7 @@ magpie.plugin("usage", (ctx) => {
       <button class="sess-pick" id="ledAgent" type="button" hidden></button>
       <button class="sess-pick" id="ledPurpose" type="button" hidden></button>
       <button class="sess-pick" id="ledProvider" type="button" hidden></button>
+      <button class="sess-pick led-more" id="ledProviderMore" type="button" aria-haspopup="menu" hidden></button>
       <button class="sess-pick" id="ledAccount" type="button" hidden></button>
       <button class="sess-pick" id="ledKey" type="button" hidden></button>
       <div class="segs" id="ledStatus"></div>
@@ -103,7 +105,7 @@ magpie.plugin("usage", (ctx) => {
   <div class="usage-pane ctx-pane" id="contextPane" hidden></div>
   <div class="usage-pane sess-pane" id="sessionsPane" hidden>
     <div class="sess-tools">
-      <div class="segs" id="sessAgent"></div>
+      <button class="sess-pick" id="sessAgent" type="button" hidden></button>
       <button class="sess-pick" id="sessModel" type="button" hidden></button>
       <button class="sess-pick" id="sessFolder" type="button" hidden></button>
     </div>

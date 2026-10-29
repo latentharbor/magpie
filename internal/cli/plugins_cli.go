@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/middleware"
 	"github.com/yetone/magpie/internal/plugin"
@@ -72,10 +73,12 @@ func pluginCmd(args []string) error {
 		}
 		rest[0] = installedName(rest[0])
 		moved := provider.MovedOnto(rest[0])
+		wired := wiredPluginAgent(rest[0])
 		if err := provider.RemovePlugin(ctx, rest[0]); err != nil {
 			return err
 		}
 		fmt.Println(green.Render("✓"), "removed", rest[0])
+		sayAgentBack(wired)
 		for _, id := range moved {
 			fmt.Println(faint.Render("  " + id + " is off until the plugin is added again; its accounts are kept"))
 		}
@@ -92,10 +95,15 @@ func pluginCmd(args []string) error {
 			return errors.New(pluginUsage)
 		}
 		rest[0] = installedName(rest[0])
+		var wired *agent.Agent
+		if sub == "off" {
+			wired = wiredPluginAgent(rest[0])
+		}
 		if err := provider.SetPluginOff(ctx, rest[0], sub == "off"); err != nil {
 			return err
 		}
 		fmt.Println(green.Render("✓"), rest[0], "is", sub)
+		sayAgentBack(wired)
 		if sub == "off" {
 			for _, id := range provider.MovedOnto(rest[0]) {
 				fmt.Println(faint.Render("  " + id + " is off with it; its accounts are kept"))
@@ -498,7 +506,7 @@ func pluginLogin(ctx context.Context, name, method string) error {
 		code := ""
 		if a.Method == "code" {
 			fmt.Print("Code: ")
-			line, err := stdin.ReadString('\n')
+			line, err := stdin().ReadString('\n')
 			if err != nil && line == "" {
 				return err
 			}
@@ -512,7 +520,7 @@ func pluginLogin(ctx context.Context, name, method string) error {
 			fmt.Println("If the page the browser ends on won't load (magpie on a server or in Docker), paste its whole address here and press Enter:")
 			go func() {
 				for wait.Err() == nil {
-					line, err := stdin.ReadString('\n')
+					line, err := stdin().ReadString('\n')
 					if strings.TrimSpace(line) != "" && wait.Err() == nil {
 						if next, err := provider.PastePluginCallback(wait, a.URL, line); err != nil {
 							fmt.Println(err)
@@ -563,7 +571,7 @@ func keyPrompt(name string, m plugin.Method) string {
 func askNumber(n int) (int, error) {
 	for {
 		fmt.Print("> ")
-		line, err := stdin.ReadString('\n')
+		line, err := stdin().ReadString('\n')
 		if i, e := strconv.Atoi(strings.TrimSpace(line)); e == nil && i >= 1 && i <= n {
 			return i - 1, nil
 		}
@@ -609,7 +617,7 @@ func askPrompt(q *plugin.Prompt) (string, error) {
 		fmt.Println()
 		return strings.TrimSpace(string(b)), err
 	}
-	line, err := stdin.ReadString('\n')
+	line, err := stdin().ReadString('\n')
 	if err != nil && line == "" {
 		return "", err
 	}
@@ -672,4 +680,24 @@ func readsText(reads []string) string {
 		return "reads nothing"
 	}
 	return "reads " + strings.Join(reads, ", ")
+}
+
+// wiredPluginAgent is the agent the plugin named adds, while magpie is in
+// its config: turning the plugin off or removing it takes magpie out
+// first (provider.PluginAgentGoing, #3810).
+func wiredPluginAgent(name string) *agent.Agent {
+	for _, a := range agent.All() {
+		if a.Plugin != "" && (a.Plugin == name || plugin.Name(a.Plugin) == name) && a.Wired() {
+			return a
+		}
+	}
+	return nil
+}
+
+// sayAgentBack says that the agent a plugin added was taken off magpie.
+func sayAgentBack(a *agent.Agent) {
+	if a == nil {
+		return
+	}
+	fmt.Println(faint.Render("  " + a.Name + " is disconnected from magpie, back to what it had before; with the plugin back, connecting it (its switch on the Agents page) puts back the model it was on"))
 }

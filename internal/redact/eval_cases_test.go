@@ -10,8 +10,9 @@ type evalCase struct {
 
 // evalValue is a value in a case's text. Kind is what it is, or for one
 // to keep what it was or could be taken for. Known, where set, is the
-// issue of a value that comes out wrong with the rules and the model.
-type evalValue struct{ V, Kind, Known string }
+// issue of a value that comes out wrong with the rules and Privacy
+// Filter; GuardKnown, with the rules and AstrLink Guard.
+type evalValue struct{ V, Kind, Known, GuardKnown string }
 
 // The keys are made up, in the vendors' shapes; the people, places and
 // numbers are made up or the ones vendors and standards give as examples.
@@ -89,7 +90,7 @@ var evalCases = []evalCase{
 	{
 		ID: "token-count", From: "611b9e173",
 		Text: "<system-reminder><total_tokens>14902266 tokens left</total_tokens></system-reminder>",
-		Keep: []evalValue{{V: "14902266", Kind: "ACCOUNT"}},
+		Keep: []evalValue{{V: "14902266", Kind: "ACCOUNT", GuardKnown: "#3775"}},
 	},
 	{
 		ID: "assistant-names", From: "611b9e173",
@@ -293,6 +294,18 @@ var evalCases = []evalCase{
 		Text: "The 14:55Z errors came from our own org; Dana Whitfield is the lead if this turns out to be a settlement failure, and Priya wants it fixed first.",
 		Mask: []evalValue{{V: "Dana Whitfield", Kind: "PERSON"}, {V: "Priya", Kind: "PERSON"}},
 	},
+	// the owner's 脱敏 page, 10-26: a model's id beside a setting's key,
+	// and a toolchain's
+	{
+		ID: "settings-model", From: "owner",
+		Text: `[providers]` + "\n" + `groqAPIKey = "gsk_x…"` + "\n" + `groqAPIModel = "llama3-70b-8192"` + "\n" + `claudeAPIURL = "https://api.anthropic.com"` + "\n" + `claudeAPIModel = "claude-3-5-sonnet-20241022"`,
+		Keep: []evalValue{{V: "llama3-70b-8192", Kind: "SECRET"}, {V: "claude-3-5-sonnet-20241022", Kind: "SECRET"}},
+	},
+	{
+		ID: "rust-toolchain", From: "owner",
+		Text: "- MSRV check. The repo's minimum rust-version is 1.78. Pinning to `nightly-2026-09-01` (about 7 weeks old) is plausible.\n- Risk: the pinned toolchain lacks fixes.",
+		Keep: []evalValue{{V: "nightly-2026-09-01", Kind: "PERSON"}},
+	},
 
 	// ---- what masking is for --------------------------------------------
 	{
@@ -379,7 +392,7 @@ var evalCases = []evalCase{
 	{
 		ID: "tool-result-mixed", From: "true",
 		Text: "$ cat contacts.csv\nname,email,phone\nRina Kobayashi,rina.k@fastmail.com,+81 90-1234-5678\nOmar Haddad,omar.haddad@proton.me,+44 7700 900123",
-		Mask: []evalValue{{V: "Rina Kobayashi", Kind: "PERSON"}, {V: "rina.k@fastmail.com", Kind: "EMAIL"}, {V: "90-1234-5678", Kind: "PHONE"}, {V: "Omar Haddad", Kind: "PERSON"}, {V: "omar.haddad@proton.me", Kind: "EMAIL"}, {V: "7700 900123", Kind: "PHONE"}},
+		Mask: []evalValue{{V: "Rina Kobayashi", Kind: "PERSON"}, {V: "rina.k@fastmail.com", Kind: "EMAIL"}, {V: "90-1234-5678", Kind: "PHONE", GuardKnown: "#3776"}, {V: "Omar Haddad", Kind: "PERSON"}, {V: "omar.haddad@proton.me", Kind: "EMAIL"}, {V: "7700 900123", Kind: "PHONE"}},
 		Keep: []evalValue{{V: "contacts.csv", Kind: "EMAIL"}},
 	},
 }

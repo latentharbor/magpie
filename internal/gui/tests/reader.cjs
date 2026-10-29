@@ -98,9 +98,25 @@ async function viewOf(page, locator) {
 }
 
 // wheeled sends one wheel over the view and waits for its scroll to land;
-// false when the view didn't move in a second (it is at its end).
+// false when the view didn't move in a second (it is at its end). The
+// wheel is sent over a point of the view with no box of its own that
+// scrolls under it: one under the pointer takes the wheel first, as
+// Routing's steps did once they scrolled in 200px (ca9b5048e), and the
+// view never moved.
 async function wheeled(page, id, dy) {
-  const was = await page.locator("#" + id).evaluate((v) => v.scrollTop);
+  const { was, x, y } = await page.locator("#" + id).evaluate((v) => {
+    const r = v.getBoundingClientRect();
+    const scrolls = (e) => e.scrollHeight > e.clientHeight && /auto|scroll/.test(getComputedStyle(e).overflowY);
+    for (let fy = 0.5; fy < 1; fy += 0.1) for (const fx of [0.5, 0.15, 0.85, 0.02]) for (const s of [1, -1]) {
+      const x = r.left + r.width * fx, y = r.top + r.height * (s > 0 ? fy : 1 - fy);
+      let e = document.elementFromPoint(x, y);
+      if (!e || !v.contains(e)) continue;
+      while (e !== v && !scrolls(e)) e = e.parentElement;
+      if (e === v) return { was: v.scrollTop, x, y };
+    }
+    return { was: v.scrollTop, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  await page.mouse.move(x, y);
   await page.mouse.wheel(0, dy);
   return page.waitForFunction(([id, was]) => document.getElementById(id).scrollTop !== was, [id, was], { timeout: 1000 }).then(() => true, () => false);
 }

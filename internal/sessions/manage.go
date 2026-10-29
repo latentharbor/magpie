@@ -49,6 +49,10 @@ type Managed struct {
 	Messages  int   `json:"messages"`
 	Files     int   `json:"files"`
 	Deletable bool  `json:"deletable"`
+	// Pending: a file of it is still being read for the first time, and
+	// what it spent and its messages aren't counted yet (the Sessions page
+	// answers before such a read, manage_quick.go)
+	Pending bool `json:"pending,omitempty"`
 	// Codex: the provider the session was made with, and the one its Codex
 	// uses now, whose sessions alone its history lists (#887)
 	Provider     string `json:"provider,omitempty"`
@@ -66,7 +70,7 @@ type AgentCount struct {
 // those kept as files of their own, in a layout magpie knows whole.
 func Deletable(agent string) bool {
 	switch agent {
-	case "claude", "qoder", "qoder-cn", "workbuddy", "codebuddy", "codex", "pi", "omp", "cursor", "dsh", "droid":
+	case "claude", "qoder", "qoder-cn", "workbuddy", "codebuddy", "codex", "pi", "raft", "omp", "cursor", "dsh", "droid":
 		return true
 	}
 	return false
@@ -91,7 +95,13 @@ func Agents() []AgentCount {
 
 func agentCounts(all []file) []AgentCount {
 	n := map[string]map[string]bool{}
+	// as listAgent lists them, from the parses kept: a copy of a
+	// conversation is not a session of its own (ccCopies)
+	copies := ccCopies(all)
 	for _, f := range all {
+		if copies[f.key] != "" {
+			continue
+		}
 		if n[f.agent] == nil {
 			n[f.agent] = map[string]bool{}
 		}
@@ -161,67 +171,100 @@ func Manage(native map[string]bool, pick func([]AgentCount, map[string]map[strin
 	loadCache()
 	defer useDBs()()
 	all := allFiles()
-	v := ManageView{Agents: agentCounts(all), Native: nativeIDs(native, all)}
+	v := ManageView{Agents: agentCounts(all), Native: nativeIDsWith(native, all, true)}
 	v.Agent = pick(v.Agents, v.Native)
 	if v.Agent != "" {
-		v.Sessions = listAgent(v.Agent, all)
+		v.Sessions = listAgentWith(v.Agent, all, true)
 	}
 	return v
+}
+
+// readFor brings want's parses up to date: all of them, or, quick, as
+// quickRead does, with pending the paths still being read.
+func readFor(want, all []file, quick bool) (pending map[string]bool, done func()) {
+	if !quick {
+		refresh(want, all)
+		return nil, func() {}
+	}
+	return quickRead(want, all)
 }
 
 // idInFile says which agents' session ids are read from inside the
 // session's file, not taken from its name (as assemble does).
 func idInFile(agent string) bool {
 	switch agent {
-	case "codex", "pi", "omp", "dsh", "grok", "droid":
+	case "codex", "pi", "raft", "omp", "dsh", "grok", "droid":
 		return true
 	}
 	return false
 }
 
 func nativeIDs(agents map[string]bool, all []file) map[string]map[string]bool {
-	groups := map[string][]file{}
+	return nativeIDsWith(agents, all, false)
+}
+
+func nativeIDsWith(agents map[string]bool, all []file, quick bool) map[string]map[string]bool {
+	// Raft's Pi sessions are Pi's to the gateway (GatewayKeys)
+	asked := func(agent string) bool { return agents[agent] || agent == "raft" && agents["pi"] }
+	groups := byKey(all, func(f *file) bool { return asked(f.agent) })
 	var want []file
 	for _, f := range all {
-		if !agents[f.agent] {
+		if !asked(f.agent) {
 			continue
 		}
-		groups[f.key] = append(groups[f.key], f)
 		if idInFile(f.agent) {
 			want = append(want, f)
 		}
 	}
-	refresh(want, all)
+	_, done := readFor(want, all, quick)
+	defer done()
 	out := map[string]map[string]bool{}
 	for a := range agents {
 		out[a] = map[string]bool{}
 	}
 	for _, fs := range groups {
-		out[fs[0].agent][sessionID(fs)] = true
+		id := sessionID(fs)
+		if a := fs[0].agent; agents[a] {
+			out[a][id] = true
+		}
+		if fs[0].agent == "raft" && agents["pi"] {
+			out["pi"][id] = true
+		}
 	}
 	return out
 }
 
 func listAgent(agent string, all []file) []Managed {
-	groups := map[string][]file{}
+	return listAgentWith(agent, all, false)
+}
+
+func listAgentWith(agent string, all []file, quick bool) []Managed {
+	groups := byKey(all, func(f *file) bool { return f.agent == agent })
 	var mine []file
 	for _, f := range all {
 		if f.agent == agent {
-			groups[f.key] = append(groups[f.key], f)
 			mine = append(mine, f)
 		}
 	}
-	refresh(mine, all)
+	pending, done := readFor(mine, all, quick)
+	defer done()
 	identities := map[string]CodexIdentity(nil)
 	taskTitles := map[codexTaskTitle]string(nil)
 	if agent == "codex" {
 		identities = codexIdentitySnapshot(mine)
 		taskTitles = codexSubagentTaskTitles(mine)
 	}
+	copies, branches := ccFamily(mine)
+	copyIDs := copiesByKeeper(copies, groups)
 	price, titles := pricer(), codexTitleOf()
 	out := []Managed{}
-	for _, fs := range groups {
+	for k, fs := range groups {
+		if copies[k] != "" {
+			continue
+		}
 		s, _ := assemble(fs, price, titles)
+		s.Copies = copyIDs[k]
+		setBranch(&s, branches[k], groups)
 		setSessionCodexIdentity(&s, identities)
 		setSessionCodexTaskTitle(&s, taskTitles)
 		listed(&s)
@@ -229,8 +272,9 @@ func listAgent(agent string, all []file) []Managed {
 		m := Managed{Session: s, Files: len(fs), Deletable: Deletable(agent) && !s.ReadOnly}
 		for _, f := range fs {
 			m.Size += f.size
+			m.Pending = m.Pending || pending[f.path]
 			if st := cache[f.path]; st != nil && f.main {
-				for _, d := range st.Days {
+				for _, d := range st.Days.all() {
 					m.Messages += d.Prompts + d.Replies
 				}
 			}
@@ -279,6 +323,9 @@ type Trashed struct {
 	// Gateway: a session seen only through magpie's gateway, whose items
 	// are the conversation text magpie recorded of it (gateway_delete.go)
 	Gateway bool `json:"gateway,omitempty"`
+	// CodexCatalog: a Codex thread's rows in the Codex app's catalog,
+	// taken out with it and put back on Restore (codex_catalog.go)
+	CodexCatalog []codexCatalogRow `json:"codex_catalog,omitempty"`
 }
 
 // moved is one file or folder of a session moved to the trash: where it
@@ -313,11 +360,10 @@ func Delete(agent, id string) (Trashed, error) {
 	loadCache()
 	defer useDBs()()
 	all := allFiles()
-	groups := map[string][]file{}
+	groups := byKey(all, func(f *file) bool { return f.agent == agent })
 	var mine []file
 	for _, f := range all {
 		if f.agent == agent {
-			groups[f.key] = append(groups[f.key], f)
 			mine = append(mine, f)
 		}
 	}
@@ -325,10 +371,11 @@ func Delete(agent, id string) (Trashed, error) {
 	// the session as the page lists it: by the id assemble gives it
 	var fs []file
 	var s Session
+	key := ""
 	price, titles := pricer(), codexTitleOf()
-	for _, g := range groups {
+	for k, g := range groups {
 		if one, _ := assembleListed(g, price, titles); one.ID == id {
-			fs, s = g, one
+			fs, s, key = g, one, k
 			break
 		}
 	}
@@ -339,6 +386,16 @@ func Delete(agent, id string) (Trashed, error) {
 		return Trashed{}, errors.New("this session is read only")
 	}
 	paths := sessionPaths(agent, id, fs)
+	// the copies of its conversation go with it: they were listed as
+	// this session, and one would come back as its row after (ccCopies)
+	if len(paths) > 0 {
+		for k, keeper := range ccCopies(mine) {
+			if c := groups[k]; keeper == key && len(c) > 0 && !c[0].readOnly {
+				paths = append(paths, sessionPaths(agent, sessionID(c), c)...)
+				fs = append(fs[:len(fs):len(fs)], c...)
+			}
+		}
+	}
 	if len(paths) == 0 {
 		// a stopped distro's listing, of files since gone
 		wslForget(fs)
@@ -378,9 +435,22 @@ func Delete(agent, id string) (Trashed, error) {
 	}
 	for _, f := range fs {
 		delete(cache, f.path)
+		delete(ccUUIDMemo, f.path)
 	}
 	saveCache()
 	wslForget(fs)
+	if agent == "codex" {
+		// the Codex app's list of it, which it keeps apart from the files
+		var homes []string
+		for _, p := range paths {
+			homes = append(homes, codexHomeOf(p))
+		}
+		tidyCodexCatalog(homes)
+		if b, err := os.ReadFile(filepath.Join(dir, manifest)); err == nil {
+			json.Unmarshal(b, &t)
+		}
+		t.Key = agent + "/" + name
+	}
 	return t, nil
 }
 
@@ -419,7 +489,7 @@ func sessionPaths(agent, id string, fs []file) []string {
 		}
 		for _, f := range fs {
 			add(dshSessionDir(f))
-			add(dshCacheRecord(f.sid))
+			add(dshCacheRecord(f.m().sid))
 		}
 		return out
 	}
@@ -432,7 +502,7 @@ func sessionPaths(agent, id string, fs []file) []string {
 			}
 			// the folder beside it: a Claude Code session's subagents and
 			// tool results, an omp session's artifacts
-			if agent != "codex" && agent != "pi" {
+			if agent != "codex" && agent != "pi" && agent != "raft" {
 				if d := strings.TrimSuffix(f.path, ".jsonl"); d != f.path {
 					if fi, err := os.Stat(d); err == nil && fi.IsDir() {
 						add(d)
@@ -449,16 +519,16 @@ func sessionPaths(agent, id string, fs []file) []string {
 	if agent == "droid" {
 		// each transcript's settings beside it: what it spent, its model
 		for _, f := range fs {
-			if f.manifest != "" && !inside(f.manifest, out) {
-				add(f.manifest)
+			if f.m().manifest != "" && !inside(f.m().manifest, out) {
+				add(f.m().manifest)
 			}
 		}
 	}
 	if agent == "claude" {
 		dir := ClaudeDir()
-		if fs[0].wsl != "" {
+		if fs[0].m().wsl != "" {
 			// the distro's own ~/.claude
-			if dir = wslHomeOf(fs[0].wsl); dir == "" {
+			if dir = wslHomeOf(fs[0].m().wsl); dir == "" {
 				return out
 			}
 			dir = filepath.Join(dir, ".claude")
@@ -689,6 +759,11 @@ func Restore(key string) (Trashed, error) {
 			}
 			return Trashed{}, err
 		}
+	}
+	// the Codex app lists it again: it wouldn't take in a thread that old
+	// by itself
+	if t.Agent == "codex" && len(t.CodexCatalog) > 0 {
+		restoreCodexCatalog(t.CodexCatalog)
 	}
 	os.RemoveAll(dir)
 	wslRelistNow(t.Items)

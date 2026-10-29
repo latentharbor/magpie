@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -153,6 +154,13 @@ var (
 	// under it, and so is any RPC result, so a child that never ends a line
 	// fails the host rather than making it allocate without bound.
 	maxWireLine = 32 << 20
+	// streamWait is how long a fetch waits for a stream's window to come
+	// free when the budget's are all held, while its request lives. Past
+	// the budget a fetch used to fail at once (errTooManyCalls), and the
+	// gateway counted that as a 502 and tried again: 192 streams at once
+	// through one plugin gave 298 local refusals that never reached the
+	// vendor (#3890).
+	streamWait = time.Minute
 	// maxHeadBytes and maxHeadEntries are magpie's own head-envelope policy,
 	// not HTTP's: a fetch's head carries at most maxHeadBytes of header bytes
 	// (the UTF-8 bytes of every name and value, plus headEntryCost an entry)
@@ -457,6 +465,8 @@ type host struct {
 	// with magpie's now (proxyMoved), zero for a host not started here.
 	proxy   string
 	proxyAt time.Time
+	// addr is the gateway's address the host was told (hostAddr)
+	addr string
 }
 
 // lineLimit is the longest line this host reads from the child.
@@ -740,6 +750,23 @@ func Running() bool {
 	return current != nil && current.alive()
 }
 
+// Warm starts the host if none is up and Bun is here. A plugin's page in
+// the window whose plugin has a part for the host too (a local service
+// its page goes to, as Magiczerowxy/magpie-chat's does) is served by the
+// host, which is otherwise started only by a call: at launch, while the
+// providers are first read, and after every Restart (a plugin installed,
+// updated or set, a Bun update) only once something asks a plugin again.
+// Opening such a page is that ask. A host that is up goes through get
+// too, so one started before the gateway moved (hostAddr) is started
+// again with the address the page's service needs.
+func Warm(ctx context.Context) error {
+	if !Running() && !HasBun() {
+		return nil
+	}
+	_, err := get(ctx)
+	return err
+}
+
 func (h *host) alive() bool {
 	select {
 	case <-h.dead:
@@ -928,6 +955,7 @@ func startOn(ctx context.Context, bun string) (*host, bool, error) {
 	// the host outlives the request that started it
 	proxy := hostProxy(env()) // what bunCommand gives it
 	cmd := bunCommand(context.Background(), bun, settings.Dir(), "run", js)
+	addr := hostAddr(cmd.Env)
 	cmd.Env = hostEnv(cmd.Env)
 	in, err := cmd.StdinPipe()
 	if err != nil {
@@ -958,6 +986,7 @@ func startOn(ctx context.Context, bun string) (*host, bool, error) {
 		cancel:   hcancel,
 		proxy:    proxy,
 		proxyAt:  time.Now(),
+		addr:     addr,
 	}
 	go drainStderr(stderr)
 
@@ -1445,14 +1474,7 @@ func (h *host) dropCtrl() {
 // when the host already holds its limit of live and retiring calls, so a new
 // call fails clearly rather than a legitimate accepted reply being cut short.
 func (h *host) begin(stream bool) (int64, *call, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if !h.alive() {
-		return 0, nil, errHostGone
-	}
-	c := &call{done: make(chan message, 1), stream: stream, wake: make(chan struct{}, 1), state: callSending}
 	if stream {
-		c.window = streamWindow
 		// a stream holds one window of the budget as well as a call slot, so
 		// the RPC reserve is never spent on one more stream
 		select {
@@ -1460,6 +1482,46 @@ func (h *host) begin(stream bool) (int64, *call, error) {
 		default:
 			return 0, nil, errTooManyCalls
 		}
+	}
+	return h.admit(stream)
+}
+
+// beginStream is begin for a fetch: while the budget's windows are all held
+// it waits for one to come free, for streamWait at most and only while ctx
+// lives, rather than failing a request that would have run a moment later.
+// The wait is outside h.mu, which the call that frees a window takes.
+func (h *host) beginStream(ctx context.Context) (int64, *call, error) {
+	select {
+	case h.streams <- struct{}{}:
+	default:
+		t := time.NewTimer(streamWait)
+		defer t.Stop()
+		select {
+		case h.streams <- struct{}{}:
+		case <-ctx.Done():
+			return 0, nil, context.Cause(ctx)
+		case <-h.dead:
+			return 0, nil, errHostGone
+		case <-t.C:
+			return 0, nil, errTooManyCalls
+		}
+	}
+	return h.admit(true)
+}
+
+// admit registers a call whose stream window, if it is a stream, is taken.
+func (h *host) admit(stream bool) (int64, *call, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.alive() {
+		if stream {
+			<-h.streams
+		}
+		return 0, nil, errHostGone
+	}
+	c := &call{done: make(chan message, 1), stream: stream, wake: make(chan struct{}, 1), state: callSending}
+	if stream {
+		c.window = streamWindow
 	}
 	select {
 	case h.slots <- struct{}{}:
@@ -1646,8 +1708,9 @@ func proxied(hp string) bool {
 // sign-in, renewed by its CLI through the host, then lapsed after every
 // restart of the computer, and only a new host (moving the account back
 // to the built-in and on to the plugin again) brought it back. A proxy
-// changed in Settings never reached a running host either. Called under
-// hostMu.
+// changed in Settings never reached a running host either. Nor did the
+// gateway's address (hostAddr): a port changed in Settings is the next
+// host's. Called under hostMu.
 func (h *host) proxyMoved() bool {
 	every := proxyLookEvery
 	if !proxied(h.proxy) {
@@ -1657,15 +1720,43 @@ func (h *host) proxyMoved() bool {
 		return false
 	}
 	h.proxyAt = time.Now()
-	return hostProxy(env()) != h.proxy
+	e := env()
+	return hostProxy(e) != h.proxy || h.addr != "" && hostAddr(e) != h.addr
 }
 
-// hostEnv is env for the host, its *_PROXY named MAGPIE_*_PROXY: Bun
+// hostAddr is the gateway's address a host is told, as MAGPIE_ADDR: the
+// variable's own value when magpie runs under one, else Settings' port on
+// loopback. A plugin with a service of its own reaches magpie's gateway
+// there: Magiczerowxy/magpie-chat's chat server asks MAGPIE_ADDR, then
+// 3425, so with the port set in Settings (or a portable magpie's) its
+// model list was empty and every message failed, "Unable to connect"
+// (yuesh1_ on X, Magiczerowxy/magpie-chat#1). A gateway listening on
+// every interface (MAGPIE_ADDR=0.0.0.0:…) is reached on loopback, as
+// gateway.URL does.
+func hostAddr(env []string) string {
+	a := ""
+	for _, e := range env {
+		if k, v, ok := strings.Cut(e, "="); ok && strings.EqualFold(k, "MAGPIE_ADDR") && v != "" {
+			a = v
+		}
+	}
+	if a == "" {
+		return settings.SavedAddr()
+	}
+	if h, p, err := net.SplitHostPort(a); err == nil && (h == "" || net.ParseIP(h) != nil && net.ParseIP(h).IsUnspecified()) {
+		a = net.JoinHostPort("127.0.0.1", p)
+	}
+	return a
+}
+
+// hostEnv is env for the host, MAGPIE_ADDR the gateway's (hostAddr), its
+// *_PROXY named MAGPIE_*_PROXY: Bun
 // reads *_PROXY once and puts every fetch through them, so a provider set
 // to "direct" couldn't go around them. host.js gives each fetch the proxy
 // they name instead. A SOCKS5 one, which Bun can't use, is bridged.
 func hostEnv(env []string) []string {
-	out := make([]string, 0, len(env))
+	out := make([]string, 0, len(env)+1)
+	addr := hostAddr(env)
 	for _, e := range env {
 		k, v, _ := strings.Cut(e, "=")
 		switch strings.ToUpper(k) {
@@ -1673,11 +1764,13 @@ func hostEnv(env []string) []string {
 			out = append(out, "MAGPIE_"+k+"="+netproxy.ForBun(v))
 		case "NO_PROXY":
 			out = append(out, "MAGPIE_"+k+"="+v)
+		case "MAGPIE_ADDR":
+			// an empty one is Settings' (hostAddr)
 		default:
 			out = append(out, e)
 		}
 	}
-	return out
+	return append(out, "MAGPIE_ADDR="+addr)
 }
 
 // Fetch sends r through the provider's plugin — its loader's fetch, or
@@ -1693,7 +1786,7 @@ func Fetch(ctx context.Context, r FetchRequest) (*http.Response, error) {
 	if r.Proxy == "" {
 		r.Proxy = proxyOf(ctx)
 	}
-	id, c, err := h.begin(true)
+	id, c, err := h.beginStream(ctx)
 	if err != nil {
 		return nil, err
 	}

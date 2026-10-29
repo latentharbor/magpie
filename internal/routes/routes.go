@@ -5,7 +5,7 @@
 // failover itself; a Strategy only says the order.
 //
 // Smart, the default, is the core's. The others a provider or group can be
-// routed by (order, rotate, usage, pace, weight) are here for a plugin to
+// routed by (order, rotate, usage, pace, weight, free, fast) are here for a plugin to
 // register: plugins/rotation does, and off, a pool routed by one of them is
 // tried in its listed order, as an unknown routing always was.
 package routes
@@ -33,6 +33,10 @@ type Seat struct {
 	Used float64
 	// Soon is when its windows renew, the biggest first (Allowance.Renewal)
 	Soon []time.Time
+	// Lapse is when the soonest of what it has left is lost, apart from
+	// its windows' renewals (Allowance.Lapse): zero when not told. Smart
+	// goes by it when Soon ties.
+	Lapse time.Time
 	// Pace is its week left per hour until that renews; an account not
 	// known has a whole week (provider.FreshPace), a key none
 	Pace float64
@@ -50,6 +54,21 @@ type Seat struct {
 	// credits, and is let spend them. All but used up, it goes before
 	// those used up with nothing to go on with.
 	Credits bool
+	// TTFT is how long it took lately to the first of its reply, in ms,
+	// for the model this seat would be asked for: a decayed average of its
+	// recent streamed answers, 0 when it hasn't answered one lately.
+	// TPS is how fast it wrote them, output tokens a second, 0 when not
+	// told (a reply let go in a burst tells none). Fastest goes by them.
+	TTFT, TPS float64
+	// Left is a prepaid wallet's balance, what it has left in its unit
+	// (provider.Allowance.Left, #3950), and LeftIn whose wallet that is:
+	// its provider and unit, empty when no balance was told. A wallet has
+	// no share and no renewal, so Used and Soon tie; Smart, Pace and
+	// LeastUsed then put the one with more left first, only among seats
+	// whose LeftIn is the same (byLeft): points are never weighed against
+	// another provider's, or another unit.
+	Left   float64
+	LeftIn string
 }
 
 // Strategy orders a pool.
@@ -69,6 +88,9 @@ type Strategy struct {
 	// model costs nothing there, and the routing trace then shows it.
 	// Only when set: working it out reads each provider's model list.
 	ByFree bool
+	// BySpeed: it weighs by TTFT and TPS, so the gateway reads each seat's
+	// recent speed, and the routing trace then shows it.
+	BySpeed bool
 }
 
 var reg = struct {

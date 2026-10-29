@@ -9,3 +9,4 @@ __pycache__/
 /rsrc_windows_*.syso
 /magpie-dev-backend
 /magpie-dev.new
+/internal/update/launcher-*.com

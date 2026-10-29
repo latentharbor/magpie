@@ -36,7 +36,12 @@ func MergeExternal(native []Session, external []ExternalSession) []Session {
 	names := desktopExternalTitles(external)
 	seen := map[string]bool{}
 	for _, s := range native {
-		seen[s.Agent+"|"+s.ID] = true
+		for _, k := range GatewayKeys(s) {
+			seen[k] = true
+		}
+		for _, id := range s.Copies {
+			seen[s.Agent+"|"+id] = true
+		}
 	}
 	out := append([]Session(nil), native...)
 	for _, e := range external {
@@ -93,8 +98,11 @@ type ExternalDayUsage struct {
 	Priced bool
 }
 
+// st itself is not written: its Days and Sessions may be kept for the next
+// read (keptStats), so what is changed is copied first.
 func MergeExternalStats(st Stats, days []ExternalDayUsage, external []ExternalSession) Stats {
 	oldFirst, _ := time.ParseInLocation(time.DateOnly, st.From, time.Local)
+	sessionsOwn := false
 	for _, d := range days {
 		if d.Date <= st.To && (st.From == "" || d.Date < st.From) {
 			st.From = d.Date
@@ -103,21 +111,21 @@ func MergeExternalStats(st Stats, days []ExternalDayUsage, external []ExternalSe
 	first, _ := time.ParseInLocation(time.DateOnly, st.From, time.Local)
 	if !oldFirst.IsZero() && !first.Equal(oldFirst) {
 		shift := int(math.Round(oldFirst.Sub(first).Hours() / 24))
-		st.Sessions = slices.Clone(st.Sessions)
+		st.Sessions, sessionsOwn = slices.Clone(st.Sessions), true
 		for i := range st.Sessions {
 			s := &st.Sessions[i]
 			s.Days = slices.Clone(s.Days)
 			for j := range s.Days {
 				s.Days[j] += shift
 			}
-			pd := map[int]*summaryDay{}
-			for d, v := range s.perDay {
-				pd[d+shift] = v
+			s.perDay = slices.Clone(s.perDay)
+			for j := range s.perDay {
+				s.perDay[j].day += shift
 			}
-			s.perDay = pd
 		}
 	}
-	byDate := map[string]int{}
+	st.Days = slices.Clone(st.Days)
+	byDate, own := map[string]int{}, map[int]bool{}
 	for i := range st.Days {
 		byDate[st.Days[i].Date] = i
 	}
@@ -129,9 +137,13 @@ func MergeExternalStats(st Stats, days []ExternalDayUsage, external []ExternalSe
 		if !ok {
 			st.Days = append(st.Days, Day{Date: u.Date, Usage: []Usage{}, Active: []Active{}})
 			i = len(st.Days) - 1
-			byDate[u.Date] = i
+			byDate[u.Date], own[i] = i, true
 		}
 		d := &st.Days[i]
+		if !own[i] {
+			// a day of st's: its rows are copied before one is added to
+			d.Usage, own[i] = slices.Clone(d.Usage), true
+		}
 		found := false
 		for i := range d.Usage {
 			if d.Usage[i].Agent == u.Agent && d.Usage[i].Cwd == u.Cwd && d.Usage[i].Model == u.Model {
@@ -151,7 +163,8 @@ func MergeExternalStats(st Stats, days []ExternalDayUsage, external []ExternalSe
 		if e.ID == "" || e.Agent == "" {
 			continue
 		}
-		s := Summary{Key: e.Agent + ":" + e.ID, Agent: e.Agent, ID: e.ID, Title: cmp.Or(names[e.Agent+"|"+e.ID], e.Title), Gateway: true, Last: e.Last, Tokens: e.Tokens, Cost: e.Cost, Priced: true, Models: []string{}, Days: []int{}, perDay: map[int]*summaryDay{}}
+		s := Summary{Key: e.Agent + ":" + e.ID, Agent: e.Agent, ID: e.ID, Title: cmp.Or(names[e.Agent+"|"+e.ID], e.Title), Gateway: true, Last: e.Last, Tokens: e.Tokens, Cost: e.Cost, Priced: true, Models: []string{}, Days: []int{}}
+		perDay := map[int]*summaryDay{}
 		for _, u := range e.Daily {
 			day, err := time.ParseInLocation(time.DateOnly, u.Date, time.Local)
 			if err != nil {
@@ -161,22 +174,31 @@ func MergeExternalStats(st Stats, days []ExternalDayUsage, external []ExternalSe
 			if first.IsZero() || u.Date < st.From || u.Date > st.To {
 				continue
 			}
-			pd := s.perDay[d]
+			pd := perDay[d]
 			if pd == nil {
-				pd = &summaryDay{}
-				s.perDay[d] = pd
+				pd = &summaryDay{day: d}
+				perDay[d] = pd
 				s.Days = append(s.Days, d)
 			}
 			pd.output += u.Output
 		}
 		sort.Ints(s.Days)
+		for _, d := range s.Days {
+			s.perDay = append(s.perDay, *perDay[d])
+		}
 		for _, m := range e.Models {
 			s.Models = append(s.Models, m.Model)
 			s.Priced = s.Priced && m.Priced
 		}
+		if !sessionsOwn {
+			st.Sessions, sessionsOwn = slices.Clip(st.Sessions), true
+		}
 		st.Sessions = append(st.Sessions, s)
 	}
 	sort.Slice(st.Days, func(i, j int) bool { return st.Days[i].Date < st.Days[j].Date })
-	sort.SliceStable(st.Sessions, func(i, j int) bool { return st.Sessions[i].Last.After(st.Sessions[j].Last) })
+	if sessionsOwn {
+		// st's own come sorted so
+		sort.SliceStable(st.Sessions, func(i, j int) bool { return st.Sessions[i].Last.After(st.Sessions[j].Last) })
+	}
 	return st
 }

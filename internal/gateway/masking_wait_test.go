@@ -55,14 +55,15 @@ func (waitingMasker) Writer(w http.ResponseWriter) (http.ResponseWriter, func())
 	return w, func() {}
 }
 
-// #3682: with Settings → Privacy's local model on, every request after a
-// restart waited for it, and was answered after 2m that magpie "held this
-// request without routing it to any provider". Its answer says it waited
-// for the local masking model, what the model was doing and how to send
-// without it, and the wait lets go when magpie answers, rather than keep
-// its place in the model's queue.
-func TestHeldForTheMaskingModelSaysSo(t *testing.T) {
-	unroutedLimits(t, 50*time.Millisecond, 500*time.Millisecond)
+// #3682: with Settings → Privacy's local model on, a request the model
+// was still reading at 2 minutes was answered 504, its work thrown away,
+// and so every time it was sent again (480 KB on an RX 470/580 takes the
+// model 90s, and its turn waits for the requests ahead). Masking's time no
+// longer counts toward unroutedMost: the request waits for the model,
+// and its wait lets go when its client does, rather than keep its place
+// in the model's queue.
+func TestMaskingModelWaitNotCutOffAtMost(t *testing.T) {
+	unroutedLimits(t, 20*time.Millisecond, 200*time.Millisecond)
 	fresh(t)
 	if err := settings.Save(settings.Settings{Redact: true}); err != nil {
 		t.Fatal(err)
@@ -70,9 +71,9 @@ func TestHeldForTheMaskingModelSaysSo(t *testing.T) {
 	if err := provider.Save(provider.Provider{ID: "probe", Name: "Probe", Chat: "http://127.0.0.1:9/v1", Key: "key", Models: []string{"text"}}); err != nil {
 		t.Fatal(err)
 	}
-	on, busy := modelOn, modelBusy
-	modelOn, modelBusy = func() bool { return true }, func() string { return "it is still loading" }
-	t.Cleanup(func() { modelOn, modelBusy = on, busy })
+	on := modelOn
+	modelOn = func() bool { return true }
+	t.Cleanup(func() { modelOn = on })
 	withoutMasker(t)
 	m := waitingMasker{let: make(chan struct{}), left: make(chan struct{})}
 	t.Cleanup(func() { close(m.let) })
@@ -82,22 +83,33 @@ func TestHeldForTheMaskingModelSaysSo(t *testing.T) {
 	s := New()
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
-	c := &http.Client{Timeout: 20 * time.Second}
-	resp, err := c.Post(srv.URL+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"probe/text","messages":[{"role":"user","content":"hi"}]}`))
-	if err != nil {
-		t.Fatal(err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	got := make(chan unroutedReply, 1)
+	go func() {
+		req, _ := http.NewRequestWithContext(ctx, "POST", srv.URL+"/v1/chat/completions", strings.NewReader(`{"model":"probe/text","messages":[{"role":"user","content":"hi"}]}`))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			got <- unroutedReply{err: err}
+			return
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		got <- unroutedReply{code: resp.StatusCode, body: string(b)}
+	}()
+	u := watchedHold(t, s)
+	if r := heldPast(t, u, 5*unroutedMost, got); r != nil {
+		t.Fatalf("a request waiting for the masking model was answered %d %q %v past unroutedMost", r.code, r.body, r.err)
 	}
-	b, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	body := string(b)
-	if resp.StatusCode != http.StatusGatewayTimeout || !strings.Contains(body, "waiting for the local masking model") ||
-		!strings.Contains(body, "it is still loading") || !strings.Contains(body, "turn it off in Settings") || strings.Contains(body, "without routing") {
-		t.Fatalf("held for the model: %d %s", resp.StatusCode, body)
+	if u.masking.Load() == 0 {
+		t.Fatal("held past unroutedMost, but not while masking")
 	}
+	cancel() // the client goes away
 	select {
 	case <-m.left:
 	case <-time.After(10 * time.Second):
-		t.Fatal("the request's wait for the model went on after magpie answered it")
+		t.Fatal("the request's wait for the model went on after its client went away")
 	}
 	rs := completedRoutesOf(t, s, "probe/text")
 	if len(rs) != 1 || !rs[0].Done || rs[0].Status != http.StatusGatewayTimeout ||

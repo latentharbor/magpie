@@ -17,6 +17,7 @@ import (
 	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/sessions"
+	"github.com/yetone/magpie/internal/settings"
 	"github.com/yetone/magpie/internal/usage"
 	"github.com/yetone/magpie/internal/usageapi"
 )
@@ -100,6 +101,79 @@ func usageRoutes(mux *http.ServeMux, w Windows) {
 	mux.HandleFunc("GET /api/usage", func(rw http.ResponseWriter, r *http.Request) {
 		// the days and hours of the reader's zone, which the page names
 		writeJSON(rw, usageState(periodOf(r.URL.Query().Get("period")), usageapi.ZoneOf(r)))
+	})
+	// the providers a deleted one's calls can be merged into: those there
+	// are now and shown, by name
+	mux.HandleFunc("GET /api/usage/deleted/into", func(rw http.ResponseWriter, r *http.Request) {
+		type target struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			Icon string `json:"icon"`
+		}
+		out := []target{}
+		for _, p := range provider.All() {
+			if p.Hidden {
+				continue
+			}
+			name, icon := p.Name, p.Icon
+			if name == "" {
+				n, i := provider.KnownFace(p.ID)
+				name = n
+				if icon == "" {
+					icon = i
+				}
+			}
+			if name == "" {
+				name = p.ID
+			}
+			out = append(out, target{p.ID, name, icon})
+		}
+		writeJSON(rw, out)
+	})
+	// a clear of usage from the Usage page (CrazyMouse_TT on X): the calls up to
+	// now of one provider's model, or of everything with both "", stop
+	// being counted on the usage pages. usage.jsonl keeps them, and a key's
+	// spending limit and the allowances still count them
+	// (settings.UsageCleared).
+	mux.HandleFunc("POST /api/usage/clear", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct{ Provider, Model string }
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		if err := settings.ClearUsage(in.Provider, in.Model, usage.Clock()); err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, map[string]bool{"ok": true})
+	})
+	// a deleted provider's calls, as the Usage page lists them under id:
+	// merged into a provider there is now (Into, "" to part them again)
+	// or shown by a name of the user's (Name, "" for its own); one not
+	// sent stays as it is (CyberCaius on Discord)
+	mux.HandleFunc("POST /api/usage/deleted", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct {
+			ID   string
+			Into *string
+			Name *string
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		if in.Into != nil {
+			if err := provider.MergeDeleted(in.ID, *in.Into); err != nil {
+				fail(rw, err)
+				return
+			}
+		}
+		if in.Name != nil {
+			if err := provider.NameDeleted(in.ID, *in.Name); err != nil {
+				fail(rw, err)
+				return
+			}
+		}
+		writeJSON(rw, map[string]bool{"ok": true})
 	})
 	// the ledger: the period's calls, newest first, a page at a time
 	mux.HandleFunc("GET /api/usage/requests", func(rw http.ResponseWriter, r *http.Request) {

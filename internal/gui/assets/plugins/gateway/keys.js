@@ -74,6 +74,37 @@ async function loadGatewayKeys() {
   }
 }
 
+// refreshGatewayKeys reads the keys again for what each has used of its
+// limits, which only a visit to the page read before: left open, a reset
+// key's line said $0.00 however much was spent after it (Young on Discord).
+// It runs as the page is drawn again (the window back, a Refresh) and on
+// a timer while the page is in sight; the list is drawn again only when
+// it changed, and not while a key is being added, renamed or its limit
+// edited, nor while an action is on its way.
+async function refreshGatewayKeys() {
+  if (gatewayKeys === null || gatewayKeysBusy) return;
+  const read = ++gatewayKeysRead;
+  let out;
+  try { out = await api("caller-keys"); } catch { return; }
+  if (read !== gatewayKeysRead || gatewayKeysBusy) return;
+  const keys = out.keys || [];
+  if (JSON.stringify(keys) === JSON.stringify(gatewayKeys)) return;
+  gatewayKeys = keys;
+  gatewayAccountNames = out.accountNames || gatewayAccountNames;
+  if (gatewayKeyDraft === null && gatewayLimit === null && !$("#gatewayKeys .rename-in")) renderGatewayKeys();
+}
+// the timer: only while the Gateway page is in sight, as a look with
+// nothing to do wakes the web content process all the same (#3185)
+let gatewayKeysTick = 0;
+function gatewayKeysTicks() {
+  const page = $("#view-gateway");
+  if (!page || page.hidden || document.hidden) { clearInterval(gatewayKeysTick); gatewayKeysTick = 0; return; }
+  gatewayKeysTick ||= setInterval(() => {
+    if ($("#view-gateway").hidden || document.hidden) return gatewayKeysTicks();
+    if (view === "gateway" && gatewayKeys?.some((k) => !k.off && keyUsed(k).length)) refreshGatewayKeys();
+  }, 15e3);
+}
+
 async function gatewayKeyAction(action, body) {
   if (gatewayKeysBusy) return null;
   gatewayKeysBusy = true;
@@ -174,7 +205,9 @@ function renderGatewayKeys() {
   $("#gatewayKeysBlock").hidden = !providers?.gateway.lan;
   box.replaceChildren();
   $("#addGatewayKey").onclick = () => { gatewayKeyDraft = ""; renderGatewayKeys(); };
-  const list = el("div", "accts");
+  // keys: a badge left unset folds away until the row is pointed at, as
+  // on a provider's keys, so nothing invisible holds a place in the row
+  const list = el("div", "accts gw-keys");
   if (gatewayKeys === null) {
     if (gatewayKeysErr) list.append(el("div", "none", t(gatewayKeysErr))), box.append(list);
     return;
@@ -187,11 +220,9 @@ function renderGatewayKeys() {
     tick.setAttribute("aria-label", tick.title);
     if (!k.off) tick.append(svg(CHECK, 10, 2.2));
     tick.onclick = () => gatewayKeyAction(k.off ? "on-key" : "off-key", { key: k.id });
-    const rm = el("button", "text quiet", t("Remove"));
-    rm.onclick = () => askGatewayKey(k, false);
-    const rotate = el("button", "text quiet", t("Rotate key"));
-    rotate.onclick = () => askGatewayKey(k, true);
-    row.append(tick, gatewayRename(k), el("span", "plan mono", k.masked), el("span", "grow"), gatewayModelsBadge(k), gatewayQuotasBadge(k), gatewayLimitBadge(k), copyCallerKeyBtn(k), rotate, rm);
+    // the copy sits by the key it copies (the owner: stranded among the
+    // badges it read as nobody's); Rotate and Remove wait in the row's menu
+    row.append(tick, gatewayRename(k), el("span", "plan mono", k.masked), copyCallerKeyBtn(k), el("span", "grow"), gatewayModelsBadge(k), gatewayQuotasBadge(k), gatewayLimitBadge(k), gatewayKeyMore(k));
     const under = gatewayLimit?.id === k.id ? [gatewayLimitEditor(k)] : keyUsed(k).map((u) => gatewayLimitLine(k, u));
     if (under.length) row.classList.add("with-limit"), row.append(...under);
     list.append(row);
@@ -199,6 +230,26 @@ function renderGatewayKeys() {
   if (gatewayKeyDraft !== null) list.append(gatewayKeyForm());
   else if (!gatewayKeys.length) list.append(el("div", "none", t("No gateway keys yet")));
   box.append(list);
+}
+
+const ROTATE_GLYPH = "M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3.25h-3.25";
+const REMOVE_GLYPH = "M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5M7 7v4M9 7v4";
+function gatewayKeyMore(k) {
+  const more = el("button", "copy gw-key-more");
+  more.type = "button";
+  more.title = t("Key actions");
+  more.setAttribute("aria-label", t("Key actions"));
+  more.setAttribute("aria-haspopup", "menu");
+  more.append(svg(DOTS, 14, 2));
+  more.onclick = (e) => {
+    e.stopPropagation();
+    if (more.classList.contains("open")) return closeAgentMenu();
+    openRowMenu(more, [
+      { name: "Rotate key", icon: ROTATE_GLYPH, run: () => askGatewayKey(k, true) },
+      { name: "Remove", icon: REMOVE_GLYPH, sep: true, run: () => askGatewayKey(k, false) },
+    ]);
+  };
+  return more;
 }
 
 function askGatewayKey(k, rotate) {

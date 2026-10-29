@@ -26,15 +26,21 @@ const Topic = "magpie-plugin"
 
 // Tagged is a repository tagged with Topic.
 type Tagged struct {
-	Spec        string    `json:"spec"`  // what Install adds: its npm name when npm has it from this repository, else github:owner/repo
-	Repo        string    `json:"repo"`  // owner/repo
-	URL         string    `json:"url"`   // its page on GitHub
-	Owner       string    `json:"owner"` // its owner's login
-	OwnerAvatar string    `json:"ownerAvatar,omitempty"`
-	Description string    `json:"description,omitempty"`
-	Stars       int       `json:"stars"`
-	License     string    `json:"license,omitempty"` // SPDX id
-	Pushed      time.Time `json:"pushed"`
+	Spec        string `json:"spec"`  // what Install adds: its npm name when npm has it from this repository, else github:owner/repo
+	Repo        string `json:"repo"`  // owner/repo
+	URL         string `json:"url"`   // its page on GitHub
+	Owner       string `json:"owner"` // its owner's login
+	OwnerAvatar string `json:"ownerAvatar,omitempty"`
+	Description string `json:"description,omitempty"`
+	Stars       int    `json:"stars"`
+	// License is its SPDX id as GitHub reads its LICENSE file, else as
+	// its package.json says (PkgLicense): a LICENSE GitHub can't match to
+	// one (NOASSERTION: MIT's text with a line of credit added) or none at
+	// all left the card with no licence, while npm shows package.json's
+	// (plugins#468)
+	License    string    `json:"license,omitempty"`
+	PkgLicense string    `json:"pkgLicense,omitempty"`
+	Pushed     time.Time `json:"pushed"`
 	// from its package.json on the default branch: what bun will install
 	// it as, its version, and whether it is gateway middleware or an agent
 	Package string `json:"package,omitempty"`
@@ -58,14 +64,18 @@ var (
 // kept while its last push stays the same, so asking again costs no more.
 const taggedTTL = 10 * time.Minute
 
-// taggedWait is how long the page waits for GitHub; taggedEach bounds a
-// repository's reads (package.json, npm, its entry file), which go on past
+// taggedSearch bounds each page of GitHub's search: from mainland China
+// a page straight from api.github.com takes about 30s (MYCF711, #3923),
+// and with the search under taggedWait the list was empty there.
+// taggedWait is how long the page then waits for the repositories' reads;
+// taggedEach bounds a repository's reads (package.json, npm, its entry file), which go on past
 // that wait and are kept for the next ask; taggedAtOnce repositories are
 // read at once; and a list that left a repository out for want of an
 // answer is asked again after taggedRetry. Through a proxy far away each
 // read takes a few hundred milliseconds (larchsis on X: a list cut short
 // at the wait was kept ten minutes).
 var (
+	taggedSearch = 60 * time.Second
 	taggedWait   = 8 * time.Second
 	taggedEach   = 20 * time.Second
 	taggedAtOnce = 12
@@ -200,8 +210,6 @@ func TaggedAskAgain() {
 // left out for want of an answer in taggedWait: it is then as last had
 // it, if it had it, and missing counts those last didn't have.
 func askTagged(ctx context.Context, last []Tagged) (l []Tagged, whole bool, missing *TaggedMissing, err error) {
-	c, cancel := context.WithTimeout(ctx, taggedWait)
-	defer cancel()
 	type item struct {
 		FullName      string    `json:"full_name"`
 		HTMLURL       string    `json:"html_url"`
@@ -226,7 +234,9 @@ func askTagged(ctx context.Context, last []Tagged) (l []Tagged, whole bool, miss
 	for page := 1; page*taggedPage <= 1000; page++ {
 		v := url.Values{"q": {"topic:" + Topic + " archived:false fork:false"}, "sort": {"stars"}, "order": {"desc"},
 			"per_page": {strconv.Itoa(taggedPage)}, "page": {strconv.Itoa(page)}}
-		b, err := fetchJSON(c, githubAPI+"/search/repositories?"+v.Encode(), 4<<20)
+		sc, cancel := context.WithTimeout(ctx, taggedSearch)
+		b, err := fetchJSON(sc, githubAPI+"/search/repositories?"+v.Encode(), 4<<20)
+		cancel()
 		if err != nil {
 			return nil, false, nil, err
 		}
@@ -248,6 +258,8 @@ func askTagged(ctx context.Context, last []Tagged) (l []Tagged, whole bool, miss
 			break
 		}
 	}
+	c, cancel := context.WithTimeout(ctx, taggedWait)
+	defer cancel()
 	before := map[string]Tagged{}
 	for _, t := range last {
 		before[strings.ToLower(t.Repo)] = t
@@ -255,6 +267,9 @@ func askTagged(ctx context.Context, last []Tagged) (l []Tagged, whole bool, miss
 	// what the search says now, over what is kept of a repository
 	fresh := func(r, t Tagged) Tagged {
 		r.URL, r.Owner, r.OwnerAvatar, r.Description, r.Stars, r.License, r.Pushed = t.URL, t.Owner, t.OwnerAvatar, t.Description, t.Stars, t.License, t.Pushed
+		if r.License == "" {
+			r.License = r.PkgLicense
+		}
 		return r
 	}
 	var mu sync.Mutex // out, keep, done, why; late once the page stops waiting
@@ -388,6 +403,7 @@ func readTagged(pc context.Context, t Tagged, branch string) (Tagged, bool, bool
 		Version string          `json:"version"`
 		Main    string          `json:"main"`
 		Exports json.RawMessage `json:"exports"`
+		License any             `json:"license"`
 		Magpie  struct {
 			Middleware string `json:"middleware"`
 			Agent      string `json:"agent"`
@@ -401,6 +417,14 @@ func readTagged(pc context.Context, t Tagged, branch string) (Tagged, bool, bool
 		return t, false, true, nil
 	}
 	t.Package, t.Version = pj.Name, pj.Version
+	// the licence it names, a string as npm takes it, for when GitHub
+	// couldn't tell one from its LICENSE file
+	if l, ok := pj.License.(string); ok {
+		t.PkgLicense = strings.TrimSpace(l)
+		if t.License == "" {
+			t.License = t.PkgLicense
+		}
+	}
 	// a picture, as host.js's iconOf takes one: magpie checks and
 	// keeps it before the page shows it (the GUI's /api/plugins/github)
 	t.Icon = ownIcon(pj.Magpie.Icon)

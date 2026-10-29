@@ -1,5 +1,10 @@
 # Dropdown browser regression
 
+`modal-backdrop.test.cjs` checks the modal's computed backdrop filter using
+the real stylesheet and platform marker: Windows desktop windows and panels
+keep the dimming veil without filtering, while browser pages, macOS and Linux
+keep the existing effect. Both Chromium and WebKit; no network or live config.
+
 `plugin-gateway.test.cjs` checks gateway-only plugin identification, the existing
 JSON options editor and aggregate diagnostics in all five languages on Chromium
 and WebKit. It uses local API fixtures, saves options through the real page, and
@@ -21,7 +26,8 @@ five languages on Chromium and WebKit.
 family/style fixtures: independent traits, literal names, search and keyboard
 selection, rapid queued saves and rollback, reload, unavailable faces,
 discovery failure and refresh, empty collections, platform fallback,
-Omarchy precedence and browser-mode isolation. It checks narrow windows and
+Omarchy precedence, and a browser tab's own choice (kept in the browser,
+from the families it draws, never the app's). It checks narrow windows and
 no scroll on click in Chromium and WebKit, in English and Chinese.
 `ARTIFACT_DIR` retains screenshots; `MAGPIE_FONT_ASSETS` can point to an older
 asset directory to verify that the test fails on the missing picker.
@@ -125,6 +131,12 @@ node --test --test-concurrency=1 internal/gui/tests/gateway-caller-keys.test.cjs
 ```
 
 ## Other Browser Regressions
+
+`mask-alert.test.cjs` checks Settings › Usage's Masking alert (Must2333 on
+X): after the task done alert, Off to begin with; On saves `maskAlert`,
+another setting saved later keeps it, Off saves false, no click moves the
+page, and the row goes while masking is switched off. Every language at 900
+and 380 wide, in Chromium and WebKit, with the API faked.
 
 `local-address.test.cjs` checks the Address of a local server's provider
 (Ollama, LM Studio, oMLX, MLX-Serve): under the key in a Server address
@@ -400,6 +412,12 @@ folded group, "Shown" keeps one just turned off till the view changes, a
 group's "Show all" comes on hover, "Hide all" at the foot sends every one
 but the model in use, "Show all" there sends none, and Esc or a
 click elsewhere closes it.
+
+`agent-models-group-on.test.cjs` opens Codex's model list with only Codex
+serving, a routing group of the user's off and on, in Chromium and WebKit,
+English and Chinese: Codex's 10 models stay open either way, and the group
+is there to pick (shiqi_40904 on Discord: with a group on, the provider's
+models started folded and looked gone).
 
 `omp-roles.test.cjs` draws omp's subagents, smol and slow roles in Chromium
 and WebKit, English and Chinese: each is a square after the model's picker,
@@ -862,7 +880,10 @@ node --test --test-concurrency=1 internal/gui/tests/settings-sections.test.cjs i
 (`renderSettings()`, as a save's answer does) while the button is held and
 lets go on the same spot: Lightweight mode → On is posted once and shown on.
 Dragged off to the other option, or to the same option of another control,
-nothing is posted, and a plain click is posted once, not twice. It then
+nothing is posted, and a plain click is posted once, not twice. Drawn
+again once more after it is let go and before the click that sets off,
+as Browser access is when the answer to its state comes then (#3922),
+On is posted once. It then
 presses every option control on every Settings tab (49 in English, the
 warm-up, check-in, sync and local network ones included) the same way and
 checks that the control drawn in its place is clicked once on the same
@@ -1075,10 +1096,13 @@ at least 5em, at 420 wide the long names are shortened while no bar is under
 Chromium and WebKit, English and Chinese.
 
 `usage-sessions-agents-fit.test.cjs` checks Usage › Sessions with 15 agents
-(#929): at 860 and 560 wide the page, its main and the Usage view never
-scroll sideways; the agent strip fits the window and scrolls in itself, and
-the last agent, clicked at the strip's end, stays in view as the strip is
-drawn again; in Chromium and WebKit, English and Chinese.
+(#929): the agent filter is a menu button like the model and folder ones, no
+segment per agent; at 860 and 560 wide nothing scrolls sideways and the three
+filters sit on one line inside the window; the menu lists "All agents" and
+every agent, the most used first, a few letters narrow it, a pick shows on the
+button and stays checked when the page is drawn again, and "All agents" clears
+it. One agent in range leaves the filter hidden. Chromium and WebKit, English
+and Chinese.
 
 `usage-unpriced-names.test.cjs` checks Usage › Sessions where an agent
 recorded tokens under no model name (tony on Discord: the cost's note read
@@ -1109,6 +1133,14 @@ folds them again without moving the page, and is remembered across a
 reload; DeepSeek's keys fold too, four keys aren't folded, a subscription's
 accounts aren't keys, an unread key leaves the sum out, and at 440px nothing
 is cut; in Chromium and WebKit, English and Chinese.
+
+`usage-shared-balance.test.cjs` checks that keys found to read one account's
+balance (`sharedBalance`, mimi on Discord: a site's three keys each showed
+the account's $8.39 and its curve) show it once: one row with one balance
+and one curve, "+2 keys" beside the key with the keys on hover, and the
+head's sum counting the account once; a key with the same amount not found
+to be that account's, and another provider's keys, stay their own rows, and
+at 440px nothing is cut; in Chromium and WebKit, English and Chinese.
 
 `upstream-status.test.cjs` checks the vendors' status pages on the
 Providers and Usage pages (#971): with Anthropic's page saying its API is
@@ -1457,17 +1489,6 @@ unfolded, the row opened and brought into sight by that click, with no
 scroll refused), another agent's switches the page to it, and All sessions
 opens the page. At 420px a row still fits with its title readable. English
 and Chinese, WebKit (Chromium too where it launches), API faked.
-
-`sess-agent-strip.test.cjs` keeps Usage → Sessions' agent filter inside the
-window (#929): with eleven agents in range the strip is wider than an 866px
-window, and it scrolls in itself instead of the page scrolling sideways, the
-way the regions strip and Connect's five APIs do; its first and last option
-are both reachable and both choose their agent, the model and folder picks
-beside it stay visible and open, and in a window wider than the strip nothing
-scrolls and the options keep their own widths. One agent in range still
-leaves the filter hidden, and the other strips on the page and elsewhere keep
-their behaviour. No left-border accent. English and Chinese, Chromium and
-WebKit, API faked.
 
 `sessions-purge.test.cjs` erases sessions in magpie's trash for good (#487):
 a trashed row's Delete forever and the Trash's Empty trash each ask in
@@ -2024,9 +2045,10 @@ from `make test` (which is Go only) and from the UI preview workflow (which
 only records screenshots).
 The Test workflow does not run this suite.
 
-`usage-stale-answer.test.cjs` and `providers-fetching-retry.test.cjs` use Node's
-VM and need no browser. Set `MAGPIE_APP_JS` to another revision's `app.js` to
-run their behavior checks against that source.
+`quota-refresh-order.test.cjs`, `usage-stale-answer.test.cjs` and
+`providers-fetching-retry.test.cjs` use Node's VM and need no browser. Set
+`MAGPIE_APP_JS` to another revision's `app.js` to run their behavior checks
+against that source.
 
 The request-ledger review regressions also cover the explicit data-source notes
 (including the exclusion of local rejections), the local-session label, and native
@@ -2072,6 +2094,13 @@ Chromium and WebKit with an isolated API fixture:
 ```sh
 node --test internal/gui/tests/account-arrange.test.cjs
 ```
+
+`key-rename-once.test.cjs` renames a provider's key in its editor and counts
+the page's own keys/rename requests (#3944): Escape keeps the name, typed over
+or not, and draws the editor once; Enter saves it with one request, and Enter
+again before the save answers sends no other. Chromium blurred the input as
+the redraw took it out, and the blur saved the name after Escape and sent
+Enter's twice. In Chromium and WebKit, English and Chinese.
 
 `routing-account-order.test.cjs` checks that Routing's live stage seats each
 provider's accounts and keys in the order its page lists them and a drag sets
@@ -2352,6 +2381,18 @@ is faked.
 node --test internal/gui/tests/update-mirror.test.cjs
 ```
 
+`update-network.test.cjs` checks the Version row after a download the
+network broke off (`network` in `/api/update`, AIMetaPhD on X): it says
+the download broke off, a network problem, and that Check tries again or
+the release page has it, with no address and no raw error in the row.
+Check asks `/api/update/check` again, and the release page is offered.
+Every language, Chromium and WebKit, at 1100 and 390 wide, no sideways
+scroll; the API is faked.
+
+```sh
+node --test internal/gui/tests/update-network.test.cjs
+```
+
 `lane-limit.test.cjs` checks each key's and account's own limit on requests
 at once (#892): its row's pill says what runs and waits under it while
 requests are out ("1/1 running · 2 queued"), read again from `/api/lanes`
@@ -2504,3 +2545,29 @@ does. Both engines, at 440px. The reckoning itself is covered by
 `TestHistoricalWindowHoldsUsesEachWindowsOwnReading`,
 `TestWindowHoldsResetBeforeRefillReading` and
 `TestWindowHoldsDryAgainAfterReset`.
+
+## Browser access
+
+`browser-access.test.cjs` checks Settings › Network and sharing › Browser
+access, the app's own page served to a browser: Off, This computer and
+Local network posted to `/api/web-page`, the link shown with its key as
+"…" and copied whole, New key, the port with Apply and a taken port's
+reason, the "Not encrypted" row on the local network, no native select or
+left border, nothing wider or cut off at 360px, and no such section (nor a
+read of it) in a browser on the page. Every language, Chromium and WebKit,
+with the API faked.
+
+## Inner scroll boxes keep the wheel
+
+`inner-scroll-contain.test.cjs` wheels a box that scrolls inside a page past
+its foot and its top and checks the page's scrollTop didn't move: Routing's
+requests list grouped by session (the reporter's "No session ID" rows, en
+and zh, two sizes), and boxes of each kind added to the same page (calls'
+bodies, Sessions' talk, model lists, Library picks, diffs, and a new box
+naming no rule). A list too short to scroll and boxes that scroll only
+sideways still let the wheel move the page, and the model chips in a short
+window still pass it on (#833). Every rule in every stylesheet under assets
+that scrolls a box vertically is built from its selector, filled and pointed
+at, and has to hold the wheel; one that doesn't is named by file and
+selector. With the engine made to lack overscroll-behavior (Safari 15),
+compat.js still keeps Requests' list's wheel. Chromium and WebKit.

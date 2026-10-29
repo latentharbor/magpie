@@ -72,6 +72,8 @@ const groupUsage = `usage:
            or max — sent whatever the agent asks or effort=auto picks, at the level the model has nearest;
            without one it reasons as the group's effort says. The same model at two efforts is two members
            (a rule can send to either). A model whose own id ends so (a :free, :7b or :0) stays as it is
+           provider/model:low+high gives it several levels for the agent to choose from, each sent at the
+           level the model has nearest, and the group offers agents those for it
            provider/model[:effort]:fast sends the member in its vendor's fast mode: priority processing on a
            ChatGPT account (Codex's Fast) or an OpenAI key, Cursor's -fast model, Claude's fast mode on an
            Anthropic key for Opus 4.8 and 5; a model without one is refused (codex/gpt-6.1-sol:high:fast)
@@ -118,6 +120,7 @@ const groupUsage = `usage:
        magpie group set fast models+=gcloud/gemini-3.8-flash:medium
        magpie group add my-free-pool models='openrouter/*:free,opencode-zen/*-free' routing=order
        magpie group set opus-anywhere routing=weight weight=claude/claude-opus-5-5=3
+       magpie group set deepseek-anywhere routing=fast   # the provider that answered it fastest lately first
        magpie group pick opus-anywhere copilot/claude-opus-5.5
        magpie claude group/opus-anywhere`
 
@@ -134,6 +137,7 @@ var routingNames = []struct {
 	{provider.Pace, "pace", []string{"weekly-pace"}},
 	{provider.Weighted, "weight", []string{"weighted", "by-weight", "weighted-round-robin", "wrr"}},
 	{provider.FreeFirst, "free", []string{"free-first", "freest", "no-cost"}},
+	{provider.Fastest, "fast", []string{"fastest", "speed", "speed-first"}},
 	{provider.Manual, "manual", []string{"pick", "picked", "pinned"}},
 }
 
@@ -805,10 +809,13 @@ func setGroup(ref string, pairs []string) (provider.Group, error) {
 		return g, err
 	}
 	if to != from {
-		if err := provider.RenameGroup(from, to); err != nil {
+		moved, err := agent.RenameGroup(from, to)
+		if err != nil {
 			return g, err
 		}
-		fmt.Println(amber.Render("!"), "agents set to "+provider.GroupPrefix+from+" need "+provider.GroupPrefix+to+" now")
+		for _, a := range moved {
+			fmt.Println(green.Render("✓"), a+" is on "+provider.GroupPrefix+to+" now")
+		}
 	}
 	return findGroup(to)
 }
@@ -913,7 +920,9 @@ func memberLabel(id string, names map[string]provider.Entry) (string, bool) {
 		if n == "" {
 			n = e.Model
 		}
-		if effort != "" {
+		if _, levels := provider.MemberLevels(effort); len(levels) > 0 {
+			n += " · " + strings.Join(levels, "/") + " reasoning, as the agent picks"
+		} else if effort != "" {
 			n += " · " + effort + " reasoning, whatever the agent asks"
 		}
 		return e.Provider.Name + " · " + n, true

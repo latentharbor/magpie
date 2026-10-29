@@ -13,6 +13,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { settled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const models = [
@@ -113,6 +114,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await ed.locator(".rt-classifier").isVisible(), false);
 
         // a rule, its intent box focused, Jev picked; nothing scrolled
+        await settled(page);
         await page.mouse.move(Math.min(550, width / 2), 300);
         for (let i = 0; i < 12 && (await byIntent.boundingBox()).y > height - 160; i++) {
           await page.mouse.wheel(0, 300);

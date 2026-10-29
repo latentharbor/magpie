@@ -125,9 +125,12 @@ let usageRead = 0;
 async function loadUsage(asked) {
   renderUsageTab();
   renderUsageEvery(); // the refresh's tooltip says what it reads on this tab
-  if (asked) quotasOpened();
+  // only the Overview shows the allowances: the page opened on another
+  // tab asks no vendor, nor reads their history, beside its own read and
+  // the page's way in (#4064)
+  if (asked && usageTab === "usage") quotasOpened();
   if (usageTab === "sessions") return loadSessions();
-  if (usageTab === "requests") return loadLedger();
+  if (usageTab === "requests") return loadLedger(asked && ledger && ledgerWant === ledParams({ offset: ledOffset, limit: LED_PAGE }) ? "open" : false);
   if (usageTab === "context") return window.loadContext?.();
   renderUsageLoading();
   if (!asked) loadQuotas();
@@ -321,6 +324,7 @@ function renderUsageLoading() {
   // still there while the period loads (#809, Hu9956: 用量界面红框这行会延迟几秒才会出现)
   for (const h of $$("#view-usage .row-head:not(#quotaHead, .plugin-panel > .row-head)")) h.hidden = true;
   $("#usageNote").textContent = "";
+  $("#usageClear").hidden = true;
 }
 
 // costHead is the Usage head's sum: the cost at effective prices, or, when
@@ -350,6 +354,35 @@ function renderCosts() {
   if (sessions) renderSessions();
   document.dispatchEvent(new Event("magpie-costs-changed"));
 }
+// sharedBalances (keyCards): the keys magpie found to read one account's
+// balance (sharedBalance, the first one's name) as one card, the first's,
+// with the keys it stands for (sharedKeys): mimi on Discord, a site's three
+// keys each showing the account's $8.39 and its curve. Keys that read
+// their own, or another account's, stay each its own.
+function sharedBalances(list) {
+  if (!list.some((q) => q.sharedBalance)) return list;
+  const same = (a, b) => a.provider === b.provider && (a.from || "") === (b.from || "") && a.sharedBalance === b.sharedBalance;
+  const out = [];
+  for (const q of list) {
+    if (!q.sharedBalance) { out.push(q); continue; }
+    const of = list.filter((x) => x.sharedBalance && same(x, q));
+    if (of[0] !== q) continue;
+    out.push(of.length > 1 ? { ...q, sharedKeys: of.map((x) => x.user) } : q);
+  }
+  return out;
+}
+// beside such a card's key, how many more keys its balance is for, and on
+// hover which
+function sharedKeysNote(q) {
+  const n = q.sharedKeys.length - 1;
+  const s = el("span", "quota-of quota-shared", t(n === 1 ? "+1 key" : "+{n} keys", { n }));
+  s.title = t("One balance for the account these keys share: {keys}", { keys: q.sharedKeys.join(", ") });
+  return s;
+}
+// the keys' sum's tooltip: an account several keys share counted once
+function keysSumTip(subs) {
+  return subs.some((q) => q.sharedKeys) ? t("The balances added up, each account's once") : t("The {n} keys' balances added up", { n: subs.length });
+}
 // quotaWho is how an account's card names it (#1515): by the name the user
 // gave it, the account beside it, else the account; and the key plan it
 // stands in for (seat) when that isn't already its name. A team's GLM
@@ -375,7 +408,8 @@ function quotaWho(q) {
     s.title = t("The same seat as the key plan {name}, shown once, on this account's card", { name: q.seat });
     out.push(s);
   } else if (q.seat) out[0].title += "\n" + t("The same seat as the key plan {name}, shown once, on this account's card", { name: q.seat });
-  if (q.user || q.alias) out.push(hideAccounts.eye(q.user || q.alias));
+  if (q.sharedKeys) out.push(sharedKeysNote(q));
+  if (q.user || q.alias) out.push(hideAccounts.eye(q.user || q.alias, q.provider));
   return out;
 }
 
@@ -509,6 +543,7 @@ function renderUsage() {
     const none = noCallsIn(period);
     stats.append(el("div", "none", t(none) + " " + t("Point an agent at a catalog model and use it; every call through the gateway is counted here.")));
     $("#usageNote").textContent = "";
+    $("#usageClear").hidden = true;
     return;
   }
   stats.classList.remove("empty");
@@ -667,13 +702,62 @@ function renderUsage() {
     b.onclick = (e) => { e.stopPropagation(); hideUsageAgent(g.id, false); };
     r.append(b);
   });
-  list("usageModels", u.models);
+  // a model's usage cleared (CrazyMouse_TT on X: a local model deployed
+  // again, its requests, speed and cache wanted from nothing)
+  list("usageModels", u.models, (r, g) => {
+    if (!g.model) return;
+    r.classList.add("acts");
+    const b = el("button", "icon us-more");
+    b.type = "button";
+    b.setAttribute("aria-haspopup", "menu");
+    b.setAttribute("aria-label", t("Actions for {name}", { name: g.name || g.model }));
+    b.append(svg(DOTS, 14, 2.2));
+    const menu = () => {
+      const again = agentMenu?.anchor === b;
+      closeAgentMenu();
+      if (again) return;
+      openRowMenu(b, [{ name: "Clear usage…", icon: USAGE_CLEAR, run: () => clearUsage(g) }]);
+    };
+    b.onclick = (e) => { e.stopPropagation(); menu(); };
+    r.oncontextmenu = (e) => { e.preventDefault(); menu(); };
+    r.querySelector(".share").after(b);
+  });
   list("usageAccounts", u.accounts || []);
   list("usageKeys", u.callerKeys || []);
   $("#usageNote").textContent = t("Counted from the providers' own usage reports on every call through the gateway · {path}", { path: u.path });
+  const clear = $("#usageClear");
+  clear.hidden = false;
+  clear.onclick = () => clearUsage();
   // the account cards say how many of this period's requests were
   // magpie's own (ownLine), which they could only once the summary came
   if (quotas && (u.accounts?.some((g) => g.own?.calls) || $("#subscriptionUsage .quota-own"))) renderQuotas();
+}
+
+// clearUsage clears the Usage page's figures, after the reader confirms:
+// one model's (g, from the Models list) or everything's (no g). The calls
+// up to now stop being counted on the usage pages, here and on the
+// computers this one syncs with; the request log keeps them, so a key's
+// spending limit and the allowances still count them
+// (settings.UsageCleared).
+const USAGE_CLEAR = "M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5M7 7v3.5M9 7v3.5";
+async function clearUsage(g) {
+  const ok = await confirmAction(
+    g ? t("Clear the usage of {model}?", { model: g.name || g.model }) : t("Clear all usage?"),
+    (g
+      ? t("Every call to {model} at {provider} so far stops being counted on the Usage page: its requests, tokens, cost, speed and cache, in every period, on this computer and those it syncs with.", { model: g.name || g.model, provider: (g.sub || g.provider || "").split(" · ")[0] })
+      : t("Every call so far stops being counted on the Usage page: the requests, tokens, cost, speed and cache of every agent and model, in every period, on this computer and those it syncs with."))
+      + " " + t("Gateway keys' spending limits and the allowances still count these calls. This can't be undone."),
+    t("Clear"),
+  );
+  if (!ok) return;
+  try {
+    await api("usage/clear", g ? { provider: g.provider || "", model: g.model } : {});
+    status(g ? t("The usage of {model} is cleared", { model: g.name || g.model }) : t("All usage is cleared"), "ok");
+    ledger = null;
+    await loadUsage();
+  } catch (e) {
+    status(e.message, "err");
+  }
 }
 
 // countable is whether the Usage page's Agents list offers to count a
@@ -738,6 +822,7 @@ async function hideUsageAgent(id, hide) {
 // server pages it (/api/usage/requests) and saves it whole as CSV.
 
 let ledger = null; // the page shown: { rows, offset, total, agents, …totals }
+let ledgerWant = ""; // the ledParams it was read with
 let ledOffset = 0, ledPurpose = "", ledAgent = "", ledProvider = "", ledAccount = "", ledCallerKey = "", ledFailed = false, ledRetried = false, ledQuery = "", ledModel = "", ledRoute = 0, ledComputer = "", ledDay = "", ledVia = "";
 
 const LED_PAGE = 100;
@@ -852,7 +937,11 @@ function ledRead(kind, path, want) {
 }
 const ledAborted = (e) => e?.name === "AbortError";
 
-// quiet: a refresh while it's looked at, redrawn only on a change
+// quiet: a refresh while it's looked at, redrawn only on a change.
+// "open": the page opened again on the rows it showed (#4064, xisdumpling):
+// they stay as they are while read, are drawn again only on a change, and
+// that redraw (a hundred rows, their chart and heatmap) waits for the
+// sidebar to settle on the page, not stopping it halfway
 async function loadLedger(quiet) {
   if (!ledger && !quiet) renderLedgerLoading();
   // a pick over rows shown: they stay, dimmed, till its answer comes, so
@@ -871,8 +960,23 @@ async function loadLedger(quiet) {
   if (want !== ledParams({ offset: ledOffset, limit: LED_PAGE })) return; // another page or filter was picked meanwhile
   ledPending(false);
   if (quiet && JSON.stringify(l) === JSON.stringify(ledger)) return;
+  if (quiet === "open") {
+    const was = ledger;
+    await navSettled();
+    if (ledger !== was || want !== ledParams({ offset: ledOffset, limit: LED_PAGE })) return; // read again or drawn meanwhile
+  }
   ledger = l;
+  ledgerWant = want;
   if (view === "usage" && usageTab === "requests") renderLedger();
+}
+// navSettled: the sidebar's move to a page opened (navTopStep's spring,
+// navSubEnter's tabs coming in) has run its course, or 700ms have passed
+function navSettled() {
+  const until = performance.now() + 700;
+  return new Promise((done) => {
+    const look = () => performance.now() < until && (window.navTop?.raf || document.querySelector("#nav .nav-sub.moving")) ? requestAnimationFrame(look) : done();
+    look();
+  });
 }
 
 function ledPending(on) {
@@ -1025,7 +1129,10 @@ function ledDetail(r, cols) {
   // before they were kept has only the whole
   if (r.ttft_ms && r.sent_ms) {
     const split = r.own_ms != null;
-    add("In magpie", ledTook(split ? r.own_ms : r.sent_ms));
+    // of magpie's own, what went on masking it (Settings → Privacy)
+    const masking = split && r.masking_ms > 0 ? Math.min(r.masking_ms, r.own_ms) : 0;
+    if (masking) add("Masking", ledTook(masking));
+    add("In magpie", ledTook((split ? r.own_ms : r.sent_ms) - masking));
     if (split) {
       if (r.retried_ms > 0) add("Tries that failed first", ledTook(r.retried_ms));
       if (r.queued_ms > 0) add("Waiting for a slot", ledTook(r.queued_ms));
@@ -1599,6 +1706,10 @@ new ResizeObserver(() => {
   ledFitFrame = requestAnimationFrame(() => {
     ledFitFrame = 0;
     const wrap = $("#ledWrap");
+    // out of sight it has no width: what was fit stays, so the page shown
+    // again at the width it had fits nothing again (#4064: each fit of a
+    // hundred rows restyles them twice and lays them out)
+    if (!wrap.clientWidth) return;
     wrap.style.setProperty("--ledw", wrap.clientWidth + "px");
     if (wrap.clientWidth !== ledFitW) { ledFitW = wrap.clientWidth; ledFit(); }
     ledHScroll();
@@ -1749,6 +1860,90 @@ function ledFit() {
   hint.hidden = !tight;
 }
 
+// ledProviderMore is the menu beside the Provider filter while a deleted
+// provider is picked in it (CyberCaius on Discord): its requests merged
+// into a provider there is now, or shown by a name of the reader's. With
+// a provider picked that has deleted ones merged in, it parts each again.
+// Nothing in the log is rewritten (POST /api/usage/deleted), and a merged
+// request costs what it did.
+function ledProviderMore(p) {
+  const b = $("#ledProviderMore");
+  const merged = p?.merged || [];
+  b.hidden = !p || (!p.deleted && !merged.length);
+  if (b.hidden) return;
+  b.replaceChildren(svg(DOTS, 14, 2));
+  const tip = t(p.deleted ? "Merge or rename this deleted provider" : "Providers merged into this one");
+  b.title = tip;
+  b.setAttribute("aria-label", tip);
+  const reload = () => { ledOffset = 0; return loadLedger(); };
+  const send = (body) => api("usage/deleted", Object.assign({ id: p.id }, body));
+  b.onclick = (e) => {
+    e.stopPropagation();
+    if (b.classList.contains("open")) return closeProtoMenu();
+    if (!p.deleted) {
+      openProtoMenu(b, merged.map((m) => ({ v: m.id, name: t("Separate {name}", { name: m.name }), literalName: true, note: "List its requests on their own again" })), "", async (id) => {
+        const m = merged.find((x) => x.id === id);
+        try {
+          await api("usage/deleted", { id, into: "" });
+          ledProvider = id;
+          ledOwn("provider");
+          await reload();
+          status(t("{name}'s requests are listed on their own again", { name: m.name }));
+        } catch (err) { status(err.message, "err"); }
+      }, "Merged providers", "sess-menu", "right");
+      return;
+    }
+    openProtoMenu(b, [
+      { v: "merge", name: "Merge into…", note: "List its requests under a provider you have" },
+      { v: "rename", name: "Rename…", note: "The name this page shows it by" },
+    ], "", (v) => (v === "merge" ? mergeInto() : renameDeleted()), "Deleted provider", "sess-menu", "right");
+  };
+  // a provider there is now, picked from a menu of them
+  const mergeInto = async () => {
+    let into;
+    try { into = await api("usage/deleted/into"); } catch (err) { return status(err.message, "err"); }
+    const opts = into.map((x) => ({ v: x.id, name: x.name, literalName: true, note: x.name === x.id ? "" : x.id }));
+    if (!opts.length) return status(t("No provider to merge into"), "err");
+    openProtoMenu(b, opts, "", async (id) => {
+      const to = opts.find((o) => o.v === id);
+      try {
+        await send({ into: id });
+        ledProvider = id;
+        ledOwn("provider");
+        await reload();
+        status(t("{from}'s requests are listed under {to} now", { from: p.name, to: to.name }));
+      } catch (err) { status(err.message, "err"); }
+    }, "Merge into", "sess-menu", "right", false, opts.length > 8 ? "Search providers…" : "");
+  };
+  // the filter's own button takes the name, as a key's row does
+  const renameDeleted = () => {
+    const pick = $("#ledProvider");
+    const i = input(p.name, t("Name"));
+    i.className = "rename-in led-rename";
+    i.setAttribute("aria-label", t("Rename"));
+    let over = false;
+    const done = async (save) => {
+      if (over) return;
+      over = true;
+      i.remove();
+      pick.hidden = false;
+      b.hidden = false;
+      if (!save || i.value.trim() === p.name) return;
+      try {
+        await send({ name: i.value });
+        await reload();
+      } catch (err) { status(err.message, "err"); }
+    };
+    i.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") done(true); else if (e.key === "Escape") done(false); };
+    i.onblur = () => done(true);
+    pick.hidden = true;
+    b.hidden = true;
+    pick.after(i);
+    i.focus();
+    i.select();
+  };
+}
+
 function renderLedger() {
   const l = ledger;
   const callers = l.callerKeys || [];
@@ -1787,7 +1982,8 @@ function renderLedger() {
   $("#ledPurpose").title = t("Purpose");
   sessPick($("#ledComputer"), "All computers", ledComputer, computers, "Computer", (v) => { ledComputer = v; ledOwn("computer"); ledOffset = 0; loadLedger().catch((e) => status(e.message, "err")); });
   sessPick($("#ledAgent"), "All agents", ledAgent, l.agents.map((a) => ({ v: a.id, name: a.name, note: "" })), "Agent", (v) => { ledAgent = v; ledOwn("agent"); ledOffset = 0; loadLedger().catch((e) => status(e.message, "err")); });
-  sessPick($("#ledProvider"), "All providers", ledProvider, providers.map((p) => ({ v: p.id, name: t(p.name), note: "" })), "Provider", (v) => { ledProvider = v; ledOwn("provider"); ledOffset = 0; loadLedger().catch((e) => status(e.message, "err")); });
+  sessPick($("#ledProvider"), "All providers", ledProvider, providers.map((p) => ({ v: p.id, name: t(p.name), note: p.deleted ? t("Deleted {date}", { date: new Date(p.deleted).toLocaleDateString(intlLang(), { year: "numeric", month: "short", day: "numeric" }) }) : "" })), "Provider", (v) => { ledProvider = v; ledOwn("provider"); ledOffset = 0; loadLedger().catch((e) => status(e.message, "err")); });
+  ledProviderMore(providers.find((p) => p.id === ledProvider));
   sessPick($("#ledAccount"), "All accounts", ledAccount, accounts.map((a) => ({ v: a.id, name: a.name || a.id, note: [a.name && a.id, ...(a.providers || []).map((p) => t(p))].filter(Boolean).join(" · ") })), "Account", (v) => { ledAccount = v; ledOffset = 0; loadLedger().catch((e) => status(e.message, "err")); });
   sessPick($("#ledKey"), "All gateway keys", ledCallerKey, callers.map((k) => ({
     v: k.id, name: k.name, note: "",
@@ -2304,7 +2500,8 @@ async function loadSessions() {
   } finally { stop(); }
   if (range !== sessRange) return; // another range was picked meanwhile; its load draws
   const fresh = q === sessOverQ(); // no filter changed meanwhile
-  if (sessions && sessStats && JSON.stringify(s) === JSON.stringify(sessions) && JSON.stringify(st) === JSON.stringify(sessStats) &&
+  // an answer the same as the last is the object read then (api's sameReads)
+  if (sessions && sessStats && sameRead(s, sessions) && sameRead(st, sessStats) &&
     (!fresh || JSON.stringify(o) === JSON.stringify(sessOver))) return;
   sessions = s;
   sessStats = st;
@@ -2349,8 +2546,7 @@ function renderSessionsLoading() {
   view.setAttribute("aria-busy", "true");
   $("#usageCost").replaceChildren(el("span", "skeleton sk-cost"));
   renderSessRange(true);
-  $("#sessAgent").replaceChildren();
-  $("#sessModel").hidden = $("#sessFolder").hidden = true;
+  $("#sessAgent").hidden = $("#sessModel").hidden = $("#sessFolder").hidden = true;
   $("#sessChart").hidden = true;
   $("#sessGrid").hidden = true;
   $("#sessListHead").hidden = true;
@@ -2447,7 +2643,7 @@ function sessIndexHero() {
   bar.append(fill);
   hero.append(words, field, bar);
 
-  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reduced = calm();
   let frac = 0, shown = 0, known = false, tipAt = Date.now(), tipI = 0, rate = 0, last = null;
   let done = false;
   hero.update = (p) => {
@@ -2629,35 +2825,11 @@ function renderSessions() {
   const rows = st.days.flatMap((d) => d.usage.map((u) => ({ ...u, date: d.date })));
   const acts = st.days.flatMap((d) => d.active.map((a) => ({ ...a, date: d.date })));
 
-  // one segment per agent that has sessions, or usage in the range
+  // the agent filter is a menu, as the model and folder ones beside it: a
+  // strip of a segment per agent ran past the window with a dozen of them
+  // in range, and scrolled sideways to reach the last
   const agents = [...new Map([...all.map((s) => [s.agent, s.name]), ...Object.entries(st.agents || {})]).entries()];
   if (sessAgent !== "all" && !agents.some(([id]) => id === sessAgent)) sessAgent = "all";
-  const seg = $("#sessAgent");
-  seg.hidden = agents.length < 2;
-  const opts = [["all", t("All")], ...agents];
-  // the same agents keep their buttons: drawn anew, a strip with more than
-  // fit (#929) would lose where it was scrolled to (WebKit)
-  const was = [...seg.querySelectorAll(":scope > .opt")];
-  if (was.length !== opts.length || was.some((b, i) => b.dataset.agent !== opts[i][0] || b.textContent !== opts[i][1])) {
-    seg.replaceChildren();
-    for (const [id, name] of opts) {
-      const b = el("button", "opt", name);
-      b.dataset.agent = id;
-      b.onclick = () => { sessAgent = id; renderSessions(); };
-      seg.append(b);
-    }
-  }
-  for (const b of seg.querySelectorAll(":scope > .opt")) {
-    b.classList.toggle("on", b.dataset.agent === sessAgent);
-    b.setAttribute("aria-pressed", String(b.dataset.agent === sessAgent));
-  }
-  // and the agent picked is brought into the strip, the page left where it is
-  const picked = seg.querySelector(":scope > .on");
-  if (picked && seg.scrollWidth > seg.clientWidth) {
-    if (picked.offsetLeft < seg.scrollLeft) seg.scrollLeft = picked.offsetLeft;
-    else if (picked.offsetLeft + picked.offsetWidth > seg.scrollLeft + seg.clientWidth) seg.scrollLeft = picked.offsetLeft + picked.offsetWidth - seg.clientWidth;
-  }
-  slide(seg, "sessAgent");
 
   // the model and folder filters offer what the range has, under the other filters
   const byAgent = (x) => sessAgent === "all" || x.agent === sessAgent;
@@ -2670,6 +2842,10 @@ function renderSessions() {
   };
   const models = spent(rows.filter((r) => byAgent(r) && byFolder(r)), "model").map(([v, n]) => ({ v, name: v, note: t("{n} tokens", { n: fmtN(n) }) }));
   const folders = spent(rows.filter((r) => byAgent(r) && byModel(r)), "cwd").map(([v, n]) => ({ v, name: baseName(v), note: v + " · " + t("{n} tokens", { n: fmtN(n) }) }));
+  const agentSpent = new Map(spent(rows.filter((r) => byModel(r) && byFolder(r)), "agent"));
+  const agentOpts = agents.map(([v, name]) => ({ v, name: name || v, note: agentSpent.has(v) ? t("{n} tokens", { n: fmtN(agentSpent.get(v)) }) : "" }))
+    .sort((a, b) => (agentSpent.get(b.v) || 0) - (agentSpent.get(a.v) || 0));
+  sessPick($("#sessAgent"), "All agents", sessAgent === "all" ? "" : sessAgent, agentOpts, "Agent", (v) => { sessAgent = v || "all"; renderSessions(); });
   sessPick($("#sessModel"), "All models", sessModel, models, "Model", (v) => { sessModel = v; renderSessions(); });
   sessPick($("#sessFolder"), "All folders", sessFolder, folders, "Folder", (v) => { sessFolder = v; renderSessions(); });
 
@@ -3298,6 +3474,7 @@ function renderSessTools() {
     top.append(r);
   }
   cols.append(top);
+  queueMicrotask(() => sessLineUp(top));
 
   const side = el("div", "sess-tools-side");
   // by kind: one bar of every call, and each kind's count
@@ -3381,6 +3558,25 @@ function renderSessSkills() {
   }
   if (su.count > su.top.length) body.append(el("div", "sess-more", t("+{n} more", { n: su.count - su.top.length })));
   box.append(body);
+  sessLineUp(body);
+}
+
+// sessLineUp gives every row of a card of bars the columns of the widest:
+// each row is a grid of its own (#3955), so each column's width is read
+// with the rows at their natural width and set on the card as --sb<i>. The
+// widths don't change with the window's, so a card is measured once, when
+// it is first shown
+const sessSeen = new ResizeObserver((es) => es.forEach((e) => { if (e.contentRect.width) { sessSeen.unobserve(e.target); sessLineUp(e.target); } }));
+function sessLineUp(box) {
+  if (!box.isConnected) return;
+  if (!box.offsetWidth) return sessSeen.observe(box);
+  const rows = [...box.querySelectorAll(box.classList.contains("sess-skills") ? ":scope > .sess-skill > .line" : ":scope > .sess-bar")];
+  for (const p of [...box.style]) if (p.startsWith("--sb")) box.style.removeProperty(p);
+  box.classList.add("fit");
+  const w = [];
+  for (const r of rows) [...r.children].forEach((c, i) => { w[i] = Math.max(w[i] || 0, c.getBoundingClientRect().width); });
+  box.classList.remove("fit");
+  w.forEach((x, i) => box.style.setProperty("--sb" + i, Math.ceil(x) + "px"));
 }
 
 // sessBars is a card of folders or models as bars of the tokens each took;
@@ -3410,6 +3606,7 @@ function sessBars(box, title, items, cur, choose, name) {
   if (!items.length) body.append(el("div", "sess-none", t("Nothing in this range.")));
   if (items.length > shown.length) body.append(el("div", "sess-more", t("+{n} more", { n: items.length - shown.length })));
   box.append(body);
+  sessLineUp(body);
 }
 
 // sessSpent is a session's tokens and cost, as the two right-hand columns

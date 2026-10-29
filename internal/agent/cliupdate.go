@@ -27,6 +27,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/yetone/magpie/internal/desktopdir"
 	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/netproxy"
 	"github.com/yetone/magpie/internal/proc"
@@ -65,6 +66,14 @@ type CLI struct {
 	// 0.162.1 listed with no codex on PATH and no ~/.codex). False when
 	// the terminal's PATH can't be told.
 	OffPath bool `json:"offPath,omitempty"`
+	// InDesktop: no Claude Code of its own is found here, and Claude
+	// Desktop is, which includes one for its Code tab that reads the
+	// same ~/.claude (cybercaius: the card stayed after Claude Code was
+	// uninstalled and Desktop installed again, with nothing saying why).
+	// DesktopVersion is that copy's newest version, "" until Desktop has
+	// fetched it.
+	InDesktop      bool   `json:"inDesktop,omitempty"`
+	DesktopVersion string `json:"desktopVersion,omitempty"`
 }
 
 // cliSpec is where an agent's CLI is published.
@@ -187,6 +196,21 @@ var cliSpecs = map[string]cliSpec{
 	// MothX: its npm installer package, which brings the native binary
 	// for the platform as an optional dependency
 	"mothx": {npm: []string{"mothx-installer"}},
+	// PenguinHarness: its npm package, or install.sh's tarball in
+	// ~/.penguin (bin, lib, node; ~/.local/bin/penguin links there), which
+	// penguin update re-runs the installer for. On Windows its update
+	// refuses a tarball (update.ts planUpdate, "windows-installer"), so
+	// none is offered there.
+	"penguin": {npm: []string{"@prismshadow/penguin-cli"},
+		self: func(bin, real string) []string {
+			if runtime.GOOS == "windows" {
+				return nil
+			}
+			if l := strings.ToLower(real); strings.Contains(l, "/.penguin/bin/") || strings.Contains(l, "/.penguin/lib/") {
+				return []string{bin, "update", "--yes"}
+			}
+			return nil
+		}},
 	// omo update, however it was installed: OmO's own updater, which moves
 	// the engine it pins (senpi) with it
 	"omo": {npm: []string{"omo-ai"},
@@ -800,7 +824,10 @@ func (a *Agent) CLI() (c CLI, ok bool) {
 	c.App = a.AppVersion()
 	bin, spec := a.cliBin()
 	if bin == "" {
-		return c, c.App != ""
+		if a.ID == "claude" && a.WSL == "" {
+			c.InDesktop, c.DesktopVersion = claudeInDesktop()
+		}
+		return c, c.App != "" || c.InDesktop
 	}
 	real, u := installedAt(spec, bin)
 	c.Version = installedVersion(real)
@@ -815,10 +842,37 @@ func (a *Agent) CLI() (c CLI, ok bool) {
 	return c, true
 }
 
+// claudeInDesktop says whether Claude Desktop is here, with the newest
+// Claude Code it keeps for its Code tab (desktopdir.ClaudeCode): its
+// bundle on a Mac, its folders or its install elsewhere (its detect).
+func claudeInDesktop() (here bool, version string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, ""
+	}
+	for _, v := range desktopdir.ClaudeCode(desktopdir.OS, home, os.Getenv) {
+		if version == "" || Newer(v, version) {
+			version = v
+		}
+	}
+	if version != "" {
+		return true, version
+	}
+	if desktopdir.OS == "darwin" {
+		return appHere("Claude.app"), ""
+	}
+	return claudeDesktop(home).Detected(), ""
+}
+
 // InstalledVersion is what the agent's CLI on PATH says its version is: ""
 // for an agent without a CLI magpie knows, one not on PATH, or one that
-// didn't say. Asked once per binary, like CLI's; nothing is fetched.
+// didn't say. Asked once per binary, like CLI's; nothing is fetched. An
+// agent in a WSL distro's is what the distro's own CLI said at its probe,
+// for the kinds that ask (wslKind.version), never this machine's.
 func (a *Agent) InstalledVersion() string {
+	if a.WSL != "" {
+		return a.wslVersion
+	}
 	bin, _ := a.cliBin()
 	if bin == "" {
 		return ""

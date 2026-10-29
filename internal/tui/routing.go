@@ -34,7 +34,7 @@ func (m *model) reloadGroups() {
 	m.grow = clamp(m.grow, len(m.groups))
 }
 
-var routings = []string{"", provider.Ordered, provider.Rotate, provider.LeastUsed, provider.Pace, provider.Weighted, provider.FreeFirst, provider.Manual}
+var routings = []string{"", provider.Ordered, provider.Rotate, provider.LeastUsed, provider.Pace, provider.Weighted, provider.FreeFirst, provider.Fastest, provider.Manual}
 
 func routingName(v string) string {
 	switch v {
@@ -50,6 +50,8 @@ func routingName(v string) string {
 		return "by weight"
 	case provider.FreeFirst:
 		return "free first"
+	case provider.Fastest:
+		return "speed first"
 	case provider.Manual:
 		return "manual"
 	}
@@ -491,7 +493,7 @@ func (m model) updateGroup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			hint: "agents pick it as group/<id>: those on it, and the groups that have it in them, follow",
 			onEnter: func(to string) tea.Cmd {
 				return func() tea.Msg {
-					if err := provider.RenameGroup(g.ID, to); err != nil {
+					if _, err := agent.RenameGroup(g.ID, to); err != nil {
 						return flashMsg{text: err.Error()}
 					}
 					return renamedMsg{from: g.ID, to: strings.ToLower(to)}

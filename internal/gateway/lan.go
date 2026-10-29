@@ -168,6 +168,76 @@ func LANURLs() []string {
 		return []string{Scheme() + "://" + net.JoinHostPort(h, Port())}
 	}
 	var out []string
+	for _, h := range LANHosts() {
+		out = append(out, Scheme()+"://"+net.JoinHostPort(h, Port()))
+	}
+	return out
+}
+
+// LANHosts are this computer's IPv4 addresses other machines can reach it
+// at, on every interface that is up: a private one, and a public one an
+// ISP assigns to the network card itself. The gateway's addresses and
+// `magpie web`'s links are both made from these, so the two list the
+// same computer the same way (a static public address was in one and not
+// the other). Private ones come first: in the interfaces' order the public
+// one came first, and Settings offered it as the address under "Share on
+// local network" (the same user, asking why sharing was on the internet).
+func LANHosts() []string {
+	var near, far []string
+	for _, ip := range hostIPs() {
+		if ip.To4() == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+			continue
+		}
+		if PublicIP(ip) {
+			far = append(far, ip.String())
+		} else {
+			near = append(near, ip.String())
+		}
+	}
+	return append(near, far...)
+}
+
+// sharedRanges are IPv4 ranges outside RFC 1918 that still aren't the
+// internet: carrier-grade NAT, which Tailscale uses, and the benchmarking
+// range proxies' TUN interfaces (Clash, Surge) take.
+var sharedRanges = []*net.IPNet{
+	{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)},
+	{IP: net.IPv4(198, 18, 0, 0), Mask: net.CIDRMask(15, 32)},
+}
+
+// PublicIP: ip is an internet address, which any computer online may
+// reach, not one on a private network.
+func PublicIP(ip net.IP) bool {
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return false
+	}
+	for _, n := range sharedRanges {
+		if n.Contains(ip) {
+			return false
+		}
+	}
+	return true
+}
+
+// PublicURLs are those of urls (LANURLs) at an internet address.
+func PublicURLs(urls []string) []string {
+	var out []string
+	for _, u := range urls {
+		p, err := url.Parse(u)
+		if err != nil {
+			continue
+		}
+		if ip := net.ParseIP(p.Hostname()); ip != nil && PublicIP(ip) {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// hostIPs are the addresses on this computer's interfaces that are up,
+// loopback's left out; a variable for the tests.
+var hostIPs = func() []net.IP {
+	var out []net.IP
 	ifs, _ := net.Interfaces()
 	for _, i := range ifs {
 		if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 {
@@ -175,11 +245,9 @@ func LANURLs() []string {
 		}
 		addrs, _ := i.Addrs()
 		for _, a := range addrs {
-			n, ok := a.(*net.IPNet)
-			if !ok || n.IP.To4() == nil || n.IP.IsLinkLocalUnicast() {
-				continue
+			if n, ok := a.(*net.IPNet); ok {
+				out = append(out, n.IP)
 			}
-			out = append(out, Scheme()+"://"+net.JoinHostPort(n.IP.String(), Port()))
 		}
 	}
 	return out
@@ -249,6 +317,7 @@ func lanGuard(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		r = takePagePort(r)
 		// a WSL distro's agent, at the address Windows has on its network
 		// (wsl.go), is one of this computer's
 		if fromWSL(r) {
@@ -266,6 +335,11 @@ func lanGuard(next http.Handler) http.Handler {
 			return
 		}
 		if remote && !remoteKeyed() {
+			if viaPagePort(r) {
+				log.Printf("refused %s %s on magpie web's page port: magpie isn't shared", r.Method, r.URL.Path)
+				http.Error(w, "this request came to magpie web's page port, which answers the gateway's routes as from another machine (the port may sit behind a proxy or a forward): only while Settings → Network and sharing → Share on local network is on, with an enabled gateway key (Gateway → Gateway keys) sent as Authorization: Bearer <key> or x-api-key. An agent on this computer calls the gateway's own address ("+URL()+") instead, which needs no key", http.StatusForbidden)
+				return
+			}
 			if proxied(r) {
 				log.Printf("refused %s %s through a proxy or tunnel: magpie isn't shared", r.Method, r.URL.Path)
 				http.Error(w, "this request came through a proxy or tunnel (it carries a forwarding header such as X-Forwarded-For or Cf-Connecting-IP), so magpie answers it as one from another machine: only while Settings → Network and sharing → Share on local network is on, with an enabled gateway key (Gateway → Gateway keys) sent as Authorization: Bearer <key> or x-api-key", http.StatusForbidden)
@@ -555,14 +629,15 @@ func refusedKey(key string) string {
 }
 
 // local is a request from this computer: one that reached the gateway on
-// loopback and wasn't passed on by a proxy or tunnel running here.
+// loopback, wasn't passed on by a proxy or tunnel running here, and didn't
+// come through `magpie web`'s page port (viaPagePort).
 func local(r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return false
 	}
 	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback() && !proxied(r)
+	return ip != nil && ip.IsLoopback() && !proxied(r) && !viaPagePort(r)
 }
 
 // forwardHeaders are what a proxy or tunnel adds to a request it passes

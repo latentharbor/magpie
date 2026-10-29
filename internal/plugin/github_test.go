@@ -206,8 +206,14 @@ func TestTaggedRepos(t *testing.T) {
 		c.Owner != "griffinmartin" || c.License != "MIT" || c.Stars != 1301 || c.Kind != "" || c.Pushed.IsZero() || c.URL != "https://github.com/griffinmartin/opencode-claude-auth" {
 		t.Fatalf("claude auth: %+v", c)
 	}
-	if x := byRepo["someone/flaky-entry"]; x.License != "" {
-		t.Fatalf("NOASSERTION is no license: %+v", x)
+	// GitHub's NOASSERTION (a LICENSE file it can't name) is no license,
+	// and package.json's stands in for it; one with neither shows none
+	// (plugins#468)
+	if x := byRepo["someone/flaky-entry"]; x.License != "MIT" {
+		t.Fatalf("NOASSERTION, package.json MIT: %+v", x)
+	}
+	if x := byRepo["someone/page-glance"]; x.License != "" {
+		t.Fatalf("NOASSERTION and no package.json license: %+v", x)
 	}
 	// its own picture, package.json's magpie.icon, as an installed
 	// plugin's provider has it; none when it gives none
@@ -225,7 +231,7 @@ func TestTaggedRepos(t *testing.T) {
 	if x := byRepo["someone/page-glance"]; x.Kind != "page" || x.Spec != "github:someone/page-glance" || x.Package != "magpie-usage-glance" {
 		t.Fatalf("a page alone: %+v", x)
 	}
-	if x := byRepo["someone/word-guard"]; x.Kind != "middleware" || x.Package != "@magpie-community/middleware-word-guard" || x.License != "" {
+	if x := byRepo["someone/word-guard"]; x.Kind != "middleware" || x.Package != "@magpie-community/middleware-word-guard" || x.License != "MIT" {
 		t.Fatalf("a middleware alone: %+v", x)
 	}
 	// npm's copy when npm has it from this very repository (its build is
@@ -509,6 +515,51 @@ func TestTaggedReposStaleEnvTokenDropped(t *testing.T) {
 	l, err := TaggedRepos(context.Background())
 	if err != nil || len(l) != 7 {
 		t.Fatalf("with a stale GITHUB_TOKEN: %v, %d repos", err, len(l))
+	}
+}
+
+// A search page slower than taggedWait still lists (MYCF711, #3923: from
+// mainland China a page from api.github.com takes about 30s, and the
+// page's 8s wait left the list empty). taggedWait bounds the
+// repositories' reads only; a page has taggedSearch, and one that never
+// answers in it is still a failure.
+func TestTaggedReposSlowSearch(t *testing.T) {
+	var up atomic.Bool
+	var asked atomic.Int32
+	up.Store(true)
+	fakeGitHub(t, &up, &asked)
+	wait, search := taggedWait, taggedSearch
+	taggedWait = time.Second
+	t.Cleanup(func() { taggedWait, taggedSearch = wait, search })
+	h := &held{path: "/search/repositories", go_: make(chan struct{})}
+	holding.Store(h)
+	let := sync.OnceFunc(func() { close(h.go_) })
+	t.Cleanup(func() { let(); holding.Store(nil) })
+
+	// the search answers three taggedWaits on
+	time.AfterFunc(3*taggedWait, let)
+	l, err := TaggedRepos(context.Background())
+	var m *TaggedMissing
+	if err != nil && !errors.As(err, &m) {
+		t.Fatalf("a search slower than taggedWait: %v", err)
+	}
+	if asked.Load() != 1 || len(l) == 0 {
+		t.Fatalf("asked %d, %d repos", asked.Load(), len(l))
+	}
+
+	// a search that never answers fails at taggedSearch
+	let2 := make(chan struct{})
+	holding.Store(&held{path: "/search/repositories", go_: let2})
+	t.Cleanup(func() { close(let2) })
+	taggedSearch = 300 * time.Millisecond
+	taggedMu.Lock()
+	taggedL = nil
+	taggedMu.Unlock()
+	if err := os.Remove(taggedCache()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := TaggedRepos(context.Background()); err == nil || errors.As(err, &m) {
+		t.Fatalf("a search that never answers: %v", err)
 	}
 }
 

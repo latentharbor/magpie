@@ -292,9 +292,24 @@ func callFiles() []file { return callFilesWith(codexFiles()) }
 
 // callFilesWith is callFiles with codex the rollouts codexFiles found.
 func callFilesWith(codex []file) []file {
-	var out []file
-	seen := map[string]bool{}
-	add := func(fs []file) {
+	lists := [][]file{ccFiles("claude", ClaudeDir())}
+	for _, d := range callDesktopDirs() {
+		// Cowork keeps a Claude Code folder of its own for each session
+		homes, _ := SessionGlob(filepath.Join(d, "local-agent-mode-sessions", "*", "*", "local_*", ".claude"))
+		for _, h := range homes {
+			lists = append(lists, ccFiles("claude-desktop", h))
+		}
+	}
+	lists = append(lists, codex, wslFiles("claude", "codex"))
+	// sized once: a file is ~200 bytes, and growing a list of ~20k of them
+	// on every 15 s poll was ~36 MB a read
+	n := 0
+	for _, fs := range lists {
+		n += len(fs)
+	}
+	out := make([]file, 0, n)
+	seen := make(map[string]bool, n)
+	for _, fs := range lists {
 		for _, f := range fs {
 			if !seen[f.path] {
 				seen[f.path] = true
@@ -302,16 +317,6 @@ func callFilesWith(codex []file) []file {
 			}
 		}
 	}
-	add(ccFiles("claude", ClaudeDir()))
-	for _, d := range callDesktopDirs() {
-		// Cowork keeps a Claude Code folder of its own for each session
-		homes, _ := SessionGlob(filepath.Join(d, "local-agent-mode-sessions", "*", "*", "local_*", ".claude"))
-		for _, h := range homes {
-			add(ccFiles("claude-desktop", h))
-		}
-	}
-	add(codex)
-	add(wslFiles("claude", "codex"))
 	return out
 }
 
@@ -364,7 +369,9 @@ func headOf(path string) string {
 }
 
 // prepareCalls clones the continuation so a published index is never changed.
-func prepareCalls(f file, old *callFile) *callFile {
+// owned: old was read from disk for this read alone (loadKept), so its
+// calls are taken as they are rather than copied for st.
+func prepareCalls(f file, old *callFile, owned bool) *callFile {
 	// The disk shard stores final calls, not a second copy of every usage
 	// observation. Rebuild continuation only when a cold source grows.
 	if f.agent == "codex" && old != nil && (old.CX == nil || old.CX.Usage == nil) {
@@ -379,7 +386,11 @@ func prepareCalls(f file, old *callFile) *callFile {
 	head := headOf(f.path)
 	var st *callFile
 	if old != nil && !packed(f.path) && f.size >= old.Size && old.Off <= f.size && sameHead(head, old.Head, old.HeadSize) && old.ContentHash != "" && prefixHash(f.path, old.Off) == old.ContentHash {
-		st = old.clone()
+		if owned {
+			st = old.cloneState()
+		} else {
+			st = old.clone()
+		}
 	} else {
 		st = &callFile{Agent: f.agent}
 		if f.agent == "codex" {
@@ -398,10 +409,21 @@ func prepareCalls(f file, old *callFile) *callFile {
 }
 
 func (st *callFile) clone() *callFile {
-	c := *st
+	c := st.cloneState()
 	c.Calls = append([]Call(nil), st.Calls...)
-	c.Claude = st.Claude.clone()
 	c.Msgs, c.Began, c.Strs = maps.Clone(st.Msgs), maps.Clone(st.Began), maps.Clone(st.Strs)
+	return c
+}
+
+// cloneState is a copy of st's reading state that shares its calls, and
+// their Msgs, Began and Strs. The state may be a kept continuation's
+// (restoreCallContinuation), so it is copied; the calls of a file just
+// read from disk have no other reader, and copying them on every change
+// of a live session was 160 MB of eight Requests polls (of 3.9 GB) on
+// real history.
+func (st *callFile) cloneState() *callFile {
+	c := *st
+	c.Claude = st.Claude.clone()
 	if st.CX != nil {
 		r := *st.CX
 		r.Turns = maps.Clone(r.Turns)
@@ -740,7 +762,7 @@ func claudeCallLine(st *callFile, b []byte) {
 	if c.Session == "" {
 		c.Session = st.Session
 	}
-	if st.Agent == "claude" && l.Entrypoint == "claude-desktop" {
+	if st.Agent == "claude" && desktopEntrypoint(string(l.Entrypoint)) {
 		c.Agent = "claude-desktop"
 	}
 	if l.APIError {
@@ -1200,4 +1222,12 @@ func ReadCallSource(s CallSource) []Call {
 	}
 	callsMu.Unlock()
 	return st.Calls
+}
+
+// desktopEntrypoint is a Claude Code transcript's entrypoint when Claude
+// Desktop ran it for its Code tab: "claude-desktop", or
+// "claude-desktop-3p" in its third-party inference mode (Desktop 2.7032's
+// nK: type "3p"), the mode a gateway such as magpie's is set in.
+func desktopEntrypoint(e string) bool {
+	return e == "claude-desktop" || e == "claude-desktop-3p"
 }

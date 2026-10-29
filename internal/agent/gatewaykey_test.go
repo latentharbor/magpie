@@ -225,6 +225,8 @@ func TestPinnedGatewayKeyForEveryWriter(t *testing.T) {
 			"copilotjb":  jbKey,
 			"cursor":     cursorLocalEnv(gw)[cursorLocalVars[1]],
 			"hanako":     hanakoProvider().APIKey,
+			"newmax":     newMaxEntryFor(gw).APIKey,
+			"openclaw":   openClawProviderAt(gw)["apiKey"],
 			"openpencil": openPencilEntry(gw).APIKey,
 			"pencil":     pencilProviderJSON(gw)["apiKey"].(string),
 			"vscode":     vscodeStable.token(),
