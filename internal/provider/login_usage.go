@@ -210,7 +210,7 @@ func cachedLoginReading(ctx context.Context, l Login) loginUsageEntry {
 				q := SubscriptionQuota{Provider: "claude", Plan: l.Plan, Windows: ws, ReadAt: at, AsOf: at, ReadDeferred: true}
 				observed := time.Time{}
 				if at != nil {
-				observed = *at
+					observed = *at
 				}
 				return loginUsageEntry{at: time.Now(), q: q, read: q, readAt: observed}
 			}
