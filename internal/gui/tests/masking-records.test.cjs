@@ -22,6 +22,9 @@ const { chromium, webkit } = require("playwright");
 const assets = path.resolve(__dirname, "../assets");
 const KEY = "{{API_KEY_aaaa1111}}", NAME = "{{PERSON_bbbb2222}}", MAIL = "{{EMAIL_cccc3333}}", PK = "{{PRIVATE_KEY_dddd4444}}";
 const SECRET = "sk-proj-abcdEFGH1234ijkl", ADDR = "ann@example.com";
+// a record's key is its time in nanoseconds, past what a JS number holds
+// exactly, so the API gives it as a string
+const K1 = "1792987654321000001", K2 = "1792987654321000002", K3 = "1792987654321000003", K5 = "1792987654321000005";
 
 function day(back) {
   const d = new Date();
@@ -47,21 +50,21 @@ function summary(days) {
   };
 }
 const filler = "x".repeat(900);
-// the body 1002 went out with: a long system prompt nothing was masked in,
+// the body K2 went out with: a long system prompt nothing was masked in,
 // and a user message with two values
 const SENT = JSON.stringify({ model: "claude-opus-4-1", system: "You are Claude Code. " + filler, messages: [
   { role: "user", content: [{ type: "text", text: "earlier, unchanged" }] },
   { role: "user", content: [{ type: "text", text: `export OPENAI_API_KEY=${KEY} # mail ${MAIL}, again ${KEY}` }] },
 ] });
 const records = [
-  { key: 1003, t: ago(60e3), route: "messages", what: "chat", agent: "claude", provider: "anthropic", model: "claude-opus-4-1", n: 1, blocked: true,
+  { key: K3, t: ago(60e3), route: "messages", what: "chat", agent: "claude", provider: "anthropic", model: "claude-opus-4-1", n: 1, blocked: true,
     values: [{ p: PK, k: "PRIVATE_KEY", b: "rule", h: "b3Bl", l: 400, n: 1, a: "block" }],
     snips: { [PK]: `-----BEGIN OPENSSH PRIVATE KEY----- ${PK}` } },
-  { key: 1002, t: ago(120e3), route: "messages", what: "chat", agent: "claude", provider: "anthropic", model: "claude-opus-4-1", n: 3, took: 1800, back: { [KEY]: 1 },
+  { key: K2, t: ago(120e3), route: "messages", what: "chat", agent: "claude", provider: "anthropic", model: "claude-opus-4-1", n: 3, took: 1800, back: { [KEY]: 1 },
     values: [{ p: KEY, k: "API_KEY", b: "rule", h: "sk-p", l: 24, n: 2, known: true }, { p: MAIL, k: "EMAIL", b: "rule", h: "a", l: 15, n: 1, known: true }],
     snips: { [KEY]: `export OPENAI_API_KEY=${KEY} # mail ${MAIL}`, [MAIL]: `…_KEY=${KEY} # mail ${MAIL}` } },
   // from before a restart: no body, no values in memory
-  { key: 1001, t: ago(300e3), route: "search", what: "search", agent: "codex", provider: "openai", model: "gpt-5", n: 1,
+  { key: K1, t: ago(300e3), route: "search", what: "search", agent: "codex", provider: "openai", model: "gpt-5", n: 1,
     values: [{ p: NAME, k: "PERSON", b: "model", h: "", l: 3, n: 1 }], snips: { [NAME]: `ask ${NAME} about it` } },
 ];
 
@@ -85,8 +88,8 @@ function serve(lang, sum, asked, opts = {}) {
     }
     if (url.pathname === "/api/providers") return json({ providers: [{ id: "anthropic", name: "Anthropic", icon: "anthropic", agents: [], models: [] }, { id: "openai", name: "OpenAI", icon: "openai", agents: [], models: [] }], presets: [], excluded: [],
       gateway: { running: true, window: true, mine: true, url: "http://127.0.0.1:3999", models: 0, groups: [],
-        calls: [{ id: 7, time: ago(120e3), agent: "claude", model: "claude-opus-4-1", from: "anthropic", to: "anthropic", status: 200, ms: 900, masked: { n: 3, distinct: 2, kinds: { API_KEY: 2, EMAIL: 1 }, by: { rule: 2 }, key: 1002 } },
-          { id: 8, time: ago(60e3), agent: "claude", model: "claude-opus-4-1", from: "anthropic", to: "anthropic", status: 200, ms: 700, masked: { n: 0, distinct: 0, warned: 2, key: 1003 } }] } });
+        calls: [{ id: 7, time: ago(120e3), agent: "claude", model: "claude-opus-4-1", from: "anthropic", to: "anthropic", status: 200, ms: 900, masked: { n: 3, distinct: 2, kinds: { API_KEY: 2, EMAIL: 1 }, by: { rule: 2 }, key: K2 } },
+          { id: 8, time: ago(60e3), agent: "claude", model: "claude-opus-4-1", from: "anthropic", to: "anthropic", status: 200, ms: 700, masked: { n: 0, distinct: 0, warned: 2, key: K3 } }] } });
     if (url.pathname === "/api/groups") return json({ groups: [], models: [] });
     if (url.pathname === "/api/plugins") return json({ plugins: [] });
     if (url.pathname === "/api/privacy-model") return json({ supported: true, installed: false, size: 1.6e9 });
@@ -108,12 +111,12 @@ function serve(lang, sum, asked, opts = {}) {
       return json({ records: rs, more: false });
     }
     if (url.pathname === "/api/masking/record") {
-      const r = (opts.records || records).find((r) => r.key === +url.searchParams.get("key"));
+      const r = (opts.records || records).find((r) => r.key === url.searchParams.get("key"));
       return r ? json(r) : route.fulfill({ status: 404, body: "404 page not found" });
     }
     if (url.pathname === "/api/masking/sent") {
       asked.push("sent " + url.searchParams.get("key"));
-      const body = opts.sent ? opts.sent[url.searchParams.get("key")] : url.searchParams.get("key") === "1002" && SENT;
+      const body = opts.sent ? opts.sent[url.searchParams.get("key")] : url.searchParams.get("key") === K2 && SENT;
       return body ? json({ body }) : route.fulfill({ status: 404, body: "404 page not found" });
     }
     if (url.pathname === "/api/masking/values") {
@@ -155,7 +158,7 @@ const shot = (page, name) => process.env.MASK_SHOTS && page.screenshot({ path: p
 // English that a translated page must not show
 const english = ["Kept from vendors", "By request", "By value", "masked these on this computer", "Different values", "values masked", "Held back",
   "Request content", "How it was masked", "What happened", "Side by side", "Only the parts masking changed", "parts unchanged", "Found by", "In the answer",
-  "This request was not sent", "Mask it instead", "See the rules", "Nothing to put back", "no longer in memory", "Masked most", "Local model"];
+  "This request was not sent", "Mask it instead", "See the rules", "Nothing to put back", "no longer in memory", "never on disk", "Masked most", "Local model"];
 const untranslated = async (page, lang) => {
   if (lang === "en") return;
   const said = await page.locator("#view-masking").innerText();
@@ -296,6 +299,15 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await one.locator(".msk-msg").first().waitFor();
         assert.equal(await card.isHidden(), true);
         assert.equal(await one.locator(".msk-steps li").count(), 5);
+        // each step's line runs from the number before it to its own, not a dash in the gap
+        const lines = await one.locator(".msk-steps li").evaluateAll((lis) => lis.slice(1).map((li, i) => {
+          const b = getComputedStyle(li, "::before");
+          if (b.display === "none") return null;
+          const x = li.getBoundingClientRect().left + parseFloat(b.left);
+          const from = lis[i].querySelector(".msk-sdot").getBoundingClientRect(), to = li.querySelector(".msk-sdot").getBoundingClientRect();
+          return [Math.round(x - from.right), Math.round(to.left - (x + parseFloat(b.width)))];
+        }));
+        for (const l of lines) if (l) assert.deepEqual(l, [6, 6], "a line from number to number");
         assert.equal(await one.locator(".msk-msg").count(), 1, "one piece of text had values");
         assert.equal(await one.locator(".msk-fold").count(), 1, "the system prompt and the earlier message, folded as one");
         assert.deepEqual(await one.locator(".msk-msg .msk-text").last().locator("mark").allTextContents(), [KEY, MAIL, KEY], "as the vendor got it");
@@ -388,14 +400,61 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     });
     test(`${engine} ${lang}: your own words alone are masking on`, async (t) => {
       const empty = (d) => ({ ...summary(d), requests: 0, n: 0, distinct: 0, blocked: 0, kinds: [], agents: [], providers: [], values: [], by: {} });
-      const { browser, page, errors } = await open(engine, lang, 640, empty, null, { off: true, none: true, settings: { redactWords: ["Nightjar"] } });
+      const { browser, page, errors, asked } = await open(engine, lang, 640, empty, null, { off: true, none: true, settings: { redactWords: ["Nightjar"] } });
       t.after(() => browser.close());
       await page.locator("#maskCard .msk-head").waitFor();
       assert.equal(await page.locator("#maskCard.off").count(), 0, "words alone mask, the card says off");
-      assert.equal(await page.locator("#maskCard .msk-head button").count(), 0, "no Turn on masking while words mask");
+      // the way off is Settings › Privacy, where the words are: a click
+      // here that turned the switches off would leave words masking
+      const off = page.locator("#maskCard .msk-head button");
+      assert.equal(await off.count(), 1, "one way off, no Turn on masking while words mask");
+      if (lang === "en") assert.equal(await off.innerText(), "Turn off in Settings");
+      else assert(!(await off.innerText()).includes("Turn"), "Turn off in Settings left in English");
       assert(!(await page.locator("#maskCard .msk-flow-none").innerText()).includes("Only keys"), "words alone: not the secrets-only line");
+      await off.click();
+      await page.locator("#view-settings").waitFor({ state: "visible" });
+      assert(!asked.some((x) => x.startsWith("settings")), "opening Settings saves nothing");
       assert.deepEqual(errors, []);
     });
+    // masking on, the page turns it off as it turns it on (ZekeXiao on X:
+    // "脱敏好像只有一个打开开关，不能关？"): both switches go off, the page
+    // then says off, and Turn on masking brings back what was on
+    for (const width of [1100, 640]) {
+      test(`${engine} ${lang} ${width}px: masking on, the page turns it off and on again`, async (t) => {
+        const { browser, page, errors, asked } = await open(engine, lang, width, summary);
+        t.after(() => browser.close());
+        const head = page.locator("#maskCard .msk-head");
+        await page.locator("#maskCard .msk-num").waitFor();
+        const off = head.locator("button.text");
+        assert.equal(await off.count(), 1, "a way off while masking is on");
+        if (lang === "en") assert.equal(await off.innerText(), "Turn off masking");
+        else assert(!(await off.innerText()).includes("Turn"), "Turn off masking left in English");
+        assert.deepEqual(await wide(page), { page: false, over: [] });
+        await shot(page, `${engine}-${lang}-${width}-on-off`);
+        const offText = await off.innerText();
+        await stillClick(page, off);
+        await until(() => asked.some((x) => x.startsWith("settings")));
+        const sent = JSON.parse(asked.find((x) => x.startsWith("settings")).slice(9));
+        assert.equal(sent.redact, false);
+        assert.equal(sent.redactPersonal, false);
+        // what the page says after is true: off, and the way back on
+        const on = head.locator("button.text");
+        await page.waitForFunction((was) => { const b = document.querySelector("#maskCard .msk-head button.text"); return b && !b.disabled && b.textContent !== was; }, offText);
+        if (lang === "en") {
+          assert.equal(await head.locator(".msk-sub").innerText(), "Masking is off: requests go to vendors as they are");
+          assert.equal(await on.innerText(), "Turn on masking");
+        }
+        assert.deepEqual(await wide(page), { page: false, over: [] });
+        asked.length = 0;
+        await stillClick(page, on);
+        await until(() => asked.some((x) => x.startsWith("settings")));
+        const back = JSON.parse(asked.find((x) => x.startsWith("settings")).slice(9));
+        assert.equal(back.redact, true);
+        assert.equal(back.redactPersonal, true, "personal data comes back on as it was");
+        await page.waitForFunction((was) => document.querySelector("#maskCard .msk-head button.text")?.textContent === was, offText);
+        assert.deepEqual(errors, []);
+      });
+    }
   }
 
   test(`${engine}: a masked call on the Gateway page, and a key in the address, open its request`, async (t) => {
@@ -414,7 +473,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     assert.equal(await page.locator("#activity .call-item.open").count(), 0, "the click wasn't the row's");
     assert.match(await page.locator("#maskOne .msk-when").textContent(), /\d/);
     // the tray panel's badge opens the window on key=
-    await page.goto("http://magpie.test/?view=masking&key=1001");
+    await page.goto("http://magpie.test/?view=masking&key=" + K1);
     await page.locator("#maskOne .msk-gone").waitFor();
     assert.equal(new URL(page.url()).searchParams.get("key"), null, "read once");
     // and Settings › Privacy links to the page
@@ -430,10 +489,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 // real key against it, as it does a placeholder (#3599)
 const MADE = "sk_hYQWRBFmdHNIo5XVT2VnIIGh4mmMiJNm", REAL = "sk_w3axCByTQgK1PxqPhfKTrJOLBqz6sbZv";
 const made = {
-  records: [{ key: 1005, t: ago(60e3), route: "chat", what: "chat", agent: "codex", provider: "openai", model: "gpt-5", n: 2, back: { [MADE]: 1 },
+  records: [{ key: K5, t: ago(60e3), route: "chat", what: "chat", agent: "codex", provider: "openai", model: "gpt-5", n: 2, back: { [MADE]: 1 },
     values: [{ p: MADE, k: "API_KEY", b: "rule", h: "sk_w", l: 35, n: 2, known: true }],
     snips: { [MADE]: `OPENAI_API_KEY=${MADE}` } }],
-  sent: { 1005: JSON.stringify({ model: "gpt-5", messages: [{ role: "user", content: `OPENAI_API_KEY=${MADE} sk_live_other\nonce more: ${MADE}` }] }) },
+  sent: { [K5]: JSON.stringify({ model: "gpt-5", messages: [{ role: "user", content: `OPENAI_API_KEY=${MADE} sk_live_other\nonce more: ${MADE}` }] }) },
   known: { [MADE]: REAL },
 };
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
@@ -449,6 +508,39 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await stillClick(page, one.locator(".msk-val").first());
       assert.equal(await one.locator("mark.lit").count(), 4);
       await untranslated(page, lang);
+      assert.deepEqual(errors, []);
+    });
+  }
+}
+
+// After a restart a record has no text left at all: the request's text,
+// the lines around its values and the values are memory's alone, never on
+// disk (maskrec). The page says that once, and doesn't say the lines are
+// still there (brianeee2 on X, in Docker, took it for a missing volume).
+const restarted = {
+  records: [{ key: K1, t: ago(300e3), route: "chat", what: "chat", agent: "claude", provider: "anthropic", model: "claude-opus-4-1", n: 1,
+    values: [{ p: NAME, k: "PERSON", b: "model", h: "", l: 3, n: 1 }] }],
+  sent: {},
+};
+for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
+  for (const lang of ["en", "zh", "zh-TW", "ja", "de"]) {
+    test(`${engine} ${lang}: a request from before a restart says its text was in memory only, once`, async (t) => {
+      const { browser, page, errors, asked } = await open(engine, lang, 640, summary, "", restarted);
+      t.after(() => browser.close());
+      await page.locator("#maskList .msk-row").first().click();
+      const one = page.locator("#maskOne");
+      await until(() => asked.includes("sent " + K1));
+      await one.locator(".msk-gone").waitFor();
+      assert.equal(await one.locator(".msk-gone").count(), 1, "one message");
+      assert.equal(await one.locator(".msk-none").count(), 0, "no second message");
+      assert.equal(await one.locator(".msk-msg").count(), 0);
+      const said = await one.locator(".msk-gone").innerText();
+      if (lang === "en") {
+        assert.match(said, /never on disk/);
+        assert.doesNotMatch(said, /line around each placeholder/, "no line is left to show");
+      }
+      await untranslated(page, lang);
+      assert.deepEqual(await wide(page), { page: false, over: [] });
       assert.deepEqual(errors, []);
     });
   }

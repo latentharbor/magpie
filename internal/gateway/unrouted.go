@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"runtime/pprof"
 	"strconv"
 	"strings"
@@ -47,6 +48,16 @@ import (
 // answered then with the same error; one in those waits still has
 // unroutedMost. 30s is three times the slowest such work a report has
 // measured (a cold catalog sync, ~8.5s) and leaves a loaded machine room.
+//
+// Masking's time, its wait for the local model's turn with it, counts
+// toward neither (noteMasking). The model is slow but bounded: each piece
+// of text it reads has classifyTimeout, a load gpuLoadTimeout or
+// loadTimeout, and one that fails holds requests back at once
+// (internal/pii). A 480 KB request on an RX 470/580 took 90s of the
+// model's work, more on its CPU, and was answered 504 at 2 minutes, its
+// work thrown away, however often it was sent again (#3682). What isn't
+// masking still has unroutedMost, so a hook or a describe that hangs
+// after masking is still answered.
 var unroutedShow, unroutedUnknown, unroutedMost = 15 * time.Second, 30 * time.Second, 2 * time.Minute
 
 // unroutedWatched is whether a request to path is an agent's turn, which
@@ -180,9 +191,13 @@ func (h *heldWriter) answer(proto provider.Protocol, status int, msg string) boo
 // unroutedHold is one watched request's watch: the route that shows it
 // while it waits, and what ends it.
 type unroutedHold struct {
-	s      *Server
-	r      *http.Request
-	f      *inflight
+	s *Server
+	r *http.Request
+	f *inflight
+	// agent is who it is shown as (callerFrom), read as it comes: the
+	// timers never read its headers, which withCaller and decodedBody
+	// change meanwhile
+	agent  string
 	w      *heldWriter
 	cancel context.CancelCauseFunc
 	asked  atomic.Value // string: the model it asked for, once read
@@ -202,6 +217,18 @@ type unroutedHold struct {
 	excused time.Duration
 	due     bool
 	unknown *time.Timer
+	// each kind of known wait it was in, in the order first met, for the
+	// report of where it was held (heldReport)
+	kinds []*waitKind
+
+	// the same for the maskings under way (noteMasking), whose time
+	// counts toward unroutedMost no more: how many, since when, the time
+	// spent masking before that, and whether most fired while masking
+	mwaits   int
+	msince   time.Time
+	mexcused time.Duration
+	mdue     bool
+	most     *time.Timer
 }
 
 type unroutedKey struct{}
@@ -215,38 +242,137 @@ func noteAsked(ctx context.Context, model string) {
 }
 
 // noteMasking tells ctx's watch its request is being masked, until the
-// func it answers is called: a wait it knows of.
+// func it answers is called: a wait it knows of, whose time counts
+// toward neither unroutedUnknown nor unroutedMost.
 func noteMasking(ctx context.Context) func() {
 	u, _ := ctx.Value(unroutedKey{}).(*unroutedHold)
 	if u == nil {
 		return func() {}
 	}
 	u.masking.Add(1)
-	waited := u.wait()
-	return func() { waited(); u.masking.Add(-1) }
+	waited := u.wait("masking")
+	u.wmu.Lock()
+	if u.mwaits == 0 {
+		u.msince = time.Now()
+	}
+	u.mwaits++
+	u.wmu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			u.masking.Add(-1)
+			waited()
+			u.masked()
+		})
+	}
+}
+
+// masked ends a masking: the last to end adds its time to mexcused, and
+// if most fired meanwhile it is set for what is left of it.
+func (u *unroutedHold) masked() {
+	u.wmu.Lock()
+	defer u.wmu.Unlock()
+	if u.mwaits--; u.mwaits > 0 {
+		return
+	}
+	now := time.Now()
+	u.mexcused += now.Sub(u.msince)
+	if u.mdue {
+		u.mdue = false
+		u.most.Reset(max(unroutedMost-u.unmaskedLocked(now), 0))
+	}
+}
+
+// unmaskedLocked is how long the request has been held other than
+// masking; wmu is held.
+func (u *unroutedHold) unmaskedLocked(now time.Time) time.Duration {
+	d := now.Sub(u.f.start) - u.mexcused
+	if u.mwaits > 0 {
+		d -= now.Sub(u.msince)
+	}
+	return d
+}
+
+// checkMost is most's timer: a request held unroutedMost other than
+// masking is answered for; one masking now is looked at again when that
+// ends, and one with time left, when that is up.
+func (u *unroutedHold) checkMost() {
+	u.wmu.Lock()
+	if u.mwaits > 0 {
+		u.mdue = true
+		u.wmu.Unlock()
+		return
+	}
+	if left := unroutedMost - u.unmaskedLocked(time.Now()); left > 0 {
+		u.most.Reset(left)
+		u.wmu.Unlock()
+		return
+	}
+	u.wmu.Unlock()
+	u.giveUp(false)
 }
 
 // noteWait tells ctx's watch its request is in a wait magpie knows of
 // until the func it answers is called: the time it spends there counts
 // toward unroutedMost alone, not unroutedUnknown.
-func noteWait(ctx context.Context) (done func()) {
+// kind names the wait in the report of a request held too long
+// (heldReport): "body", "body room", "hooks" and the rest.
+func noteWait(ctx context.Context, kind string) (done func()) {
 	u, _ := ctx.Value(unroutedKey{}).(*unroutedHold)
 	if u == nil {
 		return func() {}
 	}
-	return u.wait()
+	return u.wait(kind)
 }
 
-// wait begins a known wait, and answers the func that ends it, once.
-func (u *unroutedHold) wait() func() {
+// waitKind is the time a request spent in one kind of known wait: how
+// many of it are under way, since when, and the time before that.
+type waitKind struct {
+	kind  string
+	n     int
+	since time.Time
+	spent time.Duration
+}
+
+// wait begins a known wait of kind, and answers the func that ends it,
+// once. A kind of "" is counted but not named: a phase whose time its own
+// wait names already.
+func (u *unroutedHold) wait(kind string) func() {
 	u.wmu.Lock()
+	now := time.Now()
 	if u.waits == 0 {
-		u.since = time.Now()
+		u.since = now
 	}
 	u.waits++
+	var k *waitKind
+	if kind != "" {
+		for _, x := range u.kinds {
+			if x.kind == kind {
+				k = x
+			}
+		}
+		if k == nil {
+			k = &waitKind{kind: kind}
+			u.kinds = append(u.kinds, k)
+		}
+		if k.n++; k.n == 1 {
+			k.since = now
+		}
+	}
 	u.wmu.Unlock()
 	var once sync.Once
-	return func() { once.Do(u.waited) }
+	return func() {
+		once.Do(func() {
+			if k != nil {
+				u.wmu.Lock()
+				if k.n--; k.n == 0 {
+					k.spent += time.Since(k.since)
+				}
+				u.wmu.Unlock()
+			}
+			u.waited()
+		})
+	}
 }
 
 // waited ends a known wait: the last to end adds its time to excused,
@@ -313,7 +439,7 @@ type waitedBody struct {
 }
 
 func (b waitedBody) Read(p []byte) (int, error) {
-	done := b.u.wait()
+	done := b.u.wait("body")
 	defer done()
 	return b.ReadCloser.Read(p)
 }
@@ -325,7 +451,7 @@ func (s *Server) watchUnrouted(w http.ResponseWriter, r *http.Request, f *inflig
 		return w, r, func() {}
 	}
 	ctx, cancel := context.WithCancelCause(r.Context())
-	u := &unroutedHold{s: s, f: f, w: newHeldWriter(w), cancel: cancel}
+	u := &unroutedHold{s: s, f: f, w: newHeldWriter(w), cancel: cancel, agent: callerFrom(r).agent}
 	r = r.WithContext(context.WithValue(ctx, unroutedKey{}, u))
 	if r.Body != nil && r.Body != http.NoBody {
 		r.Body = waitedBody{r.Body, u}
@@ -338,14 +464,14 @@ func (s *Server) watchUnrouted(w http.ResponseWriter, r *http.Request, f *inflig
 	f.mu.Unlock()
 	u.wmu.Lock()
 	u.unknown = time.AfterFunc(unroutedUnknown, u.checkUnknown)
+	u.most = time.AfterFunc(unroutedMost, u.checkMost)
 	u.wmu.Unlock()
 	show := time.AfterFunc(unroutedShow, u.show)
-	most := time.AfterFunc(unroutedMost, func() { u.giveUp(false) })
 	return u.w, r, func() {
 		show.Stop()
-		most.Stop()
 		u.wmu.Lock()
 		u.unknown.Stop()
+		u.most.Stop()
 		u.wmu.Unlock()
 		f.mu.Lock()
 		// a timer that fired as the handler returned does nothing now
@@ -379,9 +505,12 @@ func (u *unroutedHold) show() {
 // showLocked begins the route that shows it; f.mu is held.
 func (u *unroutedHold) showLocked() {
 	asked, _ := u.asked.Load().(string)
-	rt := Route{Time: u.f.start, Agent: callerOf(u.r).agent, Session: u.f.session, Model: asked, Provider: "magpie"}
+	rt := Route{Time: u.f.start, Agent: u.agent, Session: u.f.session, Model: asked, Provider: "magpie"}
 	if rt.Agent == "" {
 		rt.Agent = u.f.agent
+	}
+	if u.f.redacting() {
+		rt.Phase = phaseRedact
 	}
 	rt.callerKey = access.Caller(u.r.Context()).KeyID
 	u.shown = u.s.trace.begin(rt)
@@ -399,7 +528,7 @@ func (u *unroutedHold) routed() (drop *Route) {
 // giveUp answers the request with an error, when no route was begun for it
 // and its handler wrote nothing, ends its context, and says on its route
 // and in the log what held it. unknown: it was held unroutedUnknown in no
-// wait magpie knows of, rather than unroutedMost in all.
+// wait magpie knows of, rather than unroutedMost other than masking.
 func (u *unroutedHold) giveUp(unknown bool) {
 	f := u.f
 	f.mu.Lock()
@@ -428,28 +557,47 @@ func (u *unroutedHold) giveUp(unknown bool) {
 	u.s.trace.update(shown, func(r *Route) {
 		r.Done, r.Status, r.Error, r.Millis = true, http.StatusGatewayTimeout, msg, time.Since(r.Time).Milliseconds()
 	})
-	u.cancel(errUnrouted)
+	// the report is taken while it is still held: once its context ends,
+	// what held it lets go, and the stacks would show it gone
 	asked, _ := u.asked.Load().(string)
-	log.Printf("gateway: %s %s for %s from %s held %s before routing,%s; stopped with 504%s", u.r.Method, u.r.URL.Path, cmpOr(asked, "?"), cmpOr(f.agent, "?"), held, cmpOr(where, " not masking it"), unroutedStacks())
+	who := cmpOr(u.agent, cmpOr(f.agent, "?"))
+	where = cmpOr(where, " not masking it")
+	report := u.s.heldReport(u, held, who, asked, where)
+	u.cancel(errUnrouted)
+	name, err := writeHeld(report)
+	saved := ""
+	if err != nil {
+		saved = "; its report could not be saved: " + err.Error()
+	} else {
+		saved = "; its report is " + filepath.Join(HeldDir(), name)
+		u.s.trace.update(shown, func(r *Route) { r.Held = name })
+	}
+	log.Printf("gateway: %s %s for %s from %s held %s before routing,%s%s; stopped with 504%s%s", u.r.Method, u.r.URL.Path, cmpOr(asked, "?"), who, held, where, u.waitsSaid(), saved, unroutedStacks())
 }
 
 // unroutedMsg is the error of a request held for held before routing:
 // one held while it was masked, with Settings → Privacy's local model on,
 // waited for that model (#3682), and is told so, and how to send without
-// waiting for it.
+// waiting for it. Masking's time no longer counts toward unroutedMost,
+// so that is a masking begun as the rest of the wait ran out.
 func unroutedMsg(held time.Duration, masking bool) string {
 	if masking && modelOn() {
 		why := ""
 		if b := modelBusy(); b != "" {
 			why = " (" + b + ")"
 		}
-		return fmt.Sprintf("magpie held this request for %s waiting for the local masking model (Settings → Privacy) to mask it%s, so it was stopped rather than sent masked by the rules alone. Send it again: what the model has already read is kept, so it goes quicker. To send requests without waiting for the model, turn it off in Settings → Privacy.", held, why)
+		return fmt.Sprintf("magpie held this request for %s waiting for the local masking model (Settings → Privacy) to mask it%s, so it was stopped rather than sent masked by the rules alone. Send it again. To send requests without waiting for the model, turn it off in Settings → Privacy.", held, why)
 	}
 	if masking {
-		return fmt.Sprintf("magpie held this request for %s while masking it (Settings → Privacy), before routing it to any provider, so it was stopped rather than left waiting. Send it again; if it keeps happening, restart magpie and report it with magpie's log, which says where it was held.", held)
+		return fmt.Sprintf("magpie held this request for %s while masking it (Settings → Privacy), before routing it to any provider, so it was stopped rather than left waiting. Send it again. "+heldSay, held, heldWhere())
 	}
-	return fmt.Sprintf("magpie held this request for %s without routing it to any provider, so it was stopped rather than left waiting. Send it again; if it keeps happening, restart magpie and report it with magpie's log, which says where it was held.", held)
+	return fmt.Sprintf("magpie held this request for %s without routing it to any provider, so it was stopped rather than left waiting. Send it again. "+heldSay, held, heldWhere())
 }
+
+// heldSay is where the error of a request held too long sends its user:
+// the report magpie saved of it (heldReport), which a desktop app's user
+// can reach, where its log goes only to a stderr nobody sees.
+const heldSay = "If it keeps happening, report it with the report magpie saved of where it was held: Copy Report on this request on magpie's Routing page, or the newest file in %s."
 
 // modelOn and modelBusy are internal/masking's, a test's
 // to stand in for.

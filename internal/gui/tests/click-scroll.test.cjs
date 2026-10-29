@@ -369,6 +369,27 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await page.evaluate(() => { window.__lateWheel = false; });
     });
 
+    // A window that has learned of wheels it never hears (macOS 13, or a run
+    // put back on a loaded machine) waits 120ms before it puts a scroll back
+    // (waitsBack). A wheel heard later still than that gives back what was
+    // put back, as it does at once.
+    await t.test("a wheel heard after the wait for unheard wheels is still the reader's", async () => {
+      await reset();
+      await page.evaluate(() => localStorage.setItem("magpie.unheardWheels", "1"));
+      await reset();
+      await page.locator(view).evaluate((v) => { const s = document.createElement("div"); s.style.cssText = "flex:none;height:1600px"; v.append(s); });
+      await page.evaluate(() => { window.__lateWheel = true; window.__lateBy = 250; });
+      const box = await page.locator(view).boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + 60);
+      const scrollTop = () => page.locator(view).evaluate((v) => v.scrollTop);
+      const was = await scrollTop(), n = await page.evaluate(() => window.__wheelsHeard);
+      await page.mouse.wheel(0, 300);
+      await page.waitForFunction((n) => window.__wheelsHeard > n, n);
+      await page.waitForFunction(() => performance.now() >= purposeUntil);
+      assert((await scrollTop()) > was + 100, "the wheel heard 250ms late must scroll the view");
+      await page.evaluate(() => { window.__lateWheel = false; window.__lateBy = 0; localStorage.removeItem("magpie.unheardWheels"); });
+    });
+
     assert.deepEqual(errors, [], "page runtime errors");
   });
 }

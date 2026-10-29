@@ -41,6 +41,10 @@ type PresetDef struct {
 	Regions   []Region `json:"regions,omitempty"`   // base-URL choices (a relay's regional endpoints, a vendor's plans)
 	// RegionLabel names what the Regions choose between, "Region" if unset.
 	RegionLabel string `json:"regionLabel,omitempty"`
+	// SplitAccounts is set on a partner whose regions are China's and
+	// Global's, whose accounts don't work at each other's endpoints (Kimi
+	// Code): its region picker says to pick by the account.
+	SplitAccounts bool `json:"splitAccounts,omitempty"`
 	// KeyPlans: each key may be on a Region of its own (KeyAccount.Plan),
 	// a vendor whose plans and pay as you go are sold on keys of their own
 	// that only their own endpoints take (Volcengine's Coding and Agent
@@ -114,6 +118,17 @@ func bailianWorkspace(region string) string {
 	return "https://" + WorkspaceID + "." + region + ".maas.aliyuncs.com/compatible-mode/v1"
 }
 
+// arkPlanModels are the text models of Volcengine Ark's Coding Plan and
+// Agent Plan, which list the same ones: the plans' /models doesn't give
+// them, so they are the docs' (套餐概览 docs/82379/1925114 and 2366394,
+// 快速开始 1928261), ark-code-latest first. doubao-seed-2.1-turbo and
+// kimi-k2.7-code are gone from the plans (xyenon, 10-29). minimax-m3 is
+// marked 即将下线 and stays until it goes (11-02, as reported), as the
+// accounts that have it are still served it.
+var arkPlanModels = []string{"ark-code-latest", "doubao-seed-evolving", "doubao-seed-2.1-pro", "doubao-seed-2.1-lite",
+	"doubao-seed-2.0-mini", "minimax-m3", "glm-5.3", "glm-5.3-flash", "deepseek-v4.1-flash", "deepseek-v4.1-flash-economy", "deepseek-v4-flash", "deepseek-v4-pro",
+	"kimi-k2.8-preview", "kimi-k3", "kimi-k3.1-pro"}
+
 // alibabaPlanModels are the text models of Alibaba's Token Plan, the same
 // on the Qwen AI platform's and on Bailian's, as their overviews list them.
 var alibabaPlanModels = []string{"auto", "qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash",
@@ -135,8 +150,12 @@ var presets = []PresetDef{
 		Website: "https://aistudio.google.com", KeysURL: "https://aistudio.google.com/apikey"},
 	// Google's Gemini models in the user's own Google Cloud project
 	// (vertex.go): generateContent, signed with their Google credentials
-	// rather than a key. It has no list to ask that says which models a
-	// location serves, so they are given: these, every one global serves;
+	// rather than a key; and its partner models (publisher/model ids,
+	// VertexPartner) on Google's OpenAI-compatible chat completions there,
+	// the live ones Google's docs list at global on 2026-10-28 (Gemma 4,
+	// Experimental, is left to be typed in). It has no list to ask that
+	// says which models a location serves, so they are given: these,
+	// every one global serves;
 	// vertexModels has the others'. Its Priority PayGo and Flex PayGo are
 	// asked for with the two headers.
 	{ID: VertexPreset, Name: "Google Vertex AI", Short: "Vertex AI", Icon: "vertexai-color", Kind: KindVendor,
@@ -145,7 +164,8 @@ var presets = []PresetDef{
 		NoList:  true,
 		Models: []string{"gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite",
 			"gemini-4-argon", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3.1-flash-lite", "gemini-3-flash-preview",
-			"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"},
+			"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+			"deepseek-ai/deepseek-v4.1-flash-maas", "zai-org/glm-5.2-maas", "openai/gpt-oss-120b-maas"},
 		HeaderHints: []string{"X-Vertex-AI-LLM-Request-Type", "X-Vertex-AI-LLM-Shared-Request-Type"}},
 	{ID: "deepseek", Name: "DeepSeek", Icon: "deepseek-color", Kind: KindVendor, Catalog: "deepseek",
 		Chat: "https://api.deepseek.com/v1", Responses: "https://api.deepseek.com/v1", Anthropic: "https://api.deepseek.com/anthropic",
@@ -153,22 +173,24 @@ var presets = []PresetDef{
 	{ID: "xai", Name: "xAI", Icon: "xai", Kind: KindVendor, Catalog: "xai",
 		Chat: "https://api.x.ai/v1", Responses: "https://api.x.ai/v1", Anthropic: "https://api.x.ai",
 		Website: "https://console.x.ai", KeysURL: "https://console.x.ai"},
+	// Kimi's key pages and sites carry its referral (aff=magpie), as its
+	// partner card's do: Kimi sponsors magpie
 	{ID: "moonshot", Name: "Kimi", Icon: "kimi", Kind: KindVendor, Catalog: "moonshotai",
 		Chat: "https://api.moonshot.ai/v1", Anthropic: "https://api.moonshot.ai/anthropic",
-		Website: "https://platform.moonshot.ai", KeysURL: "https://platform.moonshot.ai/console/api-keys"},
+		Website: "https://platform.kimi.ai?aff=magpie", KeysURL: "https://platform.kimi.ai/console/api-keys?aff=magpie"},
 	{ID: "moonshot-cn", Name: "Kimi (China)", Icon: "kimi", Kind: KindVendor, Catalog: "moonshotai",
 		Chat: "https://api.moonshot.cn/v1", Anthropic: "https://api.moonshot.cn/anthropic",
-		Website: "https://platform.moonshot.cn", KeysURL: "https://platform.moonshot.cn/console/api-keys"},
+		Website: "https://platform.kimi.com?aff=magpie", KeysURL: "https://platform.kimi.com/console/api-keys?aff=magpie"},
 	// a Kimi Code membership's own endpoints (k3, kimi-for-coding …): Kimi
 	// lets members use them from third-party tools, keyed at its console
 	{ID: "kimi-code", Name: "Kimi Code", Icon: "kimi", Kind: KindVendor, Catalog: "kimi-code-plan-global",
 		Chat: "https://api.kimi.ai/coding/v1", Anthropic: "https://api.kimi.ai/coding",
 		Note:    "Membership",
-		Website: "https://www.kimi.com/code", KeysURL: "https://www.kimi.com/code/console"},
+		Website: "https://www.kimi.ai/code?aff=magpie", KeysURL: "https://www.kimi.ai/code/console?aff=magpie"},
 	{ID: "kimi-code-cn", Name: "Kimi Code (China)", Icon: "kimi", Kind: KindVendor, Catalog: "kimi-code-plan-cn",
 		Chat: "https://api.kimi.com/coding/v1", Anthropic: "https://api.kimi.com/coding",
 		Note:    "Membership",
-		Website: "https://www.kimi.com/code", KeysURL: "https://www.kimi.com/code/console"},
+		Website: "https://www.kimi.com/code?aff=magpie", KeysURL: "https://www.kimi.com/code/console?aff=magpie"},
 	{ID: "zhipu", Name: "Zhipu GLM", Icon: "zhipu-color", Kind: KindVendor, Catalog: "zhipuai",
 		Chat: "https://open.bigmodel.cn/api/paas/v4", Anthropic: "https://open.bigmodel.cn/api/anthropic",
 		Website: "https://open.bigmodel.cn", KeysURL: "https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys",
@@ -322,16 +344,12 @@ var presets = []PresetDef{
 		Website: "https://www.volcengine.com/docs/82379/1925114", KeysURL: "https://ark.volcengine.com/region:cn-beijing/apikey",
 		RegionLabel: "Plan", KeyPlans: true, Regions: []Region{
 			{ID: "coding", Name: "Coding Plan", Chat: "https://ark.cn-beijing.volces.com/api/coding/v3", Responses: "https://ark.cn-beijing.volces.com/api/coding/v3", Anthropic: "https://ark.cn-beijing.volces.com/api/coding",
-				Models: []string{"ark-code-latest", "doubao-seed-evolving", "doubao-seed-2.1-pro", "doubao-seed-2.1-lite", "doubao-seed-2.1-turbo",
-					"doubao-seed-2.0-mini", "minimax-m3", "glm-5.3", "glm-5.3-flash", "deepseek-v4.1-flash", "deepseek-v4-flash", "deepseek-v4-pro",
-					"kimi-k2.7-code", "kimi-k2.8-preview", "kimi-k3"},
+				Models:     arkPlanModels,
 				Embeddings: []string{"doubao-embedding-vision"}},
 			{ID: "agent", Name: "Agent Plan", Chat: "https://ark.cn-beijing.volces.com/api/plan/v3", Responses: "https://ark.cn-beijing.volces.com/api/plan/v3", Anthropic: "https://ark.cn-beijing.volces.com/api/plan",
-				Models: []string{"ark-code-latest", "doubao-seed-evolving", "doubao-seed-2.1-pro", "doubao-seed-2.1-lite", "doubao-seed-2.1-turbo",
-					"doubao-seed-2.0-mini", "minimax-m3", "glm-5.3", "glm-5.3-flash", "deepseek-v4.1-flash", "deepseek-v4-flash", "deepseek-v4-pro",
-					"kimi-k2.7-code", "kimi-k2.8-preview", "kimi-k3"},
+				Models:     arkPlanModels,
 				Embeddings: []string{"doubao-embedding-vision"},
-				Drawers:    []string{"doubao-seedream-5-0-pro"},
+				Drawers:    []string{"doubao-seedream-5-0-pro", "doubao-seedream-5.0-flash"},
 				Videos:     []string{"doubao-seedance-2.0", "doubao-seedance-2.0-fast", "doubao-seedance-2.0-mini", "doubao-seedance-2.5"}},
 			{ID: "api", Name: "Pay as you go", Chat: "https://ark.cn-beijing.volces.com/api/v3", Responses: "https://ark.cn-beijing.volces.com/api/v3", Lists: true},
 		},

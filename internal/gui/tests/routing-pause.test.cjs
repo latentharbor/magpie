@@ -78,7 +78,7 @@ const EDIT = { en: "Edit", zh: "编辑", "zh-TW": "編輯", ja: "編集", de: "B
 async function open(engine, lang, width, t) {
   const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
   t.after(() => browser.close());
-  const page = await (await browser.newContext({ viewport: { width, height: 1400 } })).newPage();
+  const page = await (await browser.newContext({ viewport: { width, height: 1400 }, timezoneId: "Asia/Tokyo" })).newPage();
   page.setDefaultTimeout(5000);
   const errors = [], posts = [];
   page.on("pageerror", (e) => errors.push(e.message));

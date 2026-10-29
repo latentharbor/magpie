@@ -159,6 +159,14 @@ func (p Provider) ListedAPIs(model string) []Protocol {
 			return apis
 		}
 	}
+	// Vertex AI serves Gemini on generateContent, and its partner models
+	// (publisher/model) on chat completions alone
+	if p.IsVertex() {
+		if VertexPartner(model) {
+			return []Protocol{Chat}
+		}
+		return []Protocol{Gemini}
+	}
 	// Factory serves each model on the one API droid sends it on
 	if p.ID == "factory" && p.Account != nil {
 		return factoryAPIs(model)
@@ -826,12 +834,12 @@ func claudeProvider(acct *Account) Provider {
 	// experimental HTTP transport reads its own validated credentials and
 	// signs only its fixed Anthropic destination, without this generic signer.
 	acct.sign = func(context.Context, *http.Request, []byte) error { return errClaudeViaCLI }
-	acct.models = func() []catalog.Model { return catalog.Provider("anthropic") }
+	acct.models = claudeModels
 	acct.magpieList = true
 	// Claude's models are the ones magpie knows: listing them would ask
 	// Anthropic with the account's sign-in, which listing does not do
 	acct.fetch = func(context.Context) ([]catalog.Model, error) {
-		ms := catalog.Provider("anthropic")
+		ms := claudeModels()
 		return ms, catalog.SaveLive("claude", claudeBase, ms)
 	}
 	return Provider{ID: "claude", Name: "Claude Code", Icon: "claudecode-color", Anthropic: claudeBase,

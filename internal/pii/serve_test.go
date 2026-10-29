@@ -14,7 +14,10 @@ import (
 	"github.com/yetone/magpie/internal/redact"
 )
 
-func person(s, e int) redact.Found { return redact.Found{Start: s, End: e, Label: "private_person"} }
+// person is a name at [s, e), as sure as the fake pf-serve says (main_test.go).
+func person(s, e int) redact.Found {
+	return redact.Found{Start: s, End: e, Label: "private_person", Score: float64(float32(0.98))}
+}
 
 // Short texts go to pf-serve joined, in one request, and what it finds
 // comes back to each text at that text's own offsets; a text seen before
@@ -55,11 +58,12 @@ func TestFindJoinsTextsAndMapsBack(t *testing.T) {
 func TestJoinSplitsAtChunkSize(t *testing.T) {
 	long := strings.Repeat("x", chunkSize)
 	texts := []string{"a", "b", long, "c"}
-	chunks, parts := join(texts, []int{0, 1, 2, 3})
-	if len(chunks) != 3 || chunks[0] != "a"+sep+"b" || chunks[1] != long || chunks[2] != "c" {
+	chunks, parts := join(pf.missing(texts, []int{0, 1, 2, 3}, nil))
+	// the last text first: TestNewestTextReadFirst
+	if len(chunks) != 3 || chunks[0] != "c" || chunks[1] != long || chunks[2] != "b"+sep+"a" {
 		t.Fatalf("chunks = %d: %.20q", len(chunks), chunks)
 	}
-	if !reflect.DeepEqual(parts, [][]part{{{0, 0}, {1, 1 + len(sep)}}, {{2, 0}}, {{3, 0}}}) {
+	if !reflect.DeepEqual(parts, [][]part{{{"c", 0}}, {{long, 0}}, {{"b", 0}, {"a", 1 + len(sep)}}}) {
 		t.Fatalf("parts = %v", parts)
 	}
 }
@@ -136,8 +140,8 @@ func TestVulkanThatWontStartFallsBack(t *testing.T) {
 
 // A GPU whose load hangs (lazyeo's M2: pf-serve kept loading for over a
 // minute while every request was answered 504 after 2) is given
-// gpuLoadTimeout, then the CPU is tried, and kept for the rest of the
-// run. On macOS, whose pf-serve is Metal's, too: there it was the only
+// gpuLoadTimeout, then the CPU is tried, and kept until the GPU is tried
+// again (TestLostGPUTriedAgain). On macOS, whose pf-serve is Metal's, too: there it was the only
 // one tried.
 func TestHungGPULoadMovesToCPU(t *testing.T) {
 	for _, vulkan := range []bool{false, true} {
@@ -417,5 +421,147 @@ func TestCacheKeepsTheLatest(t *testing.T) {
 	}
 	if fs, ok := c.get(k(1)); !ok || len(fs) != 1 {
 		t.Fatal("an entry read lately was dropped")
+	}
+}
+
+// Every pf-serve keeps the engine's own MoE chunk, the window (4096):
+// on an RX 470 through Vulkan 4096 was 6-9% faster than 2048 (#3682), on
+// Metal 2048 was ~6% slower. A PF_MOE_CHUNK the user set is theirs, on
+// every one.
+func TestServeKeepsMoEChunkUnlessUserSets(t *testing.T) {
+	cases := []struct {
+		name   string
+		vulkan bool
+		user   string // "" unset
+		want   []string
+	}{
+		{"vulkan", true, "", []string{"moechunk pf-serve-vulkan ", "moechunk pf-serve "}},
+		{"vulkan, user's own", true, "3072", []string{"moechunk pf-serve-vulkan 3072", "moechunk pf-serve 3072"}},
+	}
+	if runtime.GOOS == "darwin" {
+		cases = append(cases, struct {
+			name   string
+			vulkan bool
+			user   string
+			want   []string
+		}{"metal", false, "", []string{"moechunk pf-serve ", "moechunk pf-serve "}})
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("PF_MOE_CHUNK", c.user)
+			if c.user == "" {
+				os.Unsetenv("PF_MOE_CHUNK")
+			}
+			log := fakeInstall(t, "gpudies", c.vulkan)
+			if _, err := Find([]string{"hi Alice"}); err != nil {
+				t.Fatal(err)
+			}
+			if got := fakeLines(t, log, "moechunk"); !reflect.DeepEqual(got, c.want) {
+				t.Fatalf("moechunk lines = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// A request pf-serve takes too long over on the GPU (#3682: 480 KB on an
+// RX 470/580, killed at classifyTimeout) is tried again on the GPU, not
+// moved to a CPU 3x slower for the rest of the run.
+func TestGPUTimeoutStaysOnGPU(t *testing.T) {
+	log, gpu := gpuInstall(t, "gpuhangonce")
+	was := classifyTimeout
+	classifyTimeout = func(int) time.Duration { return 300 * time.Millisecond }
+	t.Cleanup(func() { classifyTimeout = was })
+	got, err := Find([]string{"hi Alice"})
+	if err != nil || !reflect.DeepEqual(got, [][]redact.Found{{person(3, 8)}}) {
+		t.Fatalf("Find = %v, %v", got, err)
+	}
+	if starts := fakeLines(t, log, "start"); !reflect.DeepEqual(starts, []string{gpu, gpu}) {
+		t.Fatalf("starts = %q, want the GPU tried again after its timeout", starts)
+	}
+	if st := Now(); !st.GPU || st.GPUError != "" {
+		t.Fatalf("Now = %+v, want on the GPU with nothing lost", st)
+	}
+	if _, err := Find([]string{"Alice again"}); err != nil {
+		t.Fatal(err)
+	}
+	if starts := fakeLines(t, log, "start"); len(starts) != 2 {
+		t.Fatalf("starts = %q, want the GPU's pf-serve kept", starts)
+	}
+}
+
+// A GPU that hangs twice in a row is a GPU lost: the next request goes
+// to the CPU, as for one that dies. Until the GPU is tried again.
+func TestGPUHungTwiceMovesToCPU(t *testing.T) {
+	log, gpu := gpuInstall(t, "gpuhang")
+	was := classifyTimeout
+	classifyTimeout = func(int) time.Duration { return 300 * time.Millisecond }
+	t.Cleanup(func() { classifyTimeout = was })
+	if _, err := Find([]string{"hi Alice"}); err == nil {
+		t.Fatal("a GPU that hangs twice answered")
+	}
+	if starts := fakeLines(t, log, "start"); !reflect.DeepEqual(starts, []string{gpu, gpu}) {
+		t.Fatalf("starts = %q, want the GPU twice", starts)
+	}
+	srv.mu.Lock()
+	srv.retryAt = time.Time{} // not held back: tried at once
+	srv.mu.Unlock()
+	got, err := Find([]string{"hi Alice"})
+	if err != nil || !reflect.DeepEqual(got, [][]redact.Found{{person(3, 8)}}) {
+		t.Fatalf("Find = %v, %v", got, err)
+	}
+	if starts := fakeLines(t, log, "start"); len(starts) != 3 || starts[2] != "start pf-serve CPU" {
+		t.Fatalf("starts = %q, want the CPU next", starts)
+	}
+	if st := Now(); st.GPU || !strings.Contains(st.GPUError, "didn't answer in") {
+		t.Fatalf("Now = %+v, want on the CPU saying the GPU didn't answer", st)
+	}
+}
+
+// A GPU lost is tried again when its time comes (gpuRetryAfter), with
+// no restart of magpie: the CPU's pf-serve makes way for the GPU's, and a
+// GPU that answers is the model's again.
+func TestLostGPUTriedAgain(t *testing.T) {
+	log, gpu := gpuInstall(t, "gpudiesonce")
+	if _, err := Find([]string{"hi Alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if starts := fakeLines(t, log, "start"); !reflect.DeepEqual(starts, []string{gpu, "start pf-serve CPU"}) {
+		t.Fatalf("starts = %q, want the GPU, then the CPU", starts)
+	}
+	if _, err := Find([]string{"Alice two"}); err != nil {
+		t.Fatal(err)
+	}
+	if starts := fakeLines(t, log, "start"); len(starts) != 2 {
+		t.Fatalf("starts = %q, want the CPU kept until the GPU's time", starts)
+	}
+	srv.mu.Lock()
+	if !srv.cpu || srv.gpuFails != 1 || time.Until(srv.gpuAgain) < 9*time.Minute {
+		t.Fatalf("cpu=%v fails=%d again in %s, want the CPU for 10 minutes", srv.cpu, srv.gpuFails, time.Until(srv.gpuAgain))
+	}
+	srv.gpuAgain = time.Now() // its time has come
+	srv.mu.Unlock()
+	got, err := Find([]string{"Alice three"})
+	if err != nil || !reflect.DeepEqual(got, [][]redact.Found{{person(0, 5)}}) {
+		t.Fatalf("Find = %v, %v", got, err)
+	}
+	if starts := fakeLines(t, log, "start"); len(starts) != 3 || starts[2] != gpu {
+		t.Fatalf("starts = %q, want the GPU tried again", starts)
+	}
+	if st := Now(); !st.GPU || st.GPUError != "" {
+		t.Fatalf("Now = %+v, want the GPU's again", st)
+	}
+	srv.mu.Lock()
+	cpu, fails := srv.cpu, srv.gpuFails
+	srv.mu.Unlock()
+	if cpu || fails != 0 {
+		t.Fatalf("cpu=%v fails=%d after the GPU answered", cpu, fails)
+	}
+}
+
+func TestGPURetryAfter(t *testing.T) {
+	for n, want := range map[int]time.Duration{1: 10 * time.Minute, 2: 20 * time.Minute, 3: 40 * time.Minute, 4: 80 * time.Minute, 5: 2 * time.Hour, 50: 2 * time.Hour} {
+		if got := gpuRetryAfter(n); got != want {
+			t.Errorf("gpuRetryAfter(%d) = %s, want %s", n, got, want)
+		}
 	}
 }

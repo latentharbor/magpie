@@ -32,6 +32,10 @@ const (
 	// serves at no cost to the subscription's allowance or credits, before
 	// the ones that spend it (routes.FreeFirst).
 	FreeFirst = "free"
+	// Fastest goes by speed: the one that has answered the model fastest
+	// lately — first token, then how fast it wrote — first; one not
+	// measured lately gets a turn now and then to be (routes.Fastest).
+	Fastest = "fast"
 )
 
 // pluginRouting is a routing a plugin serves: "<plugin>/<name>".
@@ -66,6 +70,30 @@ func SetSink(id string, sink bool) error {
 	return Save(*p)
 }
 
+// SetCapStop has a subscription answer 429 while every account is held at
+// its usage cap, rather than go on to its fallbacks (Provider.CapStop), or
+// go on to them again.
+func SetCapStop(id string, on bool) error {
+	p, err := Find(id)
+	if err != nil {
+		return err
+	}
+	p.CapStop = on
+	return Save(*p)
+}
+
+// SetCapCareful has a subscription's capped accounts read again near
+// their cap and held while their usage can't be told
+// (Provider.CapCareful), or go by the last reading again.
+func SetCapCareful(id string, on bool) error {
+	p, err := Find(id)
+	if err != nil {
+		return err
+	}
+	p.CapCareful = on
+	return Save(*p)
+}
+
 // SetKeepLogin keeps Codex or Claude Code signed in to the account the
 // user made first (Provider.KeepLogin), or lets magpie move it on again.
 // Either way it is no longer kept on one of the user's choosing
@@ -89,15 +117,16 @@ func SetKeepLogin(id string, keep bool) error {
 	return nil
 }
 
-// SetSwitchOnly has magpie only move Codex's own sign-in between its
-// accounts (Provider.SwitchOnly), its requests never sent through the
-// gateway for account failover, or lets failover go through it again.
+// SetSwitchOnly has magpie only move Codex's or Claude Code's own sign-in
+// between its accounts (Provider.SwitchOnly): Codex's requests never sent
+// through the gateway for account failover, Claude's accounts serving no
+// request through the gateway (KeptToAgent). Off, both are as before.
 func SetSwitchOnly(id string, on bool) error {
 	p, err := Find(id)
 	if err != nil {
 		return err
 	}
-	if p.Account == nil || p.Account.Agent != p.ID || p.ID != "codex" {
+	if p.Account == nil || p.Account.Agent != p.ID || p.ID != "codex" && p.ID != "claude" {
 		return fmt.Errorf("magpie doesn't route %s's own requests for account failover", p.Name)
 	}
 	p.SwitchOnly = on
@@ -151,6 +180,9 @@ var usedCache struct {
 	// agent; that reading was asked before an account said it was out,
 	// so what it tells is kept only until the next ask reads again
 	stale map[string]bool
+	// read: when each account's allowance was last read well, and whether
+	// the last try failed, by agent/user (UsageRead)
+	read map[string]readState
 }
 
 // firstWait is how long a request waits for an agent's allowances the
@@ -186,6 +218,9 @@ type Limit struct {
 	// Credits: the account goes on past this window on its credits
 	// (QuotaWindow.Credits)
 	Credits bool
+	// Balance is how much is left in Unit, a wallet's reading with no
+	// share (QuotaWindow.Balance); nil when not told
+	Balance *float64
 }
 
 // OnCredits says whether the account goes on past its allowance on its
@@ -195,6 +230,18 @@ type Limit struct {
 func (a Allowance) OnCredits() bool {
 	for _, l := range a {
 		if l.Credits {
+			return true
+		}
+	}
+	return false
+}
+
+// WeekUsedUp says whether the allowance's week, a window of a day or more
+// that counts every model, is used up at now, as its last reading says:
+// weekUsedUp's rule (AutoUseCodexReset) on an allowance, credits or none.
+func (a Allowance) WeekUsedUp(now time.Time) bool {
+	for _, l := range a {
+		if l.Span >= 24*time.Hour && l.Model == "" && l.matches == nil && l.Used >= 100 && l.Resets.After(now) {
 			return true
 		}
 	}
@@ -376,6 +423,32 @@ func nextFixedReset(at time.Time, span time.Duration, now time.Time) time.Time {
 	return at.Add((now.Sub(at)/span + 1) * span)
 }
 
+// Left is the smallest known wallet balance for this model.
+func (a Allowance) Left(model string) (left float64, unit string, ok bool) {
+	model = strings.ToLower(model)
+	for _, l := range a {
+		if l.Balance == nil || !l.applies(model) {
+			continue
+		}
+		if !ok || *l.Balance < left {
+			left, unit, ok = *l.Balance, l.Unit, true
+		}
+	}
+	return left, unit, ok
+}
+
+// Lapse is the earliest future expiry of credits for this model.
+func (a Allowance) Lapse(model string, now time.Time) time.Time {
+	model = strings.ToLower(model)
+	var t time.Time
+	for _, l := range a {
+		if l.applies(model) && l.RunsOut.After(now) && (t.IsZero() || l.RunsOut.Before(t)) {
+			t = l.RunsOut
+		}
+	}
+	return t
+}
+
 // Full is when an account used up for model can take it again: the last
 // reset of its windows that are full, zero when none is or it isn't known.
 func (a Allowance) Full(model string, share float64, now time.Time) time.Time {
@@ -530,12 +603,14 @@ func Allowances(agent string) map[string]Allowance {
 			defer cancel()
 			share := renewalShare(agent) // read before the lock: it reads providers.json
 			all := map[string]Allowance{}
-			readings, readAt := loginUsageAt(ctx, agent)
+			readings, readAt, states := loginUsageAt(ctx, agent)
 			for user, q := range readings {
 				if q.Error != "" || len(q.Windows) == 0 {
 					continue
 				}
-				all[user] = allowanceOf(q.Windows, time.Now()).restartedBy(resetRunsOut(agent, user, q.Windows, q.Resets))
+				if a, ok := routedAllowance(agent, user, q, time.Now()); ok {
+					all[user] = a
+				}
 			}
 			c.Lock()
 			now := time.Now()
@@ -546,6 +621,16 @@ func Allowances(agent string) map[string]Allowance {
 			at := readAt
 			if c.seen == nil {
 				c.seen = map[string]reading{}
+			}
+			if c.read == nil {
+				c.read = map[string]readState{}
+			}
+			for user, st := range states {
+				key := agent + "/" + strings.ToLower(user)
+				if was := c.read[key].at; st.failed && was.After(st.at) {
+					st.at = was // the last good one's time stands
+				}
+				c.read[key] = st
 			}
 			var renewed []string
 			for user, a := range all {
@@ -595,6 +680,50 @@ func Allowances(agent string) map[string]Allowance {
 		return lastAllowances(agent)
 	}
 	return m
+}
+
+// UsageRead is when user's allowance under agent was last read well, and
+// whether the last try to read it failed (or was held back); ok is false
+// when it hasn't been tried since magpie started. A careful provider holds
+// an account whose reading is too old or failed (Provider.CapCareful).
+func UsageRead(agent, user string) (at time.Time, failed, ok bool) {
+	c := &usedCache
+	c.Lock()
+	defer c.Unlock()
+	st, ok := c.read[agent+"/"+strings.ToLower(user)]
+	return st.at, st.failed, ok
+}
+
+// ReadUsageNow has agent's accounts users read again now, past the
+// minute their readings are kept and though allowances are read only when
+// asked, and waits, till ctx ends, for a reading begun after it asked. It
+// says whether one came back (UsageRead then tells how it went).
+func ReadUsageNow(ctx context.Context, agent string, users ...string) bool {
+	for _, u := range users {
+		StaleAllowance(agent, u)
+	}
+	c := &usedCache
+	for range 3 {
+		Allowances(agent)
+		c.Lock()
+		done, back := c.loading[agent], !c.at[agent].IsZero()
+		c.Unlock()
+		if done == nil {
+			return back // read already, the first ask waiting for it; or nothing to read it with
+		}
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return false
+		}
+		c.Lock()
+		back = !c.at[agent].IsZero() // zero: asked before it went stale
+		c.Unlock()
+		if back {
+			return true
+		}
+	}
+	return false
 }
 
 // OnRenewed has f told when an account's usage windows were started again
@@ -741,6 +870,19 @@ func (a Allowance) restartedBy(runsOut time.Time) Allowance {
 	return a
 }
 
+// routedAllowance is the allowance routing goes by from an account's
+// reading. ok is false when it tells no share at all — every window its
+// text or set aside, as a plugin's that doesn't say how much is used
+// (#3650): the account is then not known, as one never read, rather than
+// one with all of it left, ahead of the rest.
+func routedAllowance(agent, user string, q SubscriptionQuota, now time.Time) (Allowance, bool) {
+	a := allowanceOf(q.Windows, now)
+	if len(a) == 0 {
+		return nil, false
+	}
+	return a.restartedBy(resetRunsOut(agent, user, q.Windows, q.Resets)), true
+}
+
 // allowanceOf keeps the windows that can stop an account.
 func allowanceOf(ws []QuotaWindow, now time.Time) Allowance {
 	// Antigravity keeps the vendor's ids in its windows (and on disk),
@@ -766,7 +908,7 @@ func allowanceOf(ws []QuotaWindow, now time.Time) Allowance {
 	}
 	var a Allowance
 	for _, w := range ws {
-		if w.Aside {
+		if w.Aside || w.Text {
 			continue
 		}
 		l := Limit{Used: w.Used, Span: w.Span, fixedReset: w.fixedReset, Model: w.Model, Amount: w.Amount, Of: w.Limit, Unit: w.Unit, matches: w.matches, partial: w.partial, Name: w.Name, Credits: w.Credits}
@@ -782,6 +924,15 @@ func allowanceOf(ws []QuotaWindow, now time.Time) Allowance {
 		}
 		if w.RunsOutAt != nil {
 			l.RunsOut = *w.RunsOutAt
+		}
+		if w.Balance != nil {
+			// a wallet is known by its balance, with no share invented:
+			// one with nothing left is used up, as the vendor refuses it
+			b := *w.Balance
+			l.Balance = &b
+			if b <= 0 {
+				l.Used = max(l.Used, 100)
+			}
 		}
 		a = append(a, l)
 	}

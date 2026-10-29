@@ -40,6 +40,8 @@ func TestPlanQuotaSource(t *testing.T) {
 		{Provider{Chat: "https://api.commandcode.ai/provider/v1", Anthropic: "https://api.commandcode.ai/provider"}, "https://api.commandcode.ai/alpha/billing/credits", true, false},
 		{Provider{Chat: "https://api.minimaxi.com/v1", Anthropic: "https://api.minimaxi.com/anthropic"}, "https://api.minimaxi.com/v1/token_plan/remains", true, false},
 		{Provider{Anthropic: "https://api.minimax.io/anthropic"}, "https://api.minimax.io/v1/token_plan/remains", true, false},
+		// MiniMax China's host since mmx-cli 8746d48f
+		{Provider{Chat: "https://api.minimax.cn/v1", Anthropic: "https://api.minimax.cn/anthropic"}, "https://api.minimax.cn/v1/token_plan/remains", true, false},
 		{Provider{Chat: "https://api.deepseek.com"}, "", false, false},
 		{Provider{Chat: "https://ollama.com/v1", Anthropic: "https://ollama.com"}, "https://ollama.com/api/balance", true, false},
 		{Provider{Chat: "http://localhost:11434/v1"}, "", false, false}, // a local Ollama
@@ -112,7 +114,7 @@ func TestCommandCodeQuotaShowsWindows(t *testing.T) {
 	if err := json.Unmarshal([]byte(cmdCreditsReply), &c); err != nil {
 		t.Fatal(err)
 	}
-	q := cmdQuotaOf(SubscriptionQuota{}, c)
+	q := cmdQuotaOf(SubscriptionQuota{}, c, nil)
 	if q.Balance != "" || q.Plan != "GOAT" || len(q.Windows) != 3 {
 		t.Fatalf("%+v", q)
 	}
@@ -124,7 +126,7 @@ func TestCommandCodeQuotaShowsWindows(t *testing.T) {
 	// no plan and no windows: what is left is all there is to show
 	var none cmdCredits
 	_ = json.Unmarshal([]byte(`{"credits":{"purchasedCredits":"20","freeCredits":1}}`), &none)
-	if q := cmdQuotaOf(SubscriptionQuota{}, none); q.Balance != "$21.00" || len(q.Windows) != 0 {
+	if q := cmdQuotaOf(SubscriptionQuota{}, none, nil); q.Balance != "$21.00" || len(q.Windows) != 0 {
 		t.Errorf("no plan: %+v", q)
 	}
 }
@@ -428,6 +430,55 @@ func TestReadKimiCode(t *testing.T) {
 	}
 	if _, _, err := readKimiCode([]byte(`{"error":{"message":"bad key"}}`)); err == nil {
 		t.Fatal("nothing read")
+	}
+}
+
+// A plan on Kimi's monthly allowance tells it in usages, as shares
+// (lidazi2016 on Discord: 5h and weekly shown, the month not). The first
+// body is a live reply of 2026-09-23 (narumiruna/pi-extensions#1390): no
+// weekly usage, the 5h window told both ways. The second has every
+// window kimi-code reads (managed-usage.ts); each is taken from usages,
+// limit_month_code shown not at all.
+func TestReadKimiCodeMonth(t *testing.T) {
+	_, ws, err := readKimiCode([]byte(`{
+  "limits": [
+    {
+      "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+      "detail": { "limit": "100", "used": "44", "remaining": "56", "resetTime": "2026-09-23T06:47:09.122865Z" }
+    }
+  ],
+  "usages": {
+    "limit_5h":          { "used_ratio": 0.4372, "reset_time": "2026-09-23T06:47:08Z" },
+    "limit_month_total": { "used_ratio": 0.7877, "reset_time": "2026-10-17T00:00:00Z" },
+    "limit_month_code":  { "used_ratio": 0.7877, "reset_time": "2026-10-17T00:00:00Z" }
+  },
+  "booster_wallet": {}
+}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws) != 2 || ws[0].Name != "5 hours" || math.Abs(ws[0].Used-43.72) > 1e-9 || ws[0].Span != 5*time.Hour || ws[0].ResetsAt == nil || ws[0].ResetsAt.Second() != 8 ||
+		ws[1].Name != "Month" || math.Abs(ws[1].Used-78.77) > 1e-9 || ws[1].Span != 30*24*time.Hour || ws[1].ResetsAt == nil || ws[1].ResetsAt.Day() != 17 {
+		t.Fatalf("%+v", ws)
+	}
+
+	_, ws, err = readKimiCode([]byte(`{"usage":{"limit":"100","used":"30","resetTime":"2026-10-31T05:24:18.44Z"},
+		"limits":[{"window":{"duration":300,"timeUnit":"TIME_UNIT_MINUTE"},"detail":{"limit":"100","remaining":"88","resetTime":"2026-10-29T09:00:00Z"}}],
+		"usages":{"limit_month_code":{"used_ratio":0.1},"limit_month_total":{"used_ratio":"0.4","reset_time":"2026-11-18T00:00:00Z"},
+		  "limit_7d":{"used_ratio":0.3012,"reset_time":"2026-10-31T05:24:18Z"},"limit_5h":{"used_ratio":0.1234}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws) != 3 || ws[0].Name != "5 hours" || math.Abs(ws[0].Used-12.34) > 1e-9 || ws[0].ResetsAt != nil ||
+		ws[1].Name != "7 days" || math.Abs(ws[1].Used-30.12) > 1e-9 || ws[1].Span != 7*24*time.Hour ||
+		ws[2].Name != "Month" || math.Abs(ws[2].Used-40) > 1e-9 || ws[2].ResetsAt == nil || ws[2].ResetsAt.Day() != 18 {
+		t.Fatalf("%+v", ws)
+	}
+
+	// a share that isn't a number is no window; the counted ones stand
+	_, ws, err = readKimiCode([]byte(`{"usage":{"limit":"100","used":"12"},"usages":{"limit_month_total":{"used_ratio":null},"limit_7d":{"reset_time":"2026-10-31T05:24:18Z"}}}`))
+	if err != nil || len(ws) != 1 || ws[0].Name != "7 days" || ws[0].Used != 12 {
+		t.Fatalf("%+v %v", ws, err)
 	}
 }
 

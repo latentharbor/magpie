@@ -85,6 +85,14 @@ export const FakePlugin = async ({ client }) => ({
     if (process.env.FAKE_RESPONSES) cfg.provider[ID].models["fake-resp"] = { name: "Fake Responses", provider: { npm: "@ai-sdk/openai" }, limit: { context: 4000, output: 400 } }
     // $FAKE_GROK: a Grok model on Responses, as Grok's plugin serves it
     if (process.env.FAKE_GROK) cfg.provider[ID].models["grok-4.7"] = { name: "Grok 4.7", provider: { npm: "@ai-sdk/openai" }, limit: { context: 4000, output: 400 } }
+    // $FAKE_SENSENOVA: SenseNova's image model as its plugin lists it from
+    // token.sensenova.cn/v1/models, on the provider's openai-compatible;
+    // and an image model on a vendor's own API (Anthropic's package), which
+    // no images API of the base serves
+    if (process.env.FAKE_SENSENOVA) {
+      cfg.provider[ID].models["sensenova-u1.5-lite"] = { name: "sensenova-u1.5-lite", limit: { context: 131072, output: 32768 } }
+      cfg.provider[ID].models["flux-2"] = { name: "Flux 2", provider: { npm: "@ai-sdk/anthropic" }, limit: { context: 1000, output: 100 } }
+    }
     // $FAKE_DEEPSEEK: a DeepSeek model, as Cline's cline-pass/deepseek-v4-pro
     if (process.env.FAKE_DEEPSEEK) cfg.provider[ID].models["deepseek-v4-pro"] = { name: "DeepSeek V4 Pro", limit: { context: 1000, output: 100 } }
     // $FAKE_GLM: a GLM model, as Cline's cline-pass/glm-5.3
@@ -109,6 +117,12 @@ export const FakePlugin = async ({ client }) => ({
       const budget = { low: 4096, high: 16000, max: 31999 }
       const variants = Object.fromEntries(["low", "high", "max"].map((e) => [e, { thinking: { type: "enabled", budgetTokens: budget[e] } }]))
       cfg.provider[ID].models["GLM-5.3"] = { name: "GLM-5.3", provider: { npm: "@ai-sdk/anthropic" }, reasoning: true, variants, limit: { context: 1000000, output: 128000 } }
+      // $FAKE_ZCODE_TRIAL: the Start Plan trial models beside the
+      // subscription's, as a ZCode account that once had them lists them
+      if (process.env.FAKE_ZCODE_TRIAL) {
+        cfg.provider[ID].models["GLM-5.3-Flash-Trial"] = { name: "GLM 5.3 Flash Trial", provider: { npm: "@ai-sdk/anthropic" }, reasoning: true, limit: { context: 1000000, output: 128000 } }
+        cfg.provider[ID].models["GLM-5.3-Trial"] = { name: "GLM 5.3 Trial", provider: { npm: "@ai-sdk/anthropic" }, reasoning: true, limit: { context: 1000000, output: 128000 } }
+      }
     }
     // $FAKE_SEARCHES: the provider's upstream searches by itself (#2027),
     // as a plugin in front of Claude's API says
@@ -128,6 +142,8 @@ export const FakePlugin = async ({ client }) => ({
       const levels = (l) => Object.fromEntries(l.map((e) => [e, { reasoningEffort: e }]))
       cfg.provider[ID].models["fake-off"] = { name: "Fake Off", reasoning: true, variants: levels(["none", "low", "high", "max"]), limit: { context: 1000, output: 100 } }
       cfg.provider[ID].models["fake-on"] = { name: "Fake On", reasoning: true, variants: levels(["low", "high", "max"]), limit: { context: 1000, output: 100 } }
+      // Trae's levels as Our Free Model's plugin lists them (nianshou5)
+      cfg.provider[ID].models["fake-trae"] = { name: "Fake Trae", reasoning: true, variants: levels(["light", "high", "extra_high"]), limit: { context: 1000, output: 100 } }
     }
     // $FAKE_ZEN: a model as opencode-zen-free 0.1.3's config hook writes
     // it, from models.opencode.ai on 2026-10-11 (#1595, tkhs101): it
@@ -168,7 +184,11 @@ export const FakePlugin = async ({ client }) => ({
         }),
       },
     ],
-    loader: async (getAuth, provider) => ({
+    loader: async (getAuth, provider) => {
+      // $FAKE_LOAD_WAIT: the loader takes that many ms (a sign-in renewed
+      // on a slow line), as a cold host's first request waits for it
+      if (process.env.FAKE_LOAD_WAIT) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_LOAD_WAIT)))
+      return {
       apiKey: "dummy",
       baseURL: process.env.FAKE_BASE,
       async fetch(url, init) {
@@ -190,13 +210,26 @@ export const FakePlugin = async ({ client }) => ({
         // where magpie said the agent works, as the plugin read it; its own
         // headers go on too, as a plugin that sends on what it got sends
         // them, for the host to take off
-        for (const k of ["x-magpie-work-dir", "x-magpie-work-git"]) if (h.has(k)) h.set("x-saw-" + k.slice(9), h.get(k))
+        for (const k of ["x-magpie-work-dir", "x-magpie-work-git", "x-magpie-fallback"]) if (h.has(k)) h.set("x-saw-" + k.slice(9), h.get(k))
+        // $FAKE_QUEUE: that model is queued at the vendor, as Qoder's free
+        // models are: waited out (here until magpie gives up) unless magpie
+        // said it needn't be, then said at once with the queue's 503
+        if (process.env.FAKE_QUEUE && typeof init.body === "string" && JSON.parse(init.body).model === process.env.FAKE_QUEUE) {
+          if (h.get("x-magpie-fallback") === "1") {
+            return new Response(JSON.stringify({ error: { message: `FakeCo queued the request for ${process.env.FAKE_QUEUE}; try again in 30s`, type: "queued" } }), { status: 503, headers: { "content-type": "application/json", "retry-after": "30" } })
+          }
+          await new Promise((_, no) => {
+            const t = setTimeout(() => no(new Error("FakeCo's queue gave up")), 300e3)
+            init.signal?.addEventListener("abort", () => (clearTimeout(t), no(init.signal.reason)))
+          })
+        }
         // $FAKE_H2: the request goes on node:http2 to that origin, as
         // Cursor's plugin runs its chats
         if (process.env.FAKE_H2) return h2(process.env.FAKE_H2, new URL(url).pathname)
         return fetch(url, { ...init, headers: h })
       },
-    }),
+    }
+    },
     // magpie's: the account's allowance; "full@fake" has used its five
     // hours, which count only fake-claude
     usage: async (getAuth) => {
@@ -251,13 +284,21 @@ export const FakePlugin = async ({ client }) => ({
     // account's name/uid, so two of one name tell apart), and the
     // answer said by the key: ck-claim gives 50 on a 3-day streak, ck-done
     // is in already, ck-captcha is asked a captcha, ck-throw can't reach
-    // the vendor, ck-odd answers no outcome magpie knows
+    // the vendor, ck-odd answers no outcome magpie knows, and ck-until
+    // answers what the test wrote to <FAKE_CHECKIN>.until ({outcome, until})
     ...(process.env.FAKE_CHECKIN
       ? {
           checkin: async (getAuth) => {
             const a = await getAuth()
             const fs = await import("node:fs")
             fs.appendFileSync(process.env.FAKE_CHECKIN, (a.key ?? (a.uid ? a.accountId + "/" + a.uid : a.accountId) ?? "") + "\n")
+            // $FAKE_CHECKIN_URL: the vendor's check-in, asked at
+            // <url>/<key>; a press it doesn't answer 200 failed (#2777)
+            if (process.env.FAKE_CHECKIN_URL) {
+              const r = await fetch(process.env.FAKE_CHECKIN_URL + "/" + a.key)
+              if (!r.ok) throw new Error(`FakeCo's check-in answered ${r.status}`)
+              return { outcome: "claimed", credit: 1 }
+            }
             switch (a.key) {
               case "ck-claim":
                 return { outcome: "claimed", credit: 50, streak: 3 }
@@ -268,7 +309,9 @@ export const FakePlugin = async ({ client }) => ({
               case "ck-throw":
                 throw new Error("FakeCo's check-in is down")
               case "ck-odd":
-                return { outcome: "yes" }
+                return { outcome: "yes", message: "the daily credits were refreshed" }
+              case "ck-until":
+                return JSON.parse(fs.readFileSync(process.env.FAKE_CHECKIN + ".until", "utf8"))
             }
             return { outcome: "inactive" }
           },
@@ -291,8 +334,9 @@ export const FakePlugin = async ({ client }) => ({
       if (auth?.type === "oauth" && auth.refresh?.startsWith("rot-")) {
         await client.auth.set({ path: { id: ID }, body: { ...auth, refresh: auth.refresh + "+" } })
       }
-      // fake-1 costs the plan nothing, as a WorkBuddy model of x0.00 credits
-      p.models["fake-1"].free = true
+      // fake-1 costs the plan nothing, as a WorkBuddy model of x0.00
+      // credits ($FAKE_NO_FREE: a list with no free model, as ZCode's is)
+      if (!process.env.FAKE_NO_FREE) p.models["fake-1"].free = true
       // fake-claude's credits are a number, discounted; fake-gemini's as
       // WorkBuddy's picker writes them
       if (p.models["fake-claude"]) Object.assign(p.models["fake-claude"], { rate: 0.5, rateWas: 1 })

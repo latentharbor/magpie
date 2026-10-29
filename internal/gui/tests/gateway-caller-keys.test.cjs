@@ -93,7 +93,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert(events.some((e) => e.action === "clipboard" && e.body.text === "fixture-lan-1"));
       const rotateLabel = lang === "zh" ? "轮换密钥" : "Rotate key";
       const cancelLabel = lang === "zh" ? "取消" : "Cancel";
-      await lanRow.getByRole("button", { name: rotateLabel, exact: true }).click();
+      await keyAction(page, lanRow, rotateLabel);
       assert.equal(await page.evaluate(() => callerFocus.at(-1)?.preventScroll), true, "confirmation focuses without scrolling");
       await page.locator("#modal").getByRole("button", { name: cancelLabel, exact: true }).click();
       await page.locator("#modal").waitFor({ state: "hidden" });
@@ -104,7 +104,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await lanRow.getByRole("button", { name: w.copy, exact: true }).click();
       await page.waitForFunction(() => document.querySelector("#gatewayKeys .copy.done"));
       assert(events.some((e) => e.action === "clipboard" && e.body.text === "fixture-rotated-2"));
-      await lanRow.getByRole("button", { name: w.remove, exact: true }).click();
+      await keyAction(page, lanRow, w.remove);
       await page.keyboard.press("Escape");
       await page.locator("#modal").waitFor({ state: "hidden" });
       assert.equal(events.filter((e) => e.action === "remove-key").length, 0);

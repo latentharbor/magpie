@@ -17,6 +17,7 @@ import (
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/proc"
 	"github.com/yetone/magpie/internal/provider"
@@ -46,6 +47,52 @@ func init() {
 	}
 	// a Copilot CLI signed in inside a running distro (#723)
 	provider.CopilotWSLHomes = copilotWSLHomes
+	// the Codex app's app-server is restarted when magpie becomes Codex's
+	// provider for its used-up ChatGPT account, and when it stops being it;
+	// and when Codex is connected or disconnected, or its route otherwise
+	// changes, so a running app sends where its config now says
+	provider.CodexAppRoute = codexAppRoute
+}
+
+// codexAppRoute is where Codex's config sends it, as the app-server reads
+// it at its start: the keys magpie writes for that, never one the Codex
+// app writes itself (model); and whether magpie is Codex's provider for
+// its used-up ChatGPT account (AppOut). Not known when Codex's config
+// can't be read.
+func codexAppRoute() (route string, out, known bool) {
+	// asked every 3s for as long as magpie runs: the config looked at once
+	// for its keys, not once for each (#1665)
+	defer filememo.Hold()()
+	home, _ := homes()
+	a := codex(home)
+	if _, err := os.ReadFile(a.Path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", false, false
+	}
+	out = a.AppOut != nil && a.AppOut()
+	var b strings.Builder
+	for _, k := range []string{"model_provider", "openai_base_url", "model_catalog_json"} {
+		v, _ := edit.GetTOMLTop(a.Path, k)
+		b.WriteString(k + "=" + v + "\n")
+	}
+	t, _ := edit.GetTOMLTable(a.Path, "model_providers."+magpieID)
+	b.WriteString("magpie.base_url=" + t["base_url"] + "\n")
+	// and whether it requires OpenAI auth, which decides whether the app
+	// has its ChatGPT account at all (openaiAuth in codex.go): read as the
+	// app-server starts, like the rest
+	b.WriteString("magpie.requires_openai_auth=" + t["requires_openai_auth"] + "\n")
+	// and the list in that catalog, which the app-server also reads only
+	// as it starts: a provider or group renamed, or a model added, left
+	// the app on the names and models it started with (lucis0116 on X)
+	if c, _ := edit.GetTOMLTop(a.Path, "model_catalog_json"); c != "" {
+		if !filepath.IsAbs(c) {
+			c = filepath.Join(filepath.Dir(a.Path), c)
+		}
+		b.WriteString("catalog=" + codexCatalogTag(c) + "\n")
+	}
+	if out {
+		b.WriteString("out\n")
+	}
+	return b.String(), out, true
 }
 
 // others are clients that reach the gateway without being agents magpie
@@ -58,6 +105,10 @@ var others = []*Agent{
 	// ("pi-desktop/0.1.0"), it is told apart from Pi by that name, which
 	// Pi's "pi-" would take otherwise (#1966, dgmico)
 	{ID: "pi-desktop", Name: "PI-Desktop", Icon: "pi", UA: []string{"pi-desktop"}},
+	// Raft (slock's raft-computer) runs Pi in each of its agents' folders;
+	// Sessions lists those as Raft's (internal/sessions/raft.go), while
+	// their requests say "pi (…)" and are Pi's
+	{ID: "raft", Name: "Raft", Icon: "generic"},
 }
 
 // Clients is everyone whose requests the gateway knows by name: every
@@ -93,6 +144,21 @@ func homes() (home, cfg string) {
 
 // builtins are the agents magpie has wiring of its own for.
 func builtins(home, cfg string) []*Agent {
+	return append(onMachine(home, cfg), wslAgents()...)
+}
+
+// local is All() without the agents in WSL distros, which wsl.exe is asked
+// for: what start-up moves look in, on every command, `magpie version`
+// too, and the moves came before WSL agents. A wsl.exe that hangs held each
+// command 20s, its two listings' timeouts.
+func local() []*Agent {
+	home, cfg := homes()
+	own := onMachine(home, cfg)
+	return append(own, pluggedAgents(home, own, nil)...)
+}
+
+// onMachine are builtins but those in WSL.
+func onMachine(home, cfg string) []*Agent {
 	return append([]*Agent{
 		claude(home),
 		claudeDesktop(home),
@@ -107,6 +173,7 @@ func builtins(home, cfg string) []*Agent {
 		pi(home),
 		stepcode(home),
 		mothx(home),
+		penguin(home),
 		aside(home),
 		omo(home),
 		primeAgent(home),
@@ -136,6 +203,7 @@ func builtins(home, cfg string) []*Agent {
 		empryo(home),
 		ante(home),
 		astrbot(home),
+		openClaw(home),
 		jcode(home),
 		miniMax(home),
 		droid(home),
@@ -150,6 +218,7 @@ func builtins(home, cfg string) []*Agent {
 		codebuddy(home),
 		pencil(home),
 		openPencil(home, cfg),
+		newMax(home),
 		raycast(home),
 		kiroCrew(home),
 		t3code(home),
@@ -160,7 +229,7 @@ func builtins(home, cfg string) []*Agent {
 		cindy(),
 		aionui(),
 		lody(home),
-	}, append(ompProfiles(home), wslAgents()...)...)
+	}, ompProfiles(home)...)
 }
 
 // ---- accessors -------------------------------------------------------------
@@ -721,11 +790,32 @@ func (o orderedJSON) MarshalJSON() ([]byte, error) {
 	return append(b, '}'), nil
 }
 
+// modelEffort is the model's own name for level, one of pi-ai's (none for
+// its off): level itself when efforts name it, else the one of efforts
+// that names it in a vendor's words (catalog.EffortAliases: Trae's light
+// and extra_high, as Our Free Model's plugin lists them), "" when it takes
+// none such. dsh and Pi offered only the levels named in pi-ai's words, so
+// such a model's light, high and extra_high showed in dsh as high alone
+// (nianshou5 on Discord). The name returned is what the agent sends, so
+// the vendor gets the level in the words it listed.
+func modelEffort(efforts []string, level string) string {
+	if slices.Contains(efforts, level) {
+		return level
+	}
+	for _, e := range efforts {
+		if catalog.EffortLevel(e) == level {
+			return e
+		}
+	}
+	return ""
+}
+
 // piThinkingLevels is the thinkingLevelMap for a model's efforts: every one
 // of Pi's levels (piLevels, pi-ai's EXTENDED_THINKING_LEVELS), the model's
-// own mapped to themselves and the others null. Pi builds /thinking from
-// the map (getSupportedThinkingLevels): a level set to null is hidden and
-// skipped, while one left out is offered (all but xhigh and max), so a map
+// own mapped to its name for it (modelEffort) and the others null. Pi
+// builds /thinking from the map (getSupportedThinkingLevels): a level set
+// to null is hidden and skipped, while one left out is offered (all but
+// xhigh and max), so a map
 // naming only max had Pi offer minimal and medium too, which the vendor
 // turned away (#243). Pi's off is the model's none when it takes one. A
 // model without none has off hidden — Pi's off asks a Responses model for
@@ -743,11 +833,11 @@ func piThinkingLevels(efforts []string, claudeOff bool) map[string]any {
 	}
 	levels := map[string]any{}
 	for _, l := range piLevels {
-		e := l
+		w := l
 		if l == "off" {
-			e = "none"
+			w = "none"
 		}
-		if slices.Contains(efforts, e) {
+		if e := modelEffort(efforts, w); e != "" {
 			levels[l] = e
 		} else {
 			levels[l] = nil

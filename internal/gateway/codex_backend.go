@@ -7,19 +7,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"log"
 	"net/http"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tidwall/gjson"
 
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/claudeseal"
 	"github.com/yetone/magpie/internal/codexcat"
 	"github.com/yetone/magpie/internal/codexsummary"
 	"github.com/yetone/magpie/internal/provider"
@@ -101,15 +102,25 @@ func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
 			writeError(w, provider.Responses, 400, err.Error())
 			return
 		}
+		// the route that shows it while it is held before routing names
+		// it, as handle's and gemini's do (Jason on Discord: a held Codex
+		// turn showed as no model, "magpie · 0 on")
+		noteAsked(r.Context(), model)
 		// a turn of the conversation's own: the model its side calls may
 		// follow (codexFollowTo)
-		kind := requestCallKind(r.Header, requestSessionMetadata(r.Header, body))
+		meta := requestSessionMetadata(r.Header, body)
+		kind := requestCallKind(r.Header, meta)
+		// a subagent resume_agent brought back on its lead's model goes
+		// back on the one it was spawned with (codexResumeTo)
+		if to := s.codexResumeTo(r, agentOf(r), kind, model, meta); to != "" {
+			body, model = withModel(body, to), to
+		}
 		s.codexLeads.saw(r, kind, model)
 		// a thread's title, where Settings sends it (#705) — the request
 		// still on Codex's own model, through its sign-in, when it says
 		// nothing of them
 		if rest == "/responses" {
-			session := func() string { return s.codexSessionOf(r, body) }
+			session := func() string { return s.codexSideSession(r, body) }
 			if to := codexTitlesTo(r.Header, body, false, session); to != "" {
 				s.codexTitle(w, r, body, to)
 				return
@@ -129,18 +140,15 @@ func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
 			// a subagent on one of Codex's own models, put on the model
 			// set for Codex's subagents, a ChatGPT account's in magpie;
 			// the request on the model asked for when it can't be, the
-			// trace saying why (codexUpstreamOn, serve). One with nothing
-			// set for it, a subagent's or a memory call,
-			// on the model its conversation is on when that is one of
-			// magpie's, not on the ChatGPT sign-in (codexFollowTo)
+			// trace saying why (codexUpstreamOn, serve). With none set,
+			// it stays on the model it was named (codexFollowTo). A
+			// memory call with nothing set for it goes on the model its
+			// conversation is on when that is one of magpie's, not on
+			// the ChatGPT sign-in (codexFollowTo)
 			if !strings.Contains(model, "/") {
 				pick := codexSubagentPick(r, agentOf(r), kind, model, body)
-				if to := s.codexFollowTo(r, agentOf(r), kind, model, body); to != "" && pick == nil {
-					if usage.PurposeOf(kind) == "kind:collab_spawn" {
-						pick = &SubagentPick{Asked: model, To: to}
-					} else {
-						body, model = withModel(body, to), to
-					}
+				if to := s.codexFollowTo(r, agentOf(r), kind, model, body); to != "" {
+					body, model = withModel(body, to), to
 				}
 				r = withSubagentPick(r, pick)
 				if pick.Moved() {
@@ -166,6 +174,11 @@ func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
 			if rest == "/responses/compact" {
 				writeError(w, provider.Responses, 400, "/responses/compact is not supported for Magpie models; use a compaction_trigger on /responses")
 				return
+			}
+			if kind == "guardian" || isMemoryKind(kind) {
+				// an auto-review or a memory call, at an effort the
+				// model takes (codexSideEffort)
+				body = codexSideEffort(body, model)
 			}
 			// a sealed subagent task goes to a ChatGPT account the model
 			// or group has, or is turned away (serve, sealedReader)
@@ -436,7 +449,9 @@ func loggedAnswers(convs ...string) []loggedAnswer {
 	// from itself)
 	renamed := provider.UsageRenames()
 	usage.Visit(time.Now().Add(-sealerKeep), func(r usage.Record) {
-		r.Provider = renamed.Of(r.Provider, r.Time)
+		// the provider that answered, not one a deleted provider's
+		// calls were merged into on the Usage page (Renames.Own)
+		r.Provider = renamed.Own(r.Provider, r.Time)
 		if r.Provider == "" || r.Provider == "magpie" || r.IsRejected() || r.IsReported() || r.Status <= 0 || r.Status >= 400 || r.Computer != "" || isTitleKind(r.Kind) {
 			return
 		}
@@ -510,13 +525,13 @@ func leadFirst(scope, parent string, cands []candidate, pl planned) ([]candidate
 		}
 	}
 	for i, c := range cands {
-		if i > 0 && c.who() == st.who {
+		if i > 0 && c.sameVendor(st.who, st.model) {
 			cands = append(append([]candidate{c}, cands[:i]...), cands[i+1:]...)
 			pl.order = append(append([]Weighed{pl.order[i]}, pl.order[:i]...), pl.order[i+1:]...)
 			return cands, pl, c.rest
 		}
 	}
-	if len(cands) > 0 && cands[0].who() == st.who {
+	if len(cands) > 0 && cands[0].sameVendor(st.who, st.model) {
 		return cands, pl, cands[0].rest
 	}
 	return cands, pl, ""
@@ -725,6 +740,9 @@ func compactOn(r *http.Request, model string) *provider.Provider {
 // A gateway key held to some models or accounts (#882, #905) is served
 // through it always, alone no less: the relay would spend Codex's own
 // sign-in with nothing of the key asked, its accounts and its models both.
+// codexHeldKnown is provider.CodexUsedUpKnown, which tests set.
+var codexHeldKnown = provider.CodexUsedUpKnown
+
 func codexAccounts(r *http.Request, model string) (string, bool) {
 	h := r.Header
 	if model == "" || strings.Contains(model, "/") || apiKey(h) {
@@ -751,6 +769,19 @@ func codexAccounts(r *http.Request, model string) (string, bool) {
 	_, accHeld := accountHolds(r)
 	if keyHeld || accHeld {
 		return id, true
+	}
+	// Codex's sign-in known to be out (of its allowance, no credits): a
+	// Codex started before magpie took its turns over (codex.out) still
+	// sends them to its built-in provider, and relayed as they came each
+	// one met the same refusal until Codex was restarted, which then sent
+	// them to magpie as codex/<model> (unsplashz on Discord). Served as
+	// that restarted Codex's are, they go where routing sends them, with
+	// no restart. A request signed by an account magpie doesn't have (a
+	// Codex in WSL) goes as it came
+	if ok && p.Account != nil && p.Account.Agent == "codex" && codexHeldKnown() {
+		if acct := h.Get("chatgpt-account-id"); acct == "" || acct == provider.CodexSignedInAccount() {
+			return id, true
+		}
 	}
 	if !ok || p.Account == nil || p.Account.Agent != "codex" || len(p.AlsoOn()) == 0 && !pinned {
 		return "", false
@@ -892,6 +923,9 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 	start := time.Now()
 	usage.Saw(agentOf(r))
 	w0, body0 := w, body // as they came, for the fallbacks (codexFallBack)
+	// Claude's blocks magpie gave Codex (claudeseal) are Claude's alone:
+	// to OpenAI each item is its summary, as before magpie carried them
+	body = withoutClaudeSeals(body)
 	var maskedHits maskHits
 	if r.Method == http.MethodPost {
 		var unmask func()
@@ -943,7 +977,7 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 	var tools *toolScan // whether the reply calls a tool, for a turn's end
 	if rest != "/responses" {
 		// no route of its own (a compaction, a memory): recorded alone
-		noteMasked(r, "chat", maskedHits, string(body), 0, "openai", modelOf(body))
+		noteMasked(r, "chat", maskedHits, sentOf(maskedHits, body), 0, "openai", modelOf(body))
 	}
 	if rest == "/responses" {
 		imageProvider := ""
@@ -955,18 +989,19 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 			who = "Codex's API key"
 		}
 		model := modelOf(body)
+		kept.model = model // only a turn is kept alive (overload)
 		effort = requestEffort(provider.Responses, body)
 		seat := Weighed{ID: "codex", Provider: "openai", Name: "OpenAI", Icon: "openai", Who: who, Kind: "account", Agent: "codex", Model: model}
 		link := s.titlePrompts.observe(r, body, metadata, kind, start)
 		captureTitle = link != nil && isTitleKind(kind)
 		turn, scan := agentTurnOf(r, kind)
 		tools = scan
-		tr = s.trace.beginFor(r, Route{turn: turn, dirOf: dirOf(provider.Responses, body), tools: tools, imageTurn: drawingTurnID(metadata.Turn), imageCaller: codexTurnKey(r, callerOf(r).agent), imageProvider: imageProvider, TitleLink: link, Time: start, Agent: agentOf(r), Session: sessionOf(r.Header), Conv: convOf(r.Header, body), ParentSession: titleParentSession(r.Header, metadata, kind), Kind: kind, Model: model, Effort: effort, Tier: bodyTier(provider.Responses, body), Provider: "openai", Subagent: subagentPickOf(r),
+		tr = s.trace.beginFor(r, Route{turn: turn, dirOf: dirOf(provider.Responses, body), tools: tools, imageTurn: drawingTurnID(metadata.Turn), imageCaller: codexTurnKey(r, callerOf(r).agent), imageProvider: imageProvider, TitleLink: link, Time: start, Agent: callerOf(r).agent, Session: sessionOf(r.Header), Conv: convOf(r.Header, body), ParentSession: titleParentSession(r.Header, metadata, kind), Kind: kind, Model: model, Effort: effort, Tier: bodyTier(provider.Responses, body), Provider: "openai", Subagent: subagentPickOf(r),
 			Order: []Weighed{seat}, Tries: []Try{{ID: seat.ID, Model: model, Effort: effort, Start: start}}})
-		if m := noteMasked(r, "chat", maskedHits, string(body), tr.ID, "openai", model); m != nil {
+		if m := noteMasked(r, "chat", maskedHits, sentOf(maskedHits, body), tr.ID, "openai", model); m != nil {
 			s.trace.update(tr, func(t *Route) { t.Masked = m })
 		}
-		promptRead := s.inspectPrompt(tr, provider.Responses, body, body)
+		promptRead := s.inspectPrompt(tr, provider.Responses, body, body, false)
 		end = func(status int, msg string, tokens, out int) {
 			ms := time.Since(start).Milliseconds()
 			ttft, text := first.ms()
@@ -1022,7 +1057,7 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 	// error once it was sent the stream's headers while it waited
 	failWith := func(status int, msg string) {
 		if kept.sent {
-			streamError(w, provider.Responses, status, msg)
+			streamError(w, provider.Responses, kept.model, status, msg)
 			return
 		}
 		writeError(w, provider.Responses, status, msg)
@@ -1037,7 +1072,7 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 			try.Millis, try.Again = time.Since(try.Start).Milliseconds(), wait.Milliseconds()
 		})
 		servedProvider, servedAccount := codexServed(base, r.Header, on)
-		rec := usage.Record{RouteID: tr.ID, Time: began, Agent: agentOf(r), Provider: servedProvider, Host: provider.HostOf(base),
+		rec := usage.Record{RouteID: tr.ID, Time: began, Agent: callerOf(r).agent, Provider: servedProvider, Host: provider.HostOf(base),
 			ProviderAccount: servedAccount, Model: modelOf(body), Requested: modelOf(body), Effort: effort,
 			Millis: time.Since(began).Milliseconds(), Status: status, Session: sessionOf(r.Header), NativeSession: nativeSessionOf(r.Header),
 			Kind: kind, Endpoint: r.URL.Path, HandedOn: true}
@@ -1065,6 +1100,17 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 	}
 	var sniff *usageSniffer
 	var refusal []byte // what OpenAI said, of a request it turned away
+	relayedAcct := ""  // magpie's ChatGPT account the turn went out on, if any
+	if rest == "/responses" && base != codexAPIBase {
+		// the account goes on its credits, its week used up: a reset it
+		// spends by itself when the week runs out goes first
+		// (resetBeforeCredits)
+		if who, out, ok := s.resetBeforeCreditsOn(r.Context(), on); ok {
+			autoReset = true
+			s.trace.update(tr, func(t *Route) { t.Tries[len(t.Tries)-1].Reset = &AutoReset{Who: who, Text: out.Text()} })
+			resetNote = "openai (" + who + "): used one of its resets by itself before its credits (" + out.Text() + ")"
+		}
+	}
 	for {
 		// the try's own, which a stream that failed before its reply ends
 		// (holdWriter.stop)
@@ -1202,6 +1248,17 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 			body = b
 		}
 		if rest == "/responses" {
+			if acct, ok := codexRelayedAccount(base, r.Header, on); ok {
+				// the windows the reply tells of the account it went out on
+				// are kept as its usage, and a full one has it read again at
+				// once, as a turn served through magpie's accounts has: with
+				// Codex's sign-in the only account, every turn comes this way,
+				// and the Codex app was moved off a used-up account only at
+				// the next look, minutes on, Send greyed until it was
+				// restarted (unsplashz on Discord)
+				heardCodexLimits(acct, res)
+				relayedAcct = acct.Account.User
+			}
 			// a web page or nothing at all, served 200, is the 502 it stands
 			// for (#1012)
 			res = notAnAPIReply(res, "OpenAI: ")
@@ -1218,8 +1275,8 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 			// models was picked, which goes out with Codex's own sign-in
 			msg, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 			writeError(w, provider.Responses, res.StatusCode, codexKeyRefused(msg))
-			s.record(Call{Time: start, From: provider.Responses, To: provider.Responses, Model: modelOf(body),
-				Provider: "openai", Agent: agentOf(r), Status: res.StatusCode,
+			s.record(Call{Route: routeOf(tr), Time: start, From: provider.Responses, To: provider.Responses, Model: modelOf(body),
+				Provider: "openai", Agent: callerOf(r).agent, Status: res.StatusCode,
 				Millis: time.Since(start).Milliseconds(), Error: res.Status})
 			end(res.StatusCode, res.Status, 0, 0)
 			return
@@ -1241,8 +1298,8 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 				// as its markup: said where the turn, or the compaction
 				// (outrageous_piglet on Discord), went
 				failWith(res.StatusCode, said)
-				s.record(Call{Time: start, From: provider.Responses, To: provider.Responses, Model: modelOf(body),
-					Provider: "openai", Agent: agentOf(r), Kind: callKind(r.Header), Status: res.StatusCode,
+				s.record(Call{Route: routeOf(tr), Time: start, From: provider.Responses, To: provider.Responses, Model: modelOf(body),
+					Provider: "openai", Agent: callerOf(r).agent, Kind: callKind(r.Header), Status: res.StatusCode,
 					Millis: time.Since(start).Milliseconds(), Error: said})
 				end(res.StatusCode, said, 0, 0)
 				return
@@ -1343,7 +1400,7 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 		return
 	}
 	call := Call{Time: start, From: provider.Responses, To: provider.Responses, Model: modelOf(body),
-		Provider: "openai", Agent: agentOf(r), Kind: kind, Status: res.StatusCode,
+		Provider: "openai", Agent: callerOf(r).agent, Kind: kind, Status: res.StatusCode,
 		Millis: time.Since(start).Milliseconds(), Fallback: resetNote}
 	if len(tried) > 0 {
 		// the overloads it was asked again for, before the one that answered
@@ -1361,6 +1418,12 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 		// the Routing view show why, not just that
 		call.Error = provider.APIError(refusal, res.Status)
 		errType = provider.ErrorType(refusal)
+		if relayedAcct != "" && failure(res.StatusCode, refusal) == failQuota {
+			// the account it went out on refused the turn as out of its
+			// allowance: read again now, so magpie takes the turns over
+			// (codex.out) and the Codex app is told without a restart
+			codexMayBeUsedUp(relayedAcct)
+		}
 	}
 	end(call.Status, call.Error, uu.Input+uu.Output+uu.CacheRead+uu.CacheWrite, uu.Output)
 	call.Route = tr.ID
@@ -1405,12 +1468,7 @@ func (s *Server) codexFallsBack(model string, body []byte) bool {
 	if !ok || p.Account == nil || p.Account.Agent != "codex" {
 		return false
 	}
-	for _, id := range p.Fallback {
-		if _, _, ok := provider.Resolve(id); ok {
-			return true
-		}
-	}
-	return false
+	return len(provider.FallbackModels(p)) > 0
 }
 
 // codexFallBack serves Codex's turn on its own sign-in, which the backend
@@ -1473,23 +1531,35 @@ func fallbacksOnly(cands []candidate, pl planned, id, model string) ([]candidate
 // stays openai too, rather than a codex row that names the wrong account.
 // Rows already written are not rewritten.
 func codexServed(base string, h http.Header, on *provider.Provider) (id, account string) {
-	if base != provider.CodexBase || apiKey(h) {
+	p, ok := codexRelayedAccount(base, h, on)
+	if !ok {
 		return "openai", ""
 	}
+	return p.ID, p.Account.User
+}
+
+// codexRelayedAccount is the ChatGPT account of magpie's that a relay
+// through codexUpstreamOn went out on: the one it was signed with (on),
+// or Codex's own sign-in when the request names it; false for a call to
+// OpenAI's API, or one signed by an account magpie doesn't have.
+func codexRelayedAccount(base string, h http.Header, on *provider.Provider) (provider.Provider, bool) {
+	if base != provider.CodexBase || apiKey(h) {
+		return provider.Provider{}, false
+	}
 	if on != nil && on.Account != nil && on.Account.User != "" {
-		return on.ID, on.Account.User
+		return *on, true
 	}
 	// the token went out as Codex sent it: it is the sign-in magpie reads
 	// only when it names the same ChatGPT account. A Codex in WSL, or
 	// under another CODEX_HOME, signs with its own, which isn't named here
 	if acct := h.Get("chatgpt-account-id"); acct != "" && acct != provider.CodexSignedInAccount() {
-		return "openai", ""
+		return provider.Provider{}, false
 	}
 	p, err := provider.Find("codex")
 	if err != nil || p.Account == nil || p.Account.User == "" {
-		return "openai", ""
+		return provider.Provider{}, false
 	}
-	return p.ID, p.Account.User
+	return *p, true
 }
 
 // unreadableItem is the item OpenAI's refusal names: sealed content it
@@ -1613,15 +1683,23 @@ func codexSaidNothing(rest, model, who string, res *http.Response, msg []byte) (
 	said := " and said nothing more"
 	if page {
 		said = " with a web page in place of an API error"
-		if m := pageTitle.FindSubmatch(msg); m != nil {
-			if title := strings.Join(strings.Fields(html.UnescapeString(string(m[1]))), " "); title != "" {
-				said += " (“" + clipRunes(title, 120) + "”)"
-			}
+		if title := provider.PageTitle(msg); title != "" {
+			said += " (“" + title + "”)"
 		}
 	}
 	return who + " answered " + what + " for " + model + " " + res.Status + said +
 		". " + model + " is one of Codex's own models, which goes to OpenAI, not to a provider in magpie; try again later, " +
 		"or pick one of magpie's models in Codex (provider/model, or set it in magpie's Agents view)", true
+}
+
+// routeOf is the id of the route a Codex relay opened, so the call it
+// records is the one the Routing page's "Request and response" opens (#2481);
+// 0 for a compaction, which opens none.
+func routeOf(tr *Route) int64 {
+	if tr == nil {
+		return 0
+	}
+	return tr.ID
 }
 
 // apiKey reports whether Codex signed in with an API key rather than a
@@ -1739,40 +1817,162 @@ func copyHeaders(dst, src http.Header) {
 // them, held magpie's answer past that (#539). A var so tests can say.
 var codexModelsWait = 3 * time.Second
 
+// codexListFor is how long the backend's list is handed out again without
+// asking it; past that it is still handed out at once while it is asked
+// again (#3734). A var so tests can say.
+var codexListFor = time.Minute
+
+// codexListFetch bounds one ask of the backend, which goes on past
+// codexModelsWait for the callers after.
+const codexListFetch = 30 * time.Second
+
+// codexLists is the backend's last list for each sign-in. Twenty Codex
+// app-servers asked it at once, each on its own and each given up at
+// codexModelsWait, so a backend slower than that never got a list through
+// and Codex fell back to its own metadata, without tool_search for
+// magpie's groups, and inlined every Apps tool: ~500K tokens a turn
+// (#3734, 1,906 timeouts in a day).
+var codexLists = struct {
+	sync.Mutex
+	at map[string]*codexListed
+	// asking is the asks going, for tests to wait on
+	asking sync.WaitGroup
+}{at: map[string]*codexListed{}}
+
+type codexListed struct {
+	body []byte // the list as the backend said it, nil for none yet
+	etag string
+	got  time.Time
+	// deny is a 401 or 403 the last ask got, Codex's to see
+	deny     *http.Response
+	denyBody []byte
+	// asked is closed when the ask going ends; nil when none is
+	asked chan struct{}
+}
+
+// codexListKey is whose list it is: the backend's, the account's (a
+// token renewed is the same account), the version Codex says.
+func codexListKey(r *http.Request) string {
+	who := r.Header.Get("chatgpt-account-id")
+	if who == "" {
+		who = r.Header.Get("Authorization")
+	}
+	return provider.CodexBase + "\x00" + who + "\x00" + r.URL.RawQuery
+}
+
+// codexBackendList is the backend's model list for r's sign-in: the last
+// one asked when it is fresh, or at once while it is asked again; else
+// what an ask brings within codexModelsWait. One ask at a time for each
+// sign-in, whoever is waiting on it. body is nil when there is none;
+// deny, when the backend refused the sign-in.
+func (s *Server) codexBackendList(r *http.Request) (body []byte, etag string, deny *http.Response, denyBody []byte) {
+	key := codexListKey(r)
+	codexLists.Lock()
+	e := codexLists.at[key]
+	if e == nil {
+		e = &codexListed{}
+		codexLists.at[key] = e
+	}
+	if e.body != nil && time.Since(e.got) < codexListFor {
+		defer codexLists.Unlock()
+		return e.body, e.etag, nil, nil
+	}
+	if e.asked == nil {
+		// a refusal an ask before had is no answer for this one
+		e.asked, e.deny, e.denyBody = make(chan struct{}), nil, nil
+		codexLists.asking.Add(1)
+		go s.askCodexList(r.Context(), r.Header.Clone(), r.URL.RawQuery, e, e.asked)
+	}
+	asked, stale := e.asked, e.body != nil
+	codexLists.Unlock()
+	if !stale {
+		t := time.NewTimer(codexModelsWait)
+		select {
+		case <-asked:
+		case <-t.C:
+		case <-r.Context().Done():
+		}
+		t.Stop()
+	}
+	codexLists.Lock()
+	defer codexLists.Unlock()
+	return e.body, e.etag, e.deny, e.denyBody
+}
+
+// askCodexList asks the backend for its list into e, past the request
+// that started it, and closes done.
+func (s *Server) askCodexList(rctx context.Context, h http.Header, query string, e *codexListed, done chan struct{}) {
+	defer codexLists.asking.Done()
+	var body, denyBody []byte
+	var etag string
+	var deny *http.Response
+	defer func() {
+		codexLists.Lock()
+		if body != nil {
+			e.body, e.etag, e.got, e.deny, e.denyBody = body, etag, time.Now(), nil, nil
+		} else if deny != nil {
+			// a sign-in to renew: the next caller waits on the backend
+			// again and sees it, nothing stale handed out meanwhile
+			e.body, e.deny, e.denyBody = nil, deny, denyBody
+		}
+		e.asked = nil
+		codexLists.Unlock()
+		close(done)
+	}()
+	u := provider.CodexBase + "/models"
+	if query != "" {
+		u += "?" + query
+	}
+	ctx, cancel := context.WithTimeout(provider.ViaSignedIn(context.WithoutCancel(rctx), "codex"), codexListFetch)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return
+	}
+	copyHeaders(req.Header, h)
+	// the whole list, shared by every caller, whatever one of them had
+	for _, k := range []string{"Accept-Encoding", "If-None-Match", "If-Modified-Since"} {
+		req.Header.Del(k)
+	}
+	res, err := s.client.Do(req)
+	if err != nil {
+		return
+	}
+	b, _ := io.ReadAll(io.LimitReader(res.Body, 16<<20))
+	res.Body.Close()
+	var list struct {
+		Models []any `json:"models"`
+	}
+	if res.StatusCode < 300 && json.Unmarshal(b, &list) == nil && list.Models != nil {
+		body, etag = b, res.Header.Get("ETag")
+		// the versions as the backend says them, before any is stamped
+		// (see codexcat.V1)
+		codexcat.Remember(list.Models)
+	} else if res.StatusCode == 401 || res.StatusCode == 403 {
+		deny, denyBody = &http.Response{StatusCode: res.StatusCode, Header: res.Header}, b
+	}
+}
+
 // codexModels is the ChatGPT backend's model list for this sign-in, with
 // magpie's models after it. Should the backend not answer, or not in
 // time, Codex's last list of its own stands in.
 func (s *Server) codexModels(w http.ResponseWriter, r *http.Request) {
 	var own []any
-	etag := ""
-	u := provider.CodexBase + "/models"
-	if r.URL.RawQuery != "" {
-		u += "?" + r.URL.RawQuery
+	body, etag, deny, denyBody := s.codexBackendList(r)
+	if deny != nil {
+		// a sign-in to renew is Codex's to see
+		w.Header().Set("Content-Type", deny.Header.Get("Content-Type"))
+		w.WriteHeader(deny.StatusCode)
+		w.Write(denyBody)
+		return
 	}
-	ctx, cancel := context.WithTimeout(provider.ViaSignedIn(r.Context(), "codex"), codexModelsWait)
-	defer cancel()
-	if req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil); err == nil {
-		copyHeaders(req.Header, r.Header)
-		req.Header.Del("Accept-Encoding")
-		if res, err := s.client.Do(req); err == nil {
-			var list struct {
-				Models []any `json:"models"`
-			}
-			b, _ := io.ReadAll(io.LimitReader(res.Body, 16<<20))
-			res.Body.Close()
-			if res.StatusCode < 300 && json.Unmarshal(b, &list) == nil {
-				own, etag = list.Models, res.Header.Get("ETag")
-				// the versions as the backend says them, before any is
-				// stamped below (see codexcat.V1)
-				codexcat.Remember(own)
-			} else if res.StatusCode == 401 || res.StatusCode == 403 {
-				// a sign-in to renew is Codex's to see
-				w.Header().Set("Content-Type", res.Header.Get("Content-Type"))
-				w.WriteHeader(res.StatusCode)
-				w.Write(b)
-				return
-			}
+	if body != nil {
+		// each caller's own copy: what follows writes into the entries
+		var list struct {
+			Models []any `json:"models"`
 		}
+		json.Unmarshal(body, &list)
+		own = list.Models
 	}
 	// what follows reads the providers seven times over (the catalog, the
 	// codex provider's picks and windows, the list's tag): held, they are
@@ -1785,6 +1985,18 @@ func (s *Server) codexModels(w http.ResponseWriter, r *http.Request) {
 			own = append(own, e)
 		}
 	}
+	all := codexMerged(own, cached)
+	// the list is the backend's and magpie's, and so is its ETag
+	w.Header().Set("ETag", codexcat.WithTag(etag, codexListTag()))
+	writeJSON(w, 200, map[string]any{"models": all})
+}
+
+// codexMerged is the list magpie hands a Codex beside its ChatGPT sign-in:
+// own, the backend's entries (cached when they are Codex's last list, not
+// the backend's answer), as the user narrowed and set them on the codex
+// provider, with magpie's models after them. The entries are written into.
+func codexMerged(own []any, cached bool) []any {
+	defer provider.Hold()()
 	// the windows the user set on the codex provider, as /v1/models says
 	// them (#674); a cached entry, which keeps what magpie handed Codex
 	// last, takes the account's own list's back when none is set
@@ -1833,22 +2045,6 @@ func (s *Server) codexModels(w http.ResponseWriter, r *http.Request) {
 		}
 		own = kept
 	}
-	// and the ones kept for routing groups, every one when the codex
-	// provider serves only through them (#1602): a hidden one stays, as it
-	// does through the picks. A Codex here for account failover alone is
-	// handed no groups, so it keeps its own.
-	if all, off := provider.CodexNativeUnlisted(); (all || len(off) > 0) && !codexOwnOnly() {
-		kept := own[:0]
-		for _, m := range own {
-			o, _ := m.(map[string]any)
-			slug, _ := o["slug"].(string)
-			if v, _ := o["visibility"].(string); v != "hide" && (all || off[slug]) {
-				continue
-			}
-			kept = append(kept, m)
-		}
-		own = kept
-	}
 	// and the ones the user disabled (#1867), which are refused (codexNativeOff)
 	if len(provider.DisabledModels()) > 0 {
 		kept := own[:0]
@@ -1885,13 +2081,24 @@ func (s *Server) codexModels(w http.ResponseWriter, r *http.Request) {
 	if !codexOwnOnly() {
 		ms = provider.CodexListed()
 	}
-	// the list is the backend's and magpie's, and so is its ETag
-	w.Header().Set("ETag", codexcat.WithTag(etag, codexListTag()))
+	// Codex's own, as the user left them in its list
+	mine := make(map[string]bool, len(own))
+	for _, m := range own {
+		if o, ok := m.(map[string]any); ok {
+			if slug, _ := o["slug"].(string); slug != "" {
+				mine[slug] = true
+			}
+		}
+	}
 	all := append(own, codexcat.Entries(ms, len(own)+100)...)
 	if at, ok := provider.CodexOrder(); ok {
 		codexcat.Order(all, at)
 	}
-	writeJSON(w, 200, map[string]any{"models": all})
+	// the Codex app and its VS Code extension read the first 100 alone:
+	// hidden ones go last, and Codex's own and the ones the user uses are
+	// among the 100, wherever the user's order put them (maiya on Discord)
+	codexcat.FitOwn(all, usage.CodexUsed(), func(slug string) bool { return mine[slug] })
+	return all
 }
 
 // modelsEtag is the X-Models-Etag of a backend reply as Codex should read
@@ -1916,7 +2123,12 @@ func codexListTag() string {
 	if codexOwnOnly() {
 		return provider.CodexOwnListTag()
 	}
-	return provider.CodexListTag()
+	// with the models Codex used, which codexcat.Fit brings to the top
+	tag := provider.CodexListTag()
+	if used := usage.CodexUsed(); len(used) > 0 {
+		tag += "." + codexcat.UsedTag(used)
+	}
+	return tag
 }
 
 // codexInput restores summaries magpie made. For a magpie model, it also
@@ -1977,7 +2189,10 @@ func codexInputAs(body []byte, magpieModel, native bool) (_ []byte, compact bool
 				// Nor reasoning with nothing sealed in it — another vendor's,
 				// only an id (rs_…): OpenAI, which keeps nothing (store is
 				// false), looks the id up and answers 404 "Item … not found".
-				if enc, _ := it["encrypted_content"].(string); enc == "" {
+				// Nor Claude's block magpie carried in one (claudeseal),
+				// which OpenAI would refuse as invalid_encrypted_content:
+				// before magpie carried it, the item had nothing sealed
+				if enc, _ := it["encrypted_content"].(string); enc == "" || claudeseal.Is(enc) {
 					changed = true
 					continue
 				}
@@ -2054,7 +2269,7 @@ func codexInputItemChanges(it []byte, magpieModel, native bool) bool {
 			}
 		}
 		enc, _ := stringBytes(memberOrNil(it, "encrypted_content"))
-		return len(enc) == 0
+		return len(enc) == 0 || hasPrefix(enc, claudeseal.Mark)
 	}
 	return false
 }
@@ -2541,17 +2756,36 @@ func boundCallIDs(body []byte) []byte {
 // openaiOnly are the parts of a Responses request Codex sends only to a
 // provider named "OpenAI": its built-in one (signed in, through
 // openai_base_url), or CC Switch's table so named for remote compaction.
-// Under any other name Codex leaves them out itself (client.rs, !is_openai).
+// Under any other name Codex leaves them out itself (client.rs, !is_openai):
+// output token replay's include and the sealed output it carries back on a
+// message or call (encrypted_content on any item but reasoning and a
+// compaction).
 var openaiOnly = [][]byte{[]byte(`"internal_chat_message_metadata_passthrough"`),
-	[]byte(`"encrypted_function_args"`), []byte(`"stream_options"`), []byte(`"configuration_update"`)}
+	[]byte(`"encrypted_function_args"`), []byte(`"stream_options"`), []byte(`"configuration_update"`),
+	[]byte(`"` + outputReplay + `"`), []byte(`"encrypted_content"`)}
+
+// outputReplay is what Codex asks OpenAI for with output token replay on
+// (client.rs): each message's and call's own sealed copy. Copilot's
+// /responses refuses it ("Invalid value: 'output.encrypted_content'",
+// echo_ts), as an API that isn't OpenAI's may.
+const outputReplay = "output.encrypted_content"
+
+// keepsSeal are the input items whose encrypted_content Codex sends any
+// provider (ResponseItem::clear_encrypted_content leaves only these): a
+// reasoning item's, which foreignReasoning takes out once refused, and a
+// compaction's.
+var keepsSeal = map[string]bool{`"reasoning"`: true, `"compaction"`: true, `"compaction_summary"`: true, `"context_compaction"`: true}
 
 // forVendor is a Responses request as Codex sends it to a provider not
 // OpenAI's: without its messages' internal metadata, a call's
-// encrypted_function_args, stream_options' reasoning_summary_delivery and
-// configuration_update items.
+// encrypted_function_args, stream_options' reasoning_summary_delivery,
+// configuration_update items, output.encrypted_content in its include,
+// and the sealed output (encrypted_content) on a message or call that an
+// OpenAI model wrote earlier in the conversation.
 // A relay that checks it is Codex's turned the lot away ("invalid codex
-// request", #292). OpenAI's API and the ChatGPT backend get it as it came;
-// so does anything else, byte for byte, when none of them is in it.
+// request", #292), and Copilot the include (echo_ts). OpenAI's API and the
+// ChatGPT backend get it as it came; so does anything else, byte for byte,
+// when none of them is in it.
 func forVendor(p provider.Provider, body []byte) []byte {
 	if p.Account != nil && p.Account.Agent == "codex" || strings.HasSuffix(p.Host(), "openai.com") {
 		return body
@@ -2575,6 +2809,15 @@ func forVendor(p provider.Provider, body []byte) []byte {
 			}
 		}
 	}
+	var include []string
+	if decodeJSON(q["include"], &include) == nil && slices.Contains(include, outputReplay) {
+		changed = true
+		if include = slices.DeleteFunc(include, func(v string) bool { return v == outputReplay }); len(include) == 0 {
+			delete(q, "include")
+		} else {
+			q["include"], _ = marshalPlain(include)
+		}
+	}
 	if items, err := rawArray(q["input"]); err == nil {
 		out := items[:0]
 		for _, raw := range items {
@@ -2589,10 +2832,15 @@ func forVendor(p provider.Provider, body []byte) []byte {
 			}
 			_, meta := it["internal_chat_message_metadata_passthrough"]
 			_, sealed := it["encrypted_function_args"]
-			if meta || sealed {
+			_, replay := it["encrypted_content"]
+			replay = replay && !keepsSeal[string(it["type"])]
+			if meta || sealed || replay {
 				changed = true
 				delete(it, "internal_chat_message_metadata_passthrough")
 				delete(it, "encrypted_function_args")
+				if replay {
+					delete(it, "encrypted_content")
+				}
 				raw, _ = marshalPlain(it)
 			}
 			out = append(out, raw)
@@ -2652,16 +2900,23 @@ func forVendorChanges(body []byte) bool {
 			return true
 		}
 	}
+	if inc, found, ok := topMember(body, "include"); !ok {
+		return false
+	} else if found && bytes.Contains(inc, []byte(`"`+outputReplay+`"`)) {
+		return true
+	}
 	return anyInputItem(body, func(it []byte) bool {
 		if len(it) == 0 || it[0] != '{' {
 			return false
 		}
-		if string(memberOrNil(it, "type")) == `"configuration_update"` {
+		typ := string(memberOrNil(it, "type"))
+		if typ == `"configuration_update"` {
 			return true
 		}
 		_, meta := memberOf(it, "internal_chat_message_metadata_passthrough")
 		_, sealed := memberOf(it, "encrypted_function_args")
-		return meta || sealed
+		_, replay := memberOf(it, "encrypted_content")
+		return meta || sealed || replay && !keepsSeal[typ]
 	})
 }
 
@@ -2772,18 +3027,42 @@ func (s *Server) codexCompact(w http.ResponseWriter, r *http.Request, body []byt
 		writeError(w, provider.Responses, 502, msg)
 		return
 	}
+	if local == "" && strings.TrimSpace(res.summary()) == "" && calledTool(res.Output) {
+		// a model deep in a conversation of tool calls goes on calling
+		// them, offered none or not: DeepSeek through a group answered the
+		// summary request with reasoning and an exec_command call, 3 times
+		// in a row (Lucy on Discord, auto-deepseek-v4-1-flash). Whatever
+		// let it — an upstream that reads calls out of its text with no
+		// tools offered, a history tool declared as a stub that it calls
+		// anyway — the history's calls are what it follows. Asked again
+		// with the conversation as text, there's no exchange of calls to
+		// go on with; when it still writes no summary, magpie compacts
+		// without a model, so Codex goes on rather than failing over and
+		// over
+		who, _ := compactFailure(body, rec)
+		called := answeredWith(res.Output)
+		log.Printf("codex compaction: %s wrote no summary%s; asking again with the conversation as text", who, called)
+		prec, pres, perr := ask(plainCompact(body))
+		switch {
+		case perr == nil && prec.status < 400 && pres.Status != "incomplete" && strings.TrimSpace(pres.summary()) != "":
+			rec, res = prec, pres
+		default:
+			again := "no summary" + answeredWith(pres.Output)
+			if perr != nil {
+				again = perr.Error()
+			} else if prec.status >= 400 {
+				_, msg := compactFailure(body, prec)
+				again = fmt.Sprintf("%d: %s", prec.status, msg)
+			}
+			log.Printf("codex compaction: %s asked again as text: %s; compacting locally", who, again)
+			local = localSummary(body, who+" wrote no summary"+called+", asked again as text: "+again)
+		}
+	}
 	var sum strings.Builder
 	if local != "" {
 		sum.WriteString(local)
 	} else {
-		for _, o := range res.Output {
-			if o.Type != "message" {
-				continue
-			}
-			for _, c := range o.Content {
-				sum.WriteString(c.Text)
-			}
-		}
+		sum.WriteString(res.summary())
 	}
 	if strings.TrimSpace(sum.String()) == "" {
 		why := "the model wrote no summary" + answeredWith(res.Output)
@@ -3018,6 +3297,26 @@ type compactResult struct {
 	Error             *struct {
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+// summary is the text of a summary reply's messages.
+func (res compactResult) summary() string {
+	var b strings.Builder
+	for _, o := range res.Output {
+		if o.Type != "message" {
+			continue
+		}
+		for _, c := range o.Content {
+			b.WriteString(c.Text)
+		}
+	}
+	return b.String()
+}
+
+// calledTool is whether a summary reply called a tool: a function_call,
+// custom_tool_call, tool_search_call, a hosted tool's call.
+func calledTool(out []compactOutput) bool {
+	return slices.ContainsFunc(out, func(o compactOutput) bool { return strings.HasSuffix(o.Type, "_call") })
 }
 
 // answeredWith says what a summary reply without a summary held instead

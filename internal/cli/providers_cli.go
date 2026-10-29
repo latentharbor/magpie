@@ -42,9 +42,18 @@ const providerUsage = `usage:
                                           compaction=native asks the provider Codex's own compaction and hands
                                           Codex its sealed item as it came (a Responses API, a ChatGPT account,
                                           Copilot), compaction=magpie, the default, has magpie summarise
+                                          routing=smart|order|rotate|usage|pace|weight|free|fast spreads requests
+                                          over its keys or accounts (fast: the one that answered fastest lately first);
+                                          prompt=as-written sends Antigravity the system prompt exactly as written;
+                                          prompt=default, the default, breaks up the lines Google answers with a
+                                          false 429 (Codex's, Claude Code's, Hermes' old persona) with a zero-width space
                                           additional-tools=on sends a tool Claude Code's tool search loads to its
                                           Responses API where it was loaded (an additional_tools item, which
                                           keeps the cache); additional-tools=default puts it with the other tools
+                                          patience=2m keeps a request to it alone (not through a group) that long
+                                          while it is busy or briefly rate limited, asking again after a pause
+                                          (at most 4m); patience=off hands the agent the error at once;
+                                          patience=default, 1m
   magpie provider key <id> <key>          change the API key
   magpie provider icon <id> <file|name>   give a custom provider a picture (PNG, JPEG, SVG…) or a built-in icon
   magpie provider fallback <id> <provider/model>…   where requests go when it's out of quota or down (none clears)
@@ -67,6 +76,10 @@ const providerUsage = `usage:
   magpie provider account-cap <id> <account> --window <name> [percent|none|default]
                                           a share for one window alone (e.g. "5 hours" 50): none is no cap on it,
                                           default has it follow the account's cap
+  magpie provider pool <id> [--accounts a,b,…] [--cap percent|off] [--stop on|off] [--careful on|off]
+                                          a subscription's accounts as one pool: which are in use and in what order,
+                                          each one's cap, --stop: answer 429 at the caps rather than go on to the
+                                          fallbacks, --careful: read usage again near a cap, holding what can't be read
   magpie provider account-concurrency <id> [account|key [n|off|default]]
                                           how many requests one account or key has out at once, over every model,
                                           routing group and agent: its own, off for none, default for the provider's
@@ -498,7 +511,7 @@ func providerCmd(args []string) error {
 		// where requests go when this provider is out of quota, rate
 		// limited or down; "none" clears the list
 		if len(rest) < 1 {
-			return fmt.Errorf("magpie provider fallback <id> [provider/model… | none]")
+			return fmt.Errorf("magpie provider fallback <id> [provider/model… | group/<id>… | none]")
 		}
 		p, err := provider.Find(rest[0])
 		if err != nil {
@@ -508,8 +521,10 @@ func providerCmd(args []string) error {
 			p.Fallback = nil
 			if !(len(rest) == 2 && rest[1] == "none") {
 				for _, id := range rest[1:] {
+					// a routing group's id ("group/<id>") resolves too: the
+					// gateway sends the request through the group
 					if _, _, ok := provider.Resolve(id); !ok {
-						return fmt.Errorf("magpie knows no model %q (magpie models lists them)", id)
+						return fmt.Errorf("magpie knows no model or group %q (magpie models lists them)", id)
 					}
 					p.Fallback = append(p.Fallback, id)
 				}
@@ -593,6 +608,8 @@ func providerCmd(args []string) error {
 		return accountModelsCmd(rest)
 	case "account-cap", "account-caps":
 		return accountCapCmd(rest)
+	case "pool":
+		return poolCmd(rest)
 	case "account-concurrency", "account-limit":
 		return accountConcurrencyCmd(rest)
 	case "queue":
@@ -1088,6 +1105,19 @@ func applyPairs(p *provider.Provider, pairs []string) error {
 			default:
 				return fmt.Errorf("codex=as-sent|default, not %q", v)
 			}
+		case "prompt":
+			// as-written: Antigravity's subscription is sent the system
+			// prompt exactly as the agent wrote it, the lines Google turns
+			// away with a 429 included; default breaks those lines up
+			// with a zero-width space (Provider.PromptAsWritten)
+			switch strings.ToLower(v) {
+			case "as-written", "as-sent", "on", "yes":
+				p.PromptAsWritten = true
+			case "default", "no", "off":
+				p.PromptAsWritten = false
+			default:
+				return fmt.Errorf("prompt=as-written|default, not %q", v)
+			}
 		case "additional-tools":
 			// on: a tool an Anthropic client's tool search loads goes to
 			// the provider's Responses API in an additional_tools item
@@ -1100,6 +1130,14 @@ func applyPairs(p *provider.Provider, pairs []string) error {
 			default:
 				return fmt.Errorf("additional-tools=on|default, not %q", v)
 			}
+		case "patience":
+			// how long a request to the provider alone is kept while it
+			// is busy, as a group's Patience (zoecats on Discord)
+			n, err := patienceArg(v)
+			if err != nil {
+				return err
+			}
+			p.Patience = n
 		case "user-agent", "ua":
 			// agent: a request goes with the User-Agent the agent that
 			// sent it gave, for a coding plan that serves only agents it
@@ -1152,6 +1190,18 @@ func applyPairs(p *provider.Provider, pairs []string) error {
 			}
 		case "family", "tag":
 			p.Family = strings.TrimSpace(v)
+		case "routing", "strategy":
+			// how requests spread over its keys or accounts, as the
+			// provider editor's Routing says: a group's names, but a
+			// provider has no member to pick by hand
+			r, err := parseRouting(v)
+			if err != nil {
+				return err
+			}
+			if r == provider.Manual {
+				return fmt.Errorf("routing=manual is a group's: a provider's keys or accounts are routed smart, order, rotate, usage, pace, weight, free or fast")
+			}
+			p.Routing = r
 		case "icon":
 			// a picture on disk is kept by magpie; anything else is one of
 			// the built-in icons' names
@@ -2013,4 +2063,31 @@ func autoIncludeCmd(rest []string) error {
 	}
 	fmt.Printf("%s · a newly listed model is exposed when one of these matches its id: %s\n", p.Name, strings.Join(p.AutoInclude, " "))
 	return nil
+}
+
+// patienceArg reads patience=: off, default, or a time up to
+// provider.PatienceLongest seconds, as 90, 90s or 2m.
+func patienceArg(v string) (int, error) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	switch v {
+	case "off", "no", "none", "0":
+		return provider.PatienceOff, nil
+	case "default", "":
+		return 0, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		n, nerr := strconv.Atoi(v)
+		if nerr != nil {
+			return 0, fmt.Errorf("patience=off|default|<time, e.g. 2m>, not %q", v)
+		}
+		d = time.Duration(n) * time.Second
+	}
+	if d == 0 {
+		return provider.PatienceOff, nil
+	}
+	if d < 0 || d > provider.PatienceLongest*time.Second {
+		return 0, fmt.Errorf("patience is at most %s, not %q", provider.PatienceLongest*time.Second, v)
+	}
+	return int((d + time.Second - 1) / time.Second), nil
 }

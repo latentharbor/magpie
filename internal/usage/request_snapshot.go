@@ -44,7 +44,7 @@ func (c *rowChunk) pack() *rowChunk {
 	next.Count = len(c.Rows) // what rowsIn says of it
 	next.Rows, next.Strings, next.Shapes, next.dict, next.shapeIDs = nil, nil, nil, nil, nil
 	next.Archive, next.Locations = encoded, locations
-	next.Bytes = int64(len(next.Archive)+len(locations)*8) + codexActorBytes(next.codexActors)
+	next.Bytes = int64(len(next.Archive)+len(locations)*8) + next.codexActors.bytes()
 	return &next
 }
 
@@ -96,6 +96,7 @@ func (c *rowChunk) encode(keep func([]byte) bool) ([]byte, []*time.Location) {
 		put(uint64(p.Status))
 		put(uint64(p.Flags))
 		put(uint64(p.Tries))
+		put(uint64(p.Masking))
 		if p.Flags&rowCredits != 0 {
 			put(math.Float64bits(p.Credits))
 		}
@@ -201,7 +202,7 @@ func (c *rowChunk) unpackReusing(dst *rowChunk, into []packedRow, strs []string,
 	} else {
 		next.Strings = make([]string, int(count))
 	}
-	next.Bytes = int64(len(next.Rows))*int64(unsafe.Sizeof(packedRow{})) + codexActorBytes(next.codexActors)
+	next.Bytes = int64(len(next.Rows))*int64(unsafe.Sizeof(packedRow{})) + next.codexActors.bytes()
 	// The strings are copied out in one piece: one allocation a block, not
 	// one a string. The section is walked once to find its end, and its
 	// copy again to cut the strings from it.
@@ -285,6 +286,7 @@ func (c *rowChunk) unpackReusing(dst *rowChunk, into []packedRow, strs []string,
 		p.FirstReasoning = int64(take())
 		p.Cost, p.Status, p.Flags = math.Float64frombits(take()), int32(take()), uint16(take())
 		p.Tries = int32(take())
+		p.Masking = int32(take())
 		p.Credits = 0
 		if p.Flags&rowCredits != 0 {
 			p.Credits = math.Float64frombits(take())

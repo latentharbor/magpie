@@ -57,9 +57,12 @@ func planQuotaSourceOf(p Provider) (planQuotaSource, bool) {
 			// preset too, and is told the plan's 5-hour and weekly windows;
 			// a pay-as-you-go key has none, and no card
 			return planQuotaSource{"https://api.commandcode.ai/alpha/billing/credits", true, readCommandCodePlan, false}, true
-		case "api.minimaxi.com", "api.minimax.io":
+		case "api.minimaxi.com", "api.minimax.cn", "api.minimax.io":
 			// a Coding Plan key (sk-cp-…) is told its windows; a
-			// pay-as-you-go key isn't, and gets no card (#387)
+			// pay-as-you-go key isn't, and gets no card (#387).
+			// api.minimax.cn is MiniMax China's host since mmx-cli
+			// 8746d48f (2026-09-28), beside api.minimaxi.com, and
+			// answers the same query
 			return planQuotaSource{"https://" + hostOf(base) + "/v1/token_plan/remains", true, readMiniMaxPlan, false}, true
 		case "ollama.com":
 			// Ollama Cloud's included allowance (#1888); a key with none
@@ -402,10 +405,22 @@ func KimiCodeSearch(p Provider) string {
 //
 // usage is the week's allowance, each of limits a shorter window; the
 // numbers come as strings or numbers, used or what remains.
+//
+// A plan on Kimi's monthly allowance (lidazi2016 on Discord) is also, or
+// only, told as shares in usages, as kimi-code reads them
+// (packages/oauth/src/managed-usage.ts, usage-format.ts):
+//
+//	"usages":{"limit_5h":{"used_ratio":0.4372,"reset_time":"…"},
+//	  "limit_7d":{…},"limit_month_total":{…},"limit_month_code":{…}}
+//
+// limit_month_total is the month's allowance; limit_month_code is the
+// share of it code has used, no allowance of its own, so it isn't shown.
+// A window told both ways is taken from usages, as kimi-code does.
 func readKimiCode(b []byte) (string, []QuotaWindow, error) {
 	type row map[string]any
 	var r struct {
-		Usage  row `json:"usage"`
+		Usage  row            `json:"usage"`
+		Usages map[string]row `json:"usages"`
 		Limits []struct {
 			Window row `json:"window"`
 			Detail row `json:"detail"`
@@ -480,6 +495,47 @@ func readKimiCode(b []byte) (string, []QuotaWindow, error) {
 	}
 	if w, ok := window(r.Usage, "7 days", 7*24*time.Hour); ok {
 		out = append(out, w)
+	}
+	shares := []QuotaWindow{}
+	for _, k := range []struct {
+		key, name string
+		span      time.Duration
+	}{{"limit_5h", "5 hours", 5 * time.Hour}, {"limit_7d", "7 days", 7 * 24 * time.Hour}, {"limit_month_total", "Month", 30 * 24 * time.Hour}} {
+		d := r.Usages[k.key]
+		ratio, ok := num(d["used_ratio"])
+		if d == nil || !ok || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
+			continue
+		}
+		w := QuotaWindow{Name: k.name, Span: k.span, Used: max(0, min(100, ratio*100))}
+		if s, _ := d["reset_time"].(string); s != "" {
+			if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+				w.ResetsAt = &t
+			}
+		}
+		shares = append(shares, w)
+	}
+	if len(shares) > 0 {
+		out = slices.DeleteFunc(out, func(w QuotaWindow) bool {
+			return slices.ContainsFunc(shares, func(s QuotaWindow) bool { return s.Span == w.Span })
+		})
+		out = append(out, shares...)
+		// shortest first, as the counted windows come; one of no known
+		// length last
+		span := func(w QuotaWindow) time.Duration {
+			if w.Span == 0 {
+				return math.MaxInt64
+			}
+			return w.Span
+		}
+		slices.SortStableFunc(out, func(a, b QuotaWindow) int {
+			switch sa, sb := span(a), span(b); {
+			case sa < sb:
+				return -1
+			case sa > sb:
+				return 1
+			}
+			return 0
+		})
 	}
 	if len(out) == 0 {
 		return "", nil, fmt.Errorf("no usage in the reply")
@@ -581,6 +637,9 @@ func vendorSaid(b []byte, status string) string {
 		Message string          `json:"message"`
 	}
 	if json.Unmarshal(b, &e) != nil {
+		if said, ok := Unsaid(b); ok {
+			return status + ": " + said
+		}
 		return status
 	}
 	msg := e.Message
