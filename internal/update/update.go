@@ -923,7 +923,7 @@ func download(ctx context.Context, a Asset, path string) error {
 	return err
 }
 
-func fetch(ctx context.Context, a Asset, path string) error {
+func fetchSigned(ctx context.Context, a Asset, path string) error {
 	// through a mirror when one is given (mirror.go): the hash checked
 	// below is still the feed's
 	u := mirrored(mirrorOf(ctx), a.URL)
@@ -1028,6 +1028,9 @@ func Network(err error) bool { return errors.As(err, new(*NetError)) }
 // the beginning. A try the network breaks off keeps what came, for the next
 // one; any other failure removes it.
 func fetch(ctx context.Context, a Asset, path string) error {
+	if a.signed {
+		return fetchSigned(ctx, a, path)
+	}
 	// through a mirror when one is given (mirror.go): the hash checked
 	// below is still the feed's
 	u := mirrored(mirrorOf(ctx), a.URL)
