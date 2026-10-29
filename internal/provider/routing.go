@@ -423,6 +423,32 @@ func nextFixedReset(at time.Time, span time.Duration, now time.Time) time.Time {
 	return at.Add((now.Sub(at)/span + 1) * span)
 }
 
+// Left is the smallest known wallet balance for this model.
+func (a Allowance) Left(model string) (left float64, unit string, ok bool) {
+	model = strings.ToLower(model)
+	for _, l := range a {
+		if l.Balance == nil || !l.applies(model) {
+			continue
+		}
+		if !ok || *l.Balance < left {
+			left, unit, ok = *l.Balance, l.Unit, true
+		}
+	}
+	return left, unit, ok
+}
+
+// Lapse is the earliest future expiry of credits for this model.
+func (a Allowance) Lapse(model string, now time.Time) time.Time {
+	model = strings.ToLower(model)
+	var t time.Time
+	for _, l := range a {
+		if l.applies(model) && l.RunsOut.After(now) && (t.IsZero() || l.RunsOut.Before(t)) {
+			t = l.RunsOut
+		}
+	}
+	return t
+}
+
 // Full is when an account used up for model can take it again: the last
 // reset of its windows that are full, zero when none is or it isn't known.
 func (a Allowance) Full(model string, share float64, now time.Time) time.Time {

@@ -1484,6 +1484,7 @@ func retryable(status int, body []byte) bool {
 	if claudeThreadErrorCode(status, body) != "" {
 		return false // the caller must replay full history, not another account
 	}
+	rawBody := body
 	// the words are matched decoded, too (#1669)
 	body = wordsOf(body)
 	switch {
@@ -1500,7 +1501,7 @@ func retryable(status int, body []byte) bool {
 		// the vendor's firewall blocked this address (Alibaba Cloud's 405
 		// in front of zcode.z.ai): another provider goes another way
 		return true
-	case status >= 400 && status < 500 && failure(status, raw) == failCredit:
+	case status >= 400 && status < 500 && failure(status, rawBody) == failCredit:
 		// out of credit, as failure reads it, whatever the status: another
 		// account may have a balance. SuperMagic's 400 "您的可用积分已不足…
 		// 通过「充值」通道补充积分" read as credit, but no word of
@@ -2655,7 +2656,7 @@ func (h *holdWriter) release() {
 				sw.begun = true
 				sw.event("error", claudeThreadErrorBody(h.status, provider.APIError(h.held.Bytes(), http.StatusText(h.status)), code))
 			} else {
-				streamError(h.w, h.alive.proto, h.status, provider.APIError(h.held.Bytes(), http.StatusText(h.status)))
+				streamError(h.w, h.alive.proto, h.alive.model, h.status, provider.APIError(h.held.Bytes(), http.StatusText(h.status)))
 			}
 		default:
 			// a reply given whole by a vendor that ignored stream:true,
