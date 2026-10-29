@@ -208,7 +208,11 @@ func cachedLoginReading(ctx context.Context, l Login) loginUsageEntry {
 			if parked || !savedRefresh(ctx, l.User) {
 				at := claudeTeamObservedAt(l.User)
 				q := SubscriptionQuota{Provider: "claude", Plan: l.Plan, Windows: ws, ReadAt: at, AsOf: at, ReadDeferred: true}
-				return loginUsageEntry{at: time.Now(), q: q, read: q, readAt: at}
+				observed := time.Time{}
+				if at != nil {
+				observed = *at
+				}
+				return loginUsageEntry{at: time.Now(), q: q, read: q, readAt: observed}
 			}
 		}
 	}
