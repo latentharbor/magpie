@@ -3,7 +3,7 @@ module github.com/yetone/magpie
 go 1.26.8
 
 require (
-	github.com/Calcium-Ion/moejs v0.1.0-alpha.4
+	github.com/MoeForge/moejs v0.1.0-alpha.11
 	github.com/andybalholm/brotli v1.0.6
 	github.com/charmbracelet/bubbles v0.21.1
 	github.com/charmbracelet/bubbletea v1.3.10
