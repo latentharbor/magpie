@@ -109,7 +109,7 @@ func loginUsageAt(ctx context.Context, agent string) (map[string]SubscriptionQuo
 	// nor of a provider switched off or removed (leftAlone)
 	alone := leftAlone(agent)
 	if settings.AccountDiscoveryOff() || alone && !(agent == "claude" && claudeTeamRoutingOn("")) {
-		return nil, time.Time{}
+		return nil, time.Time{}, nil
 	}
 	asked := time.Now()
 	states := map[string]readState{}
@@ -208,7 +208,7 @@ func cachedLoginReading(ctx context.Context, l Login) loginUsageEntry {
 			if parked || !savedRefresh(ctx, l.User) {
 				at := claudeTeamObservedAt(l.User)
 				q := SubscriptionQuota{Provider: "claude", Plan: l.Plan, Windows: ws, ReadAt: at, AsOf: at, ReadDeferred: true}
-				return loginUsageEntry{time.Now(), q, q}
+				return loginUsageEntry{at: time.Now(), q: q, read: q, readAt: at}
 			}
 		}
 	}
