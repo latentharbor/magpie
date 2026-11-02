@@ -73,7 +73,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15
+          # GitHub canceled macos-15 ARM before runner acquisition during
+          # this release; macos-26 is another official arm64 hosted image.
+          - runner: macos-26
             arch: arm64
           - runner: macos-15-intel
             arch: amd64
