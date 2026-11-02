@@ -1044,4 +1044,8 @@ var (
 	noticeClaudedesktopLogin = newNotice("Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings.")
 	noticeClaudedesktop1     = newNotice("Claude Desktop reads this at start-up — quit and reopen it to run on magpie (Code and Cowork, no Anthropic sign-in).")
 	noticeClaudedesktop2     = newNotice("Claude Desktop reads this at start-up — quit and reopen it to sign in with Anthropic again.")
+	// Third-party mode uses Claude-3p, separate from the official login's
+	// Claude profile. Wiring changes visibility, not the saved conversations.
+	noticeClaudedesktop3 = newNotice("Chats and projects from your Anthropic sign-in stay in Desktop's own profile, not shown on magpie; nothing is deleted, and turning this off brings them back.")
+	noticeClaudedesktop4 = newNotice("Your chats and projects from before are back there.")
 )
