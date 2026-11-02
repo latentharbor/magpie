@@ -374,6 +374,9 @@ type Settings struct {
 	// real Claude Code, its billing line and identity line kept; off, as by
 	// default, the run is the shape every Claude Code run has.
 	ClaudeLeanPrompt bool `json:"claudeLeanPrompt,omitempty"`
+	// ClaudePrintMode makes the CLI transport use claude -p instead of
+	// interactive Claude Code. It does not change the direct HTTP transport.
+	ClaudePrintMode bool `json:"claudePrintMode,omitempty"`
 	// ClaudeTransport chooses how a Claude subscription answers a new
 	// request: cli (the default) runs Claude Code; http uses the experimental
 	// direct HTTP transport. A request keeps the choice it started with.

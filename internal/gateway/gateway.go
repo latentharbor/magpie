@@ -34,6 +34,7 @@ import (
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/claudeanchor"
 	"github.com/yetone/magpie/internal/claudelogin"
+	"github.com/yetone/magpie/internal/codexrelay"
 	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/gwbudget"
 	"github.com/yetone/magpie/internal/gwmw"
@@ -5197,9 +5198,10 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 			path += "?beta=true"
 		}
 	}
-	if p.IsOpenCode() && p.OpenCodeFree(gjson.GetBytes(body, "model").String()) {
-		// Zen's free tier answers at the inference API's URL alone (zenfree.go)
-		base = provider.OpenCodeFreeURL(base)
+	zenFree := p.IsOpenCode() && p.OpenCodeFree(gjson.GetBytes(body, "model").String())
+	if zenFree {
+		// Zen's free tier answers at OpenCode's inference API paths.
+		base = provider.OpenCodeFreeURL(base, to)
 	}
 	if mantleRoutes(p, to) {
 		// Bedrock Mantle serves each model under /v1 or /openai/v1

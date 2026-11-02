@@ -3,6 +3,9 @@ package gateway
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	"strings"
