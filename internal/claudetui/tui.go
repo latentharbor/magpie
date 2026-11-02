@@ -75,6 +75,7 @@ type shim struct {
 	screenMu sync.Mutex
 	screen   []byte
 	changed  chan struct{}
+	readDone chan struct{}
 
 	// rows ticks when a user message (or one queued mid-turn) reaches the
 	// transcript: a pasted message was sent
@@ -137,7 +138,7 @@ func Run(args []string) error {
 		return fmt.Errorf("Claude Code's interactive mode didn't run: %s", why)
 	}
 	args = interactiveArgs(pargs[len(wslArgs(wsl)):])
-	s := &shim{out: os.Stdout, changed: make(chan struct{}, 1), rowsCh: make(chan struct{}, 1), exited: make(chan struct{}), wsl: wsl, listed: mcpListed(args)}
+	s := &shim{out: os.Stdout, changed: make(chan struct{}, 1), readDone: make(chan struct{}), rowsCh: make(chan struct{}, 1), exited: make(chan struct{}), wsl: wsl, listed: mcpListed(args)}
 	resume := ""
 	for i, a := range args {
 		if a == "--resume" && i+1 < len(args) {
@@ -271,6 +272,7 @@ func childEnv(extra ...string) []string {
 // read keeps the tail of what Claude Code draws, and answers what it asks
 // of the terminal: where the cursor is, and what terminal it is.
 func (s *shim) read() {
+	defer close(s.readDone)
 	buf := make([]byte, 64<<10)
 	for {
 		n, err := s.pty.Read(buf)
@@ -497,6 +499,12 @@ func (s *shim) ready() error {
 		case <-s.changed:
 		case <-time.After(200 * time.Millisecond):
 		case <-s.exited:
+			// Wait briefly for the PTY reader to take the child's final
+			// screen. Process exit can be observed before those bytes arrive.
+			select {
+			case <-s.readDone:
+			case <-time.After(150 * time.Millisecond):
+			}
 			return fmt.Errorf("Claude Code ended before it showed its prompt (%v): %s", s.exit, s.lastScreen())
 		case <-deadline:
 			if prompted {
