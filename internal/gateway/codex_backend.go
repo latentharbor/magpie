@@ -3541,7 +3541,8 @@ var upstreamFailedWords = regexp.MustCompile(`(?i)upstream request failed`)
 // (plainCompact), and compacted without a model when that is refused
 // too.
 func summaryTooLarge(rec *recorder) bool {
-	return rec.status == http.StatusRequestEntityTooLarge || overflowed(rec.status, rec.body.Bytes())
+	return rec.status == http.StatusRequestEntityTooLarge || overflowed(rec.status, rec.body.Bytes()) ||
+		(rec.status == http.StatusBadGateway && byteCapRefusal(rec.status, rec.body.Bytes()))
 }
 
 // itemNotFound is a 400 refusing an item of the input by its id, as Azure
