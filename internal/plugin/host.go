@@ -63,6 +63,30 @@ type message struct {
 	Title    string `json:"title"`
 	Variant  string `json:"variant"`
 	Count    int    `json:"count"`
+	// Loads is a "load" event's models and how busy each is, a percent;
+	// -1 clears one (magpie.load in host.js)
+	Loads map[string]float64 `json:"loads"`
+	// Usage is a "usage" event's request, one the plugin sent its vendor
+	// on its own (magpie.usage in host.js)
+	Usage *OwnCall `json:"usage"`
+}
+
+// OwnCall is a request a plugin sent its vendor on its own, outside any
+// request magpie handed it, as it reported it (magpie.usage in host.js):
+// Devin's cache keepalive ping (plugins#592). Kind says what it was for
+// ("cache_keepalive"), Model is the model's id as magpie handed it to the
+// plugin, Input the prompt's tokens without the cache's, Status the
+// vendor's (0 for none) and Millis how long it took.
+type OwnCall struct {
+	Kind       string `json:"kind"`
+	Model      string `json:"model"`
+	Input      int    `json:"input"`
+	Output     int    `json:"output"`
+	CacheRead  int    `json:"cacheRead"`
+	CacheWrite int    `json:"cacheWrite"`
+	Status     int    `json:"status"`
+	Millis     int64  `json:"ms"`
+	Error      string `json:"error"`
 }
 
 type callState uint8
@@ -616,6 +640,20 @@ func OnSignIn(f func(provider, account, said string)) {
 	onSignInMu.Lock()
 	onSignIn = f
 	onSignInMu.Unlock()
+}
+
+var (
+	onUsageMu sync.Mutex
+	onUsage   func(provider, account string, u OwnCall)
+)
+
+// OnUsage registers f to be told of each request a plugin reported it
+// sent on its own (OwnCall): its provider id and the account key it was
+// sent for. f is told in the background.
+func OnUsage(f func(provider, account string, u OwnCall)) {
+	onUsageMu.Lock()
+	onUsage = f
+	onUsageMu.Unlock()
 }
 
 var (
@@ -1177,6 +1215,16 @@ func (h *host) dispatch(m message) {
 				// counted, so Told waits for it: it writes the
 				// account's lapse into logins.json (#1935)
 				tell(func() { f(m.Provider, m.Account, m.Said) })
+			}
+		case "load":
+			noteLoads(m.Provider, m.Loads, time.Now())
+		case "usage":
+			onUsageMu.Lock()
+			f := onUsage
+			onUsageMu.Unlock()
+			if f != nil && m.Usage != nil && m.Provider != "" {
+				u := *m.Usage
+				tell(func() { f(m.Provider, m.Account, u) })
 			}
 		case "toast":
 			log.Printf("plugin: %s %s", m.Title, m.Message)

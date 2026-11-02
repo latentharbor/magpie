@@ -2,6 +2,7 @@ package routes
 
 import (
 	"cmp"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -24,6 +25,16 @@ func tier(share float64) int {
 		return 1
 	}
 	return 0
+}
+
+// seatTier is tier of the seat's share used, but 0 for one set to spend
+// its credits before another account (Seat.First): a window it uses up
+// doesn't send its requests elsewhere (jojonas_xyz on X).
+func seatTier(s Seat) int {
+	if s.First {
+		return 0
+	}
+	return tier(s.Used)
 }
 
 // byLeft is how a pool's wallets go by what they have left (Seat.Left),
@@ -118,7 +129,7 @@ var Smart = Strategy{Order: func(_ string, seats []Seat) []int {
 	left := byLeft(seats, nil)
 	var fine, low, spent []int
 	for i, s := range seats {
-		switch tier(s.Used) {
+		switch seatTier(s) {
 		case 2:
 			spent = append(spent, i)
 		case 1:
@@ -179,6 +190,69 @@ func spentBefore(a, b Seat) bool {
 // Ordered tries a pool in its order: the first until it can't answer.
 var Ordered = Strategy{Exact: true, Order: func(_ string, seats []Seat) []int { return identity(len(seats)) }}
 
+var drains = struct {
+	sync.Mutex
+	m map[string]drainAt // pool → the seat it is on
+}{m: map[string]drainAt{}}
+
+// drainAt is the seat a pool routed Until used up is on: its Key, and past
+// once it was refused for its quota or credit (Drained), so the pool goes
+// on from it even if it renews before the pool's next request.
+type drainAt struct {
+	key  string
+	past bool
+}
+
+// Drained says key was refused for its quota or its credit: every pool
+// routed Until used up that is on it goes on to the next at its next
+// request, though key renews before then. The gateway's failover has
+// already tried the next for the request refused; without this, a pool
+// asked again only after key renewed went back to it.
+func Drained(key string) {
+	drains.Lock()
+	defer drains.Unlock()
+	for pool, at := range drains.m {
+		if at.key == key {
+			drains.m[pool] = drainAt{key, true}
+		}
+	}
+}
+
+// Drain stays on one seat until it is used up, then goes on to the next
+// in the listed order, and stays on that one (dzxx0496 on Discord: free
+// accounts one after another, the first not taking the requests back when
+// its quota renews). The one it is on goes first, the others after it in
+// their listed order from there, so failover goes on as Ordered's does.
+// Used up is a window of it used up (provider.SpentShareOf: 100, as In
+// order goes on at, #530), resting out of quota or credit (Seat.Spent),
+// or refused so since the pool's last request (Drained); a rate limit or
+// a failure only rests a seat, which the gateway tries last meanwhile,
+// and the pool stays on it. With every seat used up it stays where it
+// is. A seat it is on that leaves the pool (turned off, removed) leaves
+// it on the first not used up, in the listed order. Asking again with
+// nothing changed gives the same order, so a preview moves nothing.
+var Drain = Strategy{Exact: true, Order: func(pool string, seats []Seat) []int {
+	spent := func(s Seat) bool {
+		return s.Spent || !s.First && s.Known && s.Used >= provider.SpentShareOf(provider.Drain)
+	}
+	drains.Lock()
+	defer drains.Unlock()
+	on := drains.m[pool]
+	at := slices.IndexFunc(seats, func(s Seat) bool { return s.Key != "" && s.Key == on.key })
+	if at < 0 {
+		at = max(0, slices.IndexFunc(seats, func(s Seat) bool { return !spent(s) }))
+	} else if on.past || spent(seats[at]) {
+		for k := 1; k < len(seats); k++ {
+			if i := (at + k) % len(seats); !spent(seats[i]) {
+				at = i
+				break
+			}
+		}
+	}
+	drains.m[pool] = drainAt{key: seats[at].Key}
+	return append(identity(len(seats))[at:], identity(at)...)
+}}
+
 var turns = struct {
 	sync.Mutex
 	m map[string]int // pool → requests routed in turn
@@ -197,12 +271,54 @@ var Rotate = Strategy{Order: func(pool string, seats []Seat) []int {
 // share of its allowance used, as the vendor says; then, and for other
 // keys, by what magpie sent it lately; prepaid wallets, which have no
 // share, by what they have left first (Seat.Left). Of those all but used up, one that
-// goes on on its credits goes first (spentBefore).
+// goes on on its credits goes first (spentBefore). A seat that tells no
+// share — a pay-as-you-go key, a wallet, an account whose use wasn't read
+// — has Used read 0, and by that 0 alone it went first, burning paid
+// balance while subscription quota sat idle (#4535): it goes after those
+// whose share was told and has room, and before those running low or
+// spent, as Smart and Pace keep the unknown. One not known that tells
+// what it has left as it answers goes first, once, as in Smart and Pace.
 var LeastUsed = Strategy{ByUse: true, Order: func(_ string, seats []Seat) []int {
 	left := byLeft(seats, fewerTokens)
+	// shared: the seat's share of its allowance was told — a use past 0
+	// read from it, or a window it renews by. Without one, Used reads 0
+	// because it isn't known, not because there is room.
+	shared := func(s Seat) bool {
+		if !s.Known {
+			return false
+		}
+		if s.Used > 0 {
+			return true
+		}
+		for _, at := range s.Soon {
+			if !at.IsZero() {
+				return true
+			}
+		}
+		return false
+	}
+	// where the seat lands: a learning account first, once, as in Smart
+	// and Pace; then those with room whose share was told; then the
+	// shareless, kept for their cost before a share nearly gone; then
+	// those running low, then spent
+	place := func(s Seat) int {
+		switch t := tier(s.Used); {
+		case s.Learns:
+			return 0
+		case t == 0 && shared(s):
+			return 1
+		case t == 0:
+			return 2
+		default:
+			return t + 2
+		}
+	}
 	idx := identity(len(seats))
 	sort.SliceStable(idx, func(a, b int) bool {
 		sa, sb := seats[idx[a]], seats[idx[b]]
+		if pa, pb := place(sa), place(sb); pa != pb {
+			return pa < pb
+		}
 		if ta, tb := tier(sa.Used), tier(sb.Used); ta == 2 && tb == 2 && sa.Credits != sb.Credits {
 			return sa.Credits
 		}
@@ -247,7 +363,7 @@ var Pace = Strategy{ByUse: true, Order: func(_ string, seats []Seat) []int {
 	// band's top and part two alike behind it
 	var byPace []int
 	for i, s := range seats {
-		if tier(s.Used) == 0 && !s.Learns {
+		if seatTier(s) == 0 && !s.Learns {
 			byPace = append(byPace, i)
 		}
 	}
@@ -268,7 +384,7 @@ var Pace = Strategy{ByUse: true, Order: func(_ string, seats []Seat) []int {
 	idx := identity(len(seats))
 	sort.SliceStable(idx, func(a, b int) bool {
 		sa, sb := seats[idx[a]], seats[idx[b]]
-		if ta, tb := tier(sa.Used), tier(sb.Used); ta != tb {
+		if ta, tb := seatTier(sa), seatTier(sb); ta != tb {
 			return ta < tb
 		} else if ta == 2 && sa.Credits != sb.Credits {
 			return sa.Credits
@@ -342,6 +458,48 @@ var FreeFirst = Strategy{ByFree: true, Order: func(_ string, seats []Seat) []int
 	}
 	return append(free, paid...)
 }}
+
+// Cheapest sends a request where its model costs least at the request's
+// time: the priced seats by Cost (a million tokens in and a million out),
+// those that cost the same by CacheCost, then the seats whose price isn't
+// known, each kept in its listed order among those alike. A price that
+// changes with the hour (DeepSeek's off-peak half price, a provider's rate
+// window) is read at the request's time, so one model on several
+// providers goes to the one that bills least now: DeepSeek's own API off
+// its peak hours, another provider of the same model in them (liyuanzheng
+// and lam_em on Discord). Prices a hair apart (sameCost) count as the
+// same, so a rate's rounding doesn't reorder providers billing alike.
+//
+// Like FreeFirst it orders one tier only: a member's allowance, rests and
+// failover are as for every routing, and a provider or group in the group
+// routed its own way keeps it.
+var Cheapest = Strategy{ByPrice: true, Order: func(_ string, seats []Seat) []int {
+	idx := identity(len(seats))
+	sort.SliceStable(idx, func(a, b int) bool {
+		sa, sb := seats[idx[a]], seats[idx[b]]
+		if sa.Priced != sb.Priced {
+			return sa.Priced
+		}
+		if !sa.Priced {
+			return false
+		}
+		if !sameCost(sa.Cost, sb.Cost) {
+			return sa.Cost < sb.Cost
+		}
+		return !sameCost(sa.CacheCost, sb.CacheCost) && sa.CacheCost < sb.CacheCost
+	})
+	return idx
+}}
+
+// sameCost: two prices within a millionth of each other, or of a cent a
+// million tokens, are the same price.
+func sameCost(a, b float64) bool {
+	d := a - b
+	if d < 0 {
+		d = -d
+	}
+	return d <= 1e-6 || d <= 1e-6*max(a, b)
+}
 
 // Builtin are the routings besides Smart and their strategies, as
 // plugins/rotation registers them.

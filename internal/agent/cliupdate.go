@@ -27,6 +27,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/desktopdir"
 	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/netproxy"
@@ -670,7 +671,7 @@ var grokReleases = []string{"https://x.ai/cli/", "https://storage.googleapis.com
 // installer's GROK_CHANNEL or grok update --alpha, kept under [cli] in its
 // config.toml (stable when none).
 func grokLatest() string {
-	dir := os.Getenv("GROK_HOME")
+	dir := appdir.Getenv("GROK_HOME")
 	if dir == "" {
 		home, _ := os.UserHomeDir()
 		dir = filepath.Join(home, ".grok")
@@ -805,16 +806,39 @@ func (a *Agent) cliBin() (string, cliSpec) {
 		return "", spec
 	}
 	bin := binAt(a.Bin)
-	if bin == "" {
-		bin = proc.FindTool(a.Bin)
-	}
-	if bin == "" {
-		return "", spec
+	if !a.binsOwn(bin) {
+		// a launcher of another program's is not the CLI: where else a
+		// user's tools are installed, then (VS Code's copilot shim, #3269)
+		if at := proc.FindTool(a.Bin); a.binsOwn(at) {
+			bin = at
+		} else {
+			return "", spec
+		}
 	}
 	if abs, err := filepath.Abs(bin); err == nil {
 		bin = abs
 	}
 	return bin, spec
+}
+
+// BinPath is where the agent's own program is, as Detected finds its Bin,
+// else where cliBin looks for one with no Bin (Grok Build's); "" for an
+// agent in a WSL distro and one with no program here (a desktop app).
+func (a *Agent) BinPath() string {
+	if a.WSL != "" {
+		return ""
+	}
+	if a.Bin == "" {
+		bin, _ := a.cliBin()
+		return bin
+	}
+	if bin := binAt(a.Bin); a.binsOwn(bin) {
+		return bin
+	}
+	if bin := proc.FindTool(a.Bin); a.binsOwn(bin) {
+		return bin
+	}
+	return ""
 }
 
 // CLI is the agent's CLI: its version, the newest, and whether magpie can

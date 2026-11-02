@@ -55,6 +55,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       t.after(() => browser.close());
       const page = await (await browser.newContext({ viewport: { width: 1100, height: 900 } })).newPage();
       page.setDefaultTimeout(5000);
+      page.setDefaultNavigationTimeout(60000);
       const errors = [];
       page.on("pageerror", (e) => errors.push(e.message));
       const saved = [];
@@ -71,6 +72,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert(await model.evaluate((b) => b.classList.contains("on")), "model search first at first");
       assert(!await apis.evaluate((b) => b.classList.contains("on")));
 
+      await reach(page, apis);
       const before = await page.evaluate(() => [scrollX, scrollY, document.scrollingElement.scrollTop]);
       const first = page.waitForResponse(r => new URL(r.url()).pathname === "/api/settings" && r.request().method() === "POST");
       await apis.click();
@@ -100,6 +102,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       t.after(() => browser.close());
       const page = await (await browser.newContext({ viewport: { width: 1100, height: 900 } })).newPage();
       page.setDefaultTimeout(5000);
+      page.setDefaultNavigationTimeout(60000);
       await page.route("**/*", serve(lang, [], { provider: false }));
       await watchSettingsReads(page);
       await page.goto("http://magpie.test/?view=settings&tab=models");

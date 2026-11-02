@@ -61,7 +61,7 @@ var codexRewrites = func() []codexRewrite {
 			}
 			return wasWithModel(b, "gpt-5.5<&>")
 		}},
-		{"forVendor", func(b []byte) []byte { return forVendor(relay, b) }, func(b []byte) []byte { return wasForVendor(relay, b) }},
+		{"forVendor", func(b []byte) []byte { return forVendor(relay, b, false) }, func(b []byte) []byte { return wasForVendor(relay, b) }},
 	}
 	for _, magpie := range []bool{false, true} {
 		for _, native := range []bool{false, true} {
@@ -97,10 +97,10 @@ func TestCodexRewritesLeaveTurnUndecoded(t *testing.T) {
 	plain := codexSession(60, func(_ int, it map[string]any) { delete(it, "internal_chat_message_metadata_passthrough") })
 	plain = append(plain[:len(plain)-1], []byte(`,"note":"internal_chat_message_metadata_passthrough"}`)...)
 	relay := provider.Provider{Responses: "https://relay.example/v1"}
-	if got := forVendor(relay, plain); !bytes.Equal(got, plain) {
+	if got := forVendor(relay, plain, false); !bytes.Equal(got, plain) {
 		t.Fatal("forVendor changed a body with nothing to leave out")
 	}
-	if a := testing.AllocsPerRun(5, func() { forVendor(relay, plain) }); a > 10 {
+	if a := testing.AllocsPerRun(5, func() { forVendor(relay, plain, false) }); a > 10 {
 		t.Errorf("forVendor: %v allocations for a body it leaves as it came", a)
 	}
 }
@@ -126,6 +126,13 @@ func TestMarshalRawAllocatesOnce(t *testing.T) {
 // shapes it has to read as encoding/json read them.
 var codexMarks = []func(it map[string]any){
 	func(it map[string]any) { it["id"] = "fc_x" },
+	// ids of the lengths Copilot hands out, of the characters OpenAI
+	// takes (#4525, #4527): only their length turns an upstream that
+	// checks ids away, and one of them on a reasoning item is that
+	// vendor's own to read back
+	func(it map[string]any) { it["id"] = "msg_" + strings.Repeat("a", 440) },
+	func(it map[string]any) { it["id"] = strings.Repeat("A", 442) + "==" },
+	func(it map[string]any) { it["type"] = "reasoning"; it["id"] = "rs_" + strings.Repeat("b", 417) },
 	func(it map[string]any) { it["id"] = "rs_a:rs_b" },
 	func(it map[string]any) { it["id"] = "" },
 	func(it map[string]any) { it["id"] = 7 },
@@ -495,15 +502,21 @@ func wasPlainItemIDs(body []byte) []byte {
 	for _, raw := range items {
 		var it map[string]json.RawMessage
 		var typ, id string
-		if json.Unmarshal(raw, &it) != nil || json.Unmarshal(it["id"], &id) != nil || id == "" || safeIDChars.MatchString(id) {
+		if json.Unmarshal(raw, &it) != nil || json.Unmarshal(it["id"], &id) != nil || id == "" ||
+			len(id) <= itemIDCap && safeIDChars.MatchString(id) {
 			kept = append(kept, raw)
 			continue
 		}
 		changed = true
-		if json.Unmarshal(it["type"], &typ) == nil && typ == "reasoning" {
+		if json.Unmarshal(it["type"], &typ) == nil && typ == "reasoning" && !safeIDChars.MatchString(id) {
 			continue
 		}
-		it["id"], _ = json.Marshal(unsafeToolID.ReplaceAllString(id, "_"))
+		if len(id) > itemIDCap {
+			id = boundItemID(id)
+		} else {
+			id = unsafeToolID.ReplaceAllString(id, "_")
+		}
+		it["id"], _ = json.Marshal(id)
 		b, err := wasMarshalPlain(it)
 		if err != nil {
 			return body

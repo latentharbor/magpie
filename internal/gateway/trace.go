@@ -31,6 +31,20 @@ import (
 const traceKeep = 60
 
 // Route is one request's way through routing.
+// ModelMove is a stand-in that put a request on another model than the one
+// it named: To, the model it went on (before a routing group's pick), and
+// Why, a word the Routing page says it by. A Desktop's own call (desktopMove's
+// reasons), Claude Code's tiers (movedClaudeTier, movedClassifier), an
+// agent's configured stand-in (movedStandIn), Codex's last turn's model
+// (movedCodexTurn) and Privacy's unmasked route (movedPrivacy). Without it
+// a row read "asked for chatflowsai/claude-opus-5-5 → agentrouter" with
+// nothing to say a title, not the user's turn, was put on the chat's model
+// (Neo on Discord).
+type ModelMove struct {
+	To  string `json:"to"`
+	Why string `json:"why"`
+}
+
 type Route struct {
 	// callerKey: the gateway key the request came with, so a key held to
 	// a budget, models or accounts is told the routes of its own requests
@@ -71,6 +85,10 @@ type Route struct {
 	// Subagent is a Codex or Claude Desktop subagent's request put on
 	// the model set for its subagents, or kept on the one asked for and why
 	Subagent *SubagentPick `json:"subagent,omitempty"`
+	// Moved: the request was served on another model than Model names,
+	// by one of magpie's stand-ins, and why (ModelMove); nil when it went
+	// where it asked, or to a routing group by its name
+	Moved *ModelMove `json:"moved,omitempty"`
 	// Sub: the Claude Code subagent the request is of (subagentOf), whose
 	// session header is its conversation's; "" for the conversation's own
 	Sub string `json:"sub,omitempty"`
@@ -122,7 +140,8 @@ type Route struct {
 	Queued  int64 `json:"queued,omitempty"`
 	// Phase: "redact" while it is being masked and not yet done
 	// (noteRedacting), so its row says masking rather than routing;
-	// Masking: the ms of Own that went on masking it (maskingMs)
+	// Masking: the ms of Own that went on masking it, all of it when Own
+	// is unknown (maskingMs)
 	Phase   string `json:"phase,omitempty"`
 	Masking int64  `json:"masking,omitempty"`
 	// Held: the file name, in HeldDir, of the report saved of a request
@@ -239,6 +258,16 @@ func groupRef(g provider.Group, ms []provider.Member) *GroupRef {
 	return ref
 }
 
+// SeatPrice is what a weighed one's model costs on it at the request's
+// time, as Cheapest first went by it: a million tokens each, in the
+// catalog's dollars, Peak when that is its vendor's peak-hour price.
+type SeatPrice struct {
+	Input     float64 `json:"input"`
+	Output    float64 `json:"output"`
+	CacheRead float64 `json:"cacheRead,omitempty"`
+	Peak      bool    `json:"peak,omitempty"`
+}
+
 // Weighed is one account or key as routing weighed it.
 type Weighed struct {
 	ID       string  `json:"id"` // what rests after a failure
@@ -274,6 +303,7 @@ type Weighed struct {
 	Free     bool              `json:"free,omitempty"`     // its model costs nothing there (free first)
 	LateTTFT float64           `json:"lateTtft,omitempty"` // speed first: its ms to the first token lately, 0 if not measured (speed.go)
 	LateTPS  float64           `json:"lateTps,omitempty"`  // speed first: its tokens a second lately, 0 if not told
+	Price    *SeatPrice        `json:"price,omitempty"`    // cheapest first: what its model costs on it now, nil if not known
 	Turn     bool              `json:"turn,omitempty"`     // in turn: it was this one's turn
 	Fit      int               `json:"fit,omitempty"`      // keyFit
 	Speaks   provider.Protocol `json:"speaks,omitempty"`   // a key made for one protocol only
@@ -293,8 +323,10 @@ type Weighed struct {
 	// own list of models leaving it out (#474)
 	Barred bool `json:"barred,omitempty"`
 	// Held: left out as the gateway key asking may not use its account or
-	// key (#905)
-	Held bool `json:"held,omitempty"`
+	// key (#905), or a routing group it was reached through is held to
+	// other accounts (Group.Accounts): HeldBy names that group
+	Held   bool   `json:"held,omitempty"`
+	HeldBy string `json:"heldBy,omitempty"`
 	// Capped: left out as held at the usage cap the user set on the
 	// account, this cap in percent; Used is then its fullest window's
 	// share, CapBack when the last window at or past it renews
@@ -311,6 +343,18 @@ type Weighed struct {
 	// credits, and is let spend them: all but used up, it still answers,
 	// and goes before those used up with nothing to go on with
 	Credits bool `json:"credits,omitempty"`
+	// CreditsLast: such an account, on its credits now, that the user set
+	// to spend them only after everything else: tried after every
+	// candidate not on its credits (restLast)
+	CreditsLast bool `json:"creditsLast,omitempty"`
+	// Busy: the load its plugin reported for the model, a percent over
+	// the user's settings.BusyLoad, so it was tried after every ready
+	// candidate that isn't (restLast)
+	Busy float64 `json:"busy,omitempty"`
+	// CreditsFirst: such an account (Credits) the user set to spend its
+	// credits before another account: all but used up, it keeps its
+	// place, new conversations and kept ones included
+	CreditsFirst bool `json:"creditsFirst,omitempty"`
 	// Rank: its place in its provider's own list of accounts or keys, the
 	// order the provider's page shows and a drag sets (#217); routing may
 	// weigh them in another
@@ -318,6 +362,10 @@ type Weighed struct {
 	// Aside: a key made for another protocol than the keys routed over,
 	// tried only after them
 	Aside bool `json:"aside,omitempty"`
+	// Reserve: an account or key held back, its provider's accounts at
+	// once (provider.AtOnce, this many) taken by those before it in the
+	// user's order: tried, aside, only after they all failed
+	Reserve int `json:"reserve,omitempty"`
 	// NoURL: its keys are all set to this protocol, which its provider has
 	// no URL for, so it was tried on the URLs it has (#1702)
 	NoURL provider.Protocol `json:"noURL,omitempty"`
@@ -355,6 +403,10 @@ type Try struct {
 	// first text, when it streamed any (#196)
 	TTFT      int64 `json:"ttft,omitempty"`
 	FirstText int64 `json:"firstText,omitempty"`
+	// SentBy: what sent its request to the vendor when magpie's own
+	// client didn't, so it has no Net and the Routing page says why
+	// (sentBy)
+	SentBy string `json:"sentBy,omitempty"`
 	// FirstReasoning is the start of paced visible reasoning, absent for hidden reasoning.
 	FirstReasoning  int64 `json:"firstReasoning,omitempty"`
 	ReasoningHidden bool  `json:"reasoningHidden,omitempty"`
@@ -445,7 +497,7 @@ type planned struct {
 
 func weighed(c candidate, p provider.Provider, wg weighing, fallback bool, from provider.Protocol) Weighed {
 	w := Weighed{ID: c.rest, Provider: p.ID, Name: p.Name, Icon: p.Icon, Preset: p.Preset, Model: c.model, Fixed: c.effort, Fast: c.fast,
-		Routing: p.Routing, Fallback: fallback, Shared: c.rest != p.ID, Rank: c.rank, NoURL: c.noURL}
+		Routing: p.Routing, Fallback: fallback, Shared: c.rest != p.ID, Rank: c.rank, NoURL: c.noURL, Reserve: c.reserve}
 	switch {
 	case c.p.Account != nil:
 		w.Kind, w.Who, w.Agent, w.Plan = "account", c.p.Account.User, c.p.Account.Agent, c.p.Account.Plan
@@ -464,7 +516,7 @@ func weighed(c candidate, p provider.Provider, wg weighing, fallback bool, from 
 		w.Kind = "provider"
 	}
 	if l, ok := wg.lefts[c.allowanceKey()]; ok {
-		w.Known, w.Used, w.Renews, w.Pace, w.Credits = true, l.used, l.renews, l.pace, l.credits
+		w.Known, w.Used, w.Renews, w.Pace, w.Credits, w.CreditsFirst = true, l.used, l.renews, l.pace, l.credits, l.first
 		if !l.fullest.IsZero() {
 			ur := l.fullest
 			w.UsedRenews = &ur
@@ -497,6 +549,9 @@ func weighed(c candidate, p provider.Provider, wg weighing, fallback bool, from 
 	}
 	if sp, ok := wg.speed[c.restID()]; ok {
 		w.LateTTFT, w.LateTPS = math.Round(sp[0]), math.Round(sp[1]*10)/10
+	}
+	if pr, ok := wg.price[c.restID()]; ok {
+		w.Price = &SeatPrice{Input: pr.in, Output: pr.out, CacheRead: pr.cache, Peak: pr.peak}
 	}
 	if sinks(p.Sink, p.Routing) {
 		markSunk(&w, c)
@@ -732,7 +787,7 @@ func (t *trace) update(r *Route, f func(r *Route)) {
 		if r.Status >= 400 || r.Error != "" {
 			t.totals.Errors++
 		}
-		t.turns.end(r, r.Status < 400 && r.Error == "" && !r.tools.called(), time.Now())
+		t.turns.end(r, turnFinal(r), time.Now())
 		if keepsRoutes() {
 			c := *r
 			c.Order = append([]Weighed{}, r.Order...) // [] for none: the GUI reads it as a list

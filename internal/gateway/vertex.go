@@ -22,6 +22,17 @@ import (
 // OpenAI-compatible chat completions at the project (Base(Chat)), under
 // the same token, and the gateway asks them there as it asks any chat
 // completions vendor. Nothing in this file is done to them.
+//
+// Nor to Claude (provider.VertexClaude: claude-opus-5-5,
+// claude-sonnet-4-5@20250929), which Google serves on Anthropic's own
+// Messages API at the project (Base(Anthropic)), under the same token.
+// The gateway asks it as it asks any Anthropic vendor, relayed or built,
+// and forwardOnce, last, moves the request to where Anthropic's Vertex SDK
+// sends it (provider.VertexClaudeRequest): the model and whether it
+// streams in the path (:streamRawPredict, :rawPredict), a count at
+// count-tokens:rawPredict, anthropic_version vertex-2023-10-16 in the
+// body. Tool search's beta goes under the name Claude Code gives it for
+// Vertex (bedrockBetas).
 
 // buildVertex is a streamGenerateContent body for Vertex AI, which names the
 // model in its path and has none in here.

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -229,6 +230,10 @@ func TestSyncCatalogRewritesAgentLists(t *testing.T) {
 	home := syncHome(t)
 	piModels := filepath.Join(home, ".pi", "agent", "models.json")
 	writeFile(t, piModels, `{"providers":{"mine":{"baseUrl":"http://x"},"magpie":{"name":"magpie","models":[]}}}`)
+	// connected: a block of magpie's name in an agent not on magpie is the
+	// user's own (TestCatalogSyncLeavesAHandWrittenMagpieBlock)
+	writeFile(t, filepath.Join(home, ".pi", "agent", "settings.json"), `{"defaultProvider":"magpie","defaultModel":"relay/glm-4.6"}`)
+	setUpInMagpie("pi")
 	crushCfg := filepath.Join(home, ".config", "crush", "crush.json")
 	crushBody := `{"providers":{"mine":{"base_url":"http://x"}}}`
 	writeFile(t, crushCfg, crushBody)
@@ -435,12 +440,15 @@ func TestMiMoCodeCatalogNarrowedSeparately(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { settings.Save(settings.Settings{}) })
-	mimo := magpieProviderJSONFor("opencode", "mimocode").(map[string]any)["models"].(map[string]any)
-	oc := magpieProviderJSON("opencode").(map[string]any)["models"].(map[string]any)
-	if len(mimo) != 1 || mimo["relay/glm-4.6"] == nil {
+	mimo := magpieProviderJSONFor("opencode", "mimocode").(map[string]any)["models"].(orderedJSON)
+	oc := magpieProviderJSON("opencode").(map[string]any)["models"].(orderedJSON)
+	has := func(ms orderedJSON, id string) bool {
+		return slices.IndexFunc(ms, func(p jsonPair) bool { return p.k == id }) >= 0
+	}
+	if len(mimo) != 1 || !has(mimo, "relay/glm-4.6") {
 		t.Fatalf("mimocode catalog: %v", mimo)
 	}
-	if oc["relay/glm-4.6"] == nil {
+	if !has(oc, "relay/glm-4.6") {
 		t.Fatalf("opencode catalog was narrowed too: %v", oc)
 	}
 }

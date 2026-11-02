@@ -30,7 +30,10 @@
 <link rel="alternate" hreflang="en" href="https://usemagpie.ai/docs/docker">
 <link rel="alternate" hreflang="zh" href="https://usemagpie.ai/docs/zh/docker">
 <link rel="alternate" hreflang="ja" href="https://usemagpie.ai/docs/ja/docker">
+<link rel="alternate" hreflang="x-default" href="https://usemagpie.ai/docs/docker">
+<link rel="canonical" href="https://usemagpie.ai/docs/zh/docker">
 <link rel="stylesheet" href="/docs.css">
+<meta property="og:site_name" content="magpie">
 <meta property="og:title" content="在 Docker 里运行 magpie">
 <meta property="og:description" content="在服务器或 NAS 上运行 magpie 的网关，在浏览器里管理它。">
 <meta property="og:image" content="https://usemagpie.ai/img/og.png">
@@ -50,6 +53,7 @@
     <a class="toc-only" href="/docs/zh/docker">Docker</a>
     <a class="toc-only" href="/docs/zh/privacy">隐私</a>
     <a class="toc-only" href="/docs/zh/masking">本地脱敏</a>
+    <a class="toc-only" href="/docs/zh/mcp-router">MCP 路由</a>
     <a href="/docs/zh/import">Add to magpie</a>
     <a href="/docs/zh/integrate">接入应用</a>
     <a href="https://github.com/yetone/magpie-releases/releases">版本发布</a>
@@ -89,7 +93,7 @@
 
     <div class="table-wrap"><table>
       <tr><td><b>镜像</b></td><td><code>ghcr.io/yetone/magpie</code>，支持 <code>linux/amd64</code> 和 <code>linux/arm64</code></td></tr>
-      <tr><td><b>标签</b></td><td><code>latest</code>（最新正式版）、<code>0.1.1150</code>（某个版本）、<code>0.1</code>、<code>edge</code>（<code>main</code> 上的每次改动）</td></tr>
+      <tr><td><b>标签</b></td><td><code>latest</code>（最新正式版）、<code>stable</code>（与桌面版的稳定版通道一致：每周一个已发布满三天的版本，紧急修复版立即跟上）、<code>0.1.1150</code>（某个版本）、<code>0.1</code>、<code>edge</code>（<code>main</code> 上的每次改动）</td></tr>
       <tr><td><b>端口</b></td><td><code>3425</code> 是 Agent 调用的网关；<code>3430</code> 是容器运行 <code>magpie web</code> 时的 Web 界面；它也响应网关的 <code>/v1</code> 路由，所以反向代理只需转发这一个端口</td></tr>
       <tr><td><b>数据卷</b></td><td><code>/config</code>：供应商、密钥、登录、插件和用量</td></tr>
       <tr><td><b>用户</b></td><td>nonroot（uid 65532）</td></tr>
@@ -136,7 +140,7 @@ docker logs magpie</pre>
       <pre id="ex-signin">docker exec -it magpie magpie accounts add codex</pre>
     </div>
     <p>打开它打印的链接并登录，再把浏览器最后停在的地址粘贴回去。Web 界面也能从文件导入登录。</p>
-    <p>Claude 订阅的登录和请求都经过 Claude Code，而镜像里没有它。先让 magpie 下载 Anthropic 官方的构建：它会说明版本、下载来源和保存位置，问过你再下载，并用 Anthropic 清单里的 SHA-256 校验。它保存在 <code>/config/cache</code> 里；再运行一次可以更新到新版本。缺少 Claude Code 时，<code>magpie accounts add claude</code> 也会提出下载。</p>
+    <p>Claude 订阅的登录和请求都经过 Claude Code，而镜像里没有它。先让 magpie 下载 Anthropic 官方的构建：它会说明版本、下载来源和保存位置，问过你再下载，并用 Anthropic 清单里的 SHA-256 校验。它保存在卷里的 <code>/config/cache</code>，换新镜像也还在；magpie 会自己让它保持在 Claude Code 的最新版本：启动一分钟后检查一次，之后每六小时一次，有新版本就同样校验后下载。更新 magpie 后不用重新安装。想固定某个版本，设置 <code>-e DISABLE_AUTOUPDATER=1</code>。缺少 Claude Code 时，<code>magpie accounts add claude</code> 也会提出下载。</p>
     <div class="code">
       <span class="lang">Shell</span>
       <button class="copy" data-copy="ex-claude-code">复制</button>
@@ -221,10 +225,12 @@ docker logs magpie</pre>
     <a href="/docs/zh/docker">Docker</a>
     <a href="/docs/zh/privacy">隐私</a>
     <a href="/docs/zh/masking">本地脱敏</a>
+    <a href="/docs/zh/mcp-router">MCP 路由</a>
     <a href="/docs/zh/import">Add to magpie</a>
     <a href="/docs/zh/integrate">接入应用</a>
     <a href="https://github.com/yetone/magpie">GitHub</a>
     <a href="https://discord.gg/vGSnD3ZKQF">Discord</a>
+    <a href="/docs/zh/contributors">贡献墙</a>
     <a href="https://github.com/yetone/magpie-releases/releases">版本发布</a>
   </div>
 </div></footer>

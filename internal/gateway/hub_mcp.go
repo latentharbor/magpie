@@ -2,12 +2,20 @@ package gateway
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
+	"maps"
 	"net/http"
+	"net/url"
+	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yetone/magpie/internal/access"
+	"github.com/yetone/magpie/internal/sessions"
+	"github.com/yetone/magpie/internal/settings"
 )
 
 // The MCP hub (#2679): with the Library's switch on, magpie is the one MCP
@@ -37,6 +45,51 @@ type HubTool struct {
 	// inputSchema and the rest go to the agent as they are, its name
 	// replaced
 	Spec map[string]json.RawMessage
+	// Roots: the server writes into the agent's project (magpie-image),
+	// so a call is made with the agent's folders (HubCaller)
+	Roots bool
+}
+
+// HubCaller is who a call of a Roots tool is for: the folders the agent
+// said are its, as file URIs (none for an agent on another machine, whose
+// folders aren't here), and its User-Agent's product, the name the
+// server's own requests go under.
+//
+// Session is which of the hub's callers the call is from (hubSession), for
+// a server that keeps something per caller: Magpie Browser's tab, which
+// two agents behind one router would otherwise share, the router running
+// one `magpie mcp browser` for all of them.
+type HubCaller struct {
+	Roots   []string
+	Client  string
+	Session string
+}
+
+// The _meta keys a call of magpie's image server carries its caller in:
+// the roots, a list of file URIs (an empty one when the agent has none
+// here), and the client; and the one its result says the model it drew
+// with in (provider/model), for the hub's row of the call.
+const (
+	HubRootsMeta  = "magpie/roots"
+	HubClientMeta = "magpie/client"
+	HubModelMeta  = "magpie/model"
+	// HubSessionMeta is the _meta key a call carries its caller's session
+	// in (HubCaller.Session), to Magpie Browser and to another magpie's
+	// router, which passes it on as its own caller's
+	HubSessionMeta = "magpie/session"
+)
+
+type hubCallerKey struct{}
+
+// WithHubCaller is ctx carrying caller c.
+func WithHubCaller(ctx context.Context, c HubCaller) context.Context {
+	return context.WithValue(ctx, hubCallerKey{}, c)
+}
+
+// HubCallerOf is the caller a hub call's ctx carries.
+func HubCallerOf(ctx context.Context) HubCaller {
+	c, _ := ctx.Value(hubCallerKey{}).(HubCaller)
+	return c
 }
 
 // Hub is the servers behind the hub: the library's.
@@ -48,6 +101,9 @@ type Hub interface {
 	// in the Library for agent "", HubMCPAll's), but those turned off; a
 	// server that couldn't be reached by ctx's end is left out
 	Tools(ctx context.Context, agent string) []HubTool
+	// Servers are the servers behind agent's tools, by name, each with
+	// what it is for where magpie knows it; it starts none of them
+	Servers(agent string) []HubServer
 	// Call runs one tool of server for agent, and is its result as the
 	// server gave it; an error is why it couldn't be run
 	Call(ctx context.Context, agent, server, tool string, args json.RawMessage) (json.RawMessage, error)
@@ -58,6 +114,10 @@ type Hub interface {
 	// by another magpie (the window, the CLI)
 	Prune()
 }
+
+// HubServer is a server behind the hub as an agent is told of it: About
+// is what it is for, "" when magpie doesn't know.
+type HubServer struct{ Name, About string }
 
 // MCPHub is set by the library; nil, the hub has no server.
 var MCPHub Hub
@@ -77,7 +137,7 @@ const errHubOff = "magpie's MCP hub is off, so it runs no server's tools: turn i
 
 func (s *Server) hubMCP(w http.ResponseWriter, r *http.Request) {
 	agent := r.PathValue("agent")
-	serveMCP(w, r, "magpie's MCP hub", hubBody, func(r *http.Request, m mcpMessage) (any, map[string]any) {
+	serveMCP(w, r, "magpie's MCP hub", "magpie", hubBody, func(r *http.Request, m mcpMessage) (any, map[string]any) {
 		return s.hubMCPCall(r, agent, m)
 	})
 }
@@ -118,6 +178,111 @@ func hubTools(ctx context.Context, agent string) []hubTool {
 	return hubNamed(MCPHub.Tools(ctx, agent))
 }
 
+// hubLineMax is how much of the instructions' first line an agent is sure
+// to show its model: Pi shows a server as that line, cut at 250 characters
+// (extensions/mcp, MAX_SERVER_DESCRIPTION_CHARS), and an agent that lists
+// the router's tools only once they are searched for knows of the servers
+// behind it from this line alone (a Pi asked about a GitHub repository
+// cloned it instead of asking DeepWiki, 11-01).
+const hubLineMax = 250
+
+// hubAbout is what the instructions say first: HubLine, then a line for
+// each server with all it is for. It is "" when there is no server.
+func hubAbout(ss []HubServer) string {
+	if len(ss) == 0 {
+		return ""
+	}
+	out := HubLine(ss) + "\n"
+	for _, s := range ss {
+		if a := strings.Join(strings.Fields(s.About), " "); a != "" {
+			out += "- " + s.Name + ": " + a + "\n"
+		}
+	}
+	return out
+}
+
+// HubLine is one line naming the servers behind the hub, each with what
+// it is for cut to fit hubLineMax: "" when there is none.
+func HubLine(ss []HubServer) string {
+	if len(ss) == 0 {
+		return ""
+	}
+	const head = "Tools of "
+	const room = hubLineMax - len(".")
+	short := make([]string, len(ss))
+	for i, s := range ss {
+		short[i] = hubClause(s.About)
+	}
+	line := func(abouts []string, kept int) string {
+		parts := make([]string, 0, kept+1)
+		for i, s := range ss[:kept] {
+			if abouts[i] != "" {
+				parts = append(parts, s.Name+" ("+abouts[i]+")")
+			} else {
+				parts = append(parts, s.Name)
+			}
+		}
+		if n := len(ss) - kept; n > 0 {
+			parts = append(parts, "and "+strconv.Itoa(n)+" more")
+		}
+		return head + strings.Join(parts, ", ")
+	}
+	// the names first: as many as fit, the rest counted
+	none := make([]string, len(ss))
+	kept := len(ss)
+	for kept > 0 && runeLen(line(none, kept)) > room {
+		kept--
+	}
+	// what's left goes to the abouts, the short ones whole, the rest an
+	// equal share, cut at a word; a share too small to say anything is none
+	abouts := make([]string, len(ss))
+	left := room - runeLen(line(none, kept))
+	order := make([]int, 0, kept)
+	for i := range kept {
+		if short[i] != "" {
+			order = append(order, i)
+		}
+	}
+	slices.SortStableFunc(order, func(a, b int) int { return runeLen(short[a]) - runeLen(short[b]) })
+	for j, i := range order {
+		share := left/(len(order)-j) - len(" ()")
+		if share < 12 {
+			continue
+		}
+		abouts[i] = hubCut(short[i], share)
+		left -= runeLen(abouts[i]) + len(" ()")
+	}
+	return line(abouts, kept) + "."
+}
+
+// hubClause is the first part of a description: up to its first comma,
+// colon, semicolon or full stop, on one line.
+func hubClause(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if i := strings.IndexAny(s, ",:;"); i > 0 {
+		s = s[:i]
+	}
+	if i := strings.Index(s, ". "); i > 0 {
+		s = s[:i]
+	}
+	return strings.TrimSuffix(s, ".")
+}
+
+// hubCut is s in at most n characters, cut at a word with an ellipsis.
+func hubCut(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	c := string(r[:n-1])
+	if i := strings.LastIndex(c, " "); i > 0 {
+		c = c[:i]
+	}
+	return strings.TrimRight(c, " ,") + "…"
+}
+
+func runeLen(s string) int { return len([]rune(s)) }
+
 func (s *Server) hubMCPCall(r *http.Request, agent string, m mcpMessage) (any, map[string]any) {
 	switch m.Method {
 	case "initialize":
@@ -125,19 +290,28 @@ func (s *Server) hubMCPCall(r *http.Request, agent string, m mcpMessage) (any, m
 		if agent == "" {
 			say = "The tools of every MCP server in magpie's Library, each named <server>__<tool>. Add servers in magpie's Library → MCP."
 		}
+		if MCPHub != nil {
+			say = hubAbout(MCPHub.Servers(agent)) + say
+		}
+		title := "Magpie MCP hub"
+		if w := hubWhere(r); w != "" {
+			say += " This router: " + w + ". Each of its tools' descriptions starts with [" + w + "]; when another MCP server gives the same tools, choose between them by this."
+			title += " · " + w
+		}
 		if MCPHub == nil || !MCPHub.On() {
 			say = errHubOff
 		}
 		return map[string]any{
 			"protocolVersion": mcpVersion(m),
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "magpie", "title": "Magpie MCP hub", "version": Version},
+			"serverInfo":      map[string]any{"name": "magpie", "title": title, "version": Version},
 			"instructions":    say,
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
 	case "tools/list":
 		ts := hubTools(r.Context(), agent)
+		where := hubWhere(r)
 		list := make([]any, 0, len(ts))
 		for _, t := range ts {
 			spec := make(map[string]json.RawMessage, len(t.Spec)+1)
@@ -149,6 +323,13 @@ func (s *Server) hubMCPCall(r *http.Request, agent string, m mcpMessage) (any, m
 			if s, ok := spec["inputSchema"]; !ok || !json.Valid(s) {
 				spec["inputSchema"] = json.RawMessage(`{"type":"object","properties":{}}`)
 			}
+			if where != "" {
+				var d string
+				json.Unmarshal(spec["description"], &d)
+				d, _ = strings.CutPrefix(d, "["+where+"]")
+				d = strings.TrimSpace("[" + where + "] " + strings.TrimSpace(d))
+				spec["description"], _ = json.Marshal(d)
+			}
 			list = append(list, spec)
 		}
 		return map[string]any{"tools": list}, nil
@@ -156,6 +337,7 @@ func (s *Server) hubMCPCall(r *http.Request, agent string, m mcpMessage) (any, m
 		var p struct {
 			Name      string          `json:"name"`
 			Arguments json.RawMessage `json:"arguments"`
+			Meta      hubCallMeta     `json:"_meta"`
 		}
 		if err := json.Unmarshal(m.Params, &p); err != nil {
 			return nil, map[string]any{"code": -32602, "message": "invalid params: " + err.Error()}
@@ -165,6 +347,11 @@ func (s *Server) hubMCPCall(r *http.Request, agent string, m mcpMessage) (any, m
 		}
 		for _, t := range hubTools(r.Context(), agent) {
 			if t.name == p.Name {
+				c := HubCaller{Session: hubSession(r, agent, p.Meta)}
+				if t.Roots {
+					c.Roots, c.Client = hubRoots(r, p.Meta), hubClient(r)
+				}
+				r = r.WithContext(WithHubCaller(r.Context(), c))
 				return s.hubMCPRun(r, agent, t, p.Arguments), nil
 			}
 		}
@@ -180,6 +367,10 @@ func (s *Server) hubMCPCall(r *http.Request, agent string, m mcpMessage) (any, m
 // limit. A server that is down or doesn't answer in time is an error
 // result naming it, never a wait past the client's.
 func (s *Server) hubMCPRun(r *http.Request, agent string, t hubTool, args json.RawMessage) any {
+	// the request log names the Library's server, and the agent the hub is mounted for
+	use := mcpUseOf(r.Context())
+	use.on(t.Server)
+	use.as(agent)
 	release, err := reserveFor(access.Caller(r.Context()), int64(len(args)), "", limitClock())
 	if err != nil {
 		return toolResult(err.Error(), true)
@@ -198,7 +389,132 @@ func (s *Server) hubMCPRun(r *http.Request, agent string, t hubTool, args json.R
 		}
 		return toolResult("The MCP server "+t.Server+" couldn't run "+t.Tool+": "+why, true)
 	}
+	if t.Roots {
+		// magpie's image server draws through the gateway on its own
+		// connection, so its result names the model for this call's row
+		var m struct {
+			Meta struct {
+				Model string `json:"magpie/model"`
+			} `json:"_meta"`
+		}
+		json.Unmarshal(res, &m)
+		use.usedRef(m.Meta.Model)
+	}
 	return res
+}
+
+// hubCallMeta is what of a tool call's _meta the hub reads: the thread
+// Codex names its calls by, and the workspaces its turn metadata names
+// (the git repositories it works in, keyed by their folder).
+type hubCallMeta struct {
+	ThreadID string `json:"threadId"`
+	// Session is the caller's session as another magpie's router passed
+	// it on (HubSessionMeta)
+	Session string `json:"magpie/session"`
+	Turn    struct {
+		Workspaces map[string]json.RawMessage `json:"workspaces"`
+	} `json:"x-codex-turn-metadata"`
+}
+
+// hubSession is which caller of the hub r is: the session another
+// magpie's router names, which is its own caller's (that router reaches
+// this one on one connection for all of them), else the session this
+// client was given at initialize (serveMCP), else none, and the server
+// then keeps one thing for every caller, as before clients were told
+// apart. A caller can name any session, but each is only a tab of the
+// user's browser, which a caller can pick by its id anyway.
+func hubSession(r *http.Request, agent string, meta hubCallMeta) string {
+	if v := boundedSession(meta.Session); v != "" {
+		return v
+	}
+	if v := boundedSession(r.Header.Get("Mcp-Session-Id")); v != "" {
+		return "hub-" + agent + "-" + v
+	}
+	return ""
+}
+
+// newMCPSession is a session id for a client of one of magpie's MCP
+// servers.
+func newMCPSession() string { return "magpie-" + rand.Text() }
+
+// hubWhere is what the router says of itself to the agent of r, for an
+// agent given the same tools by two routers (one in China, one in Los
+// Angeles) to tell them apart: the user's own words (settings'
+// RouterNote, set under the router's switch), else this computer's name
+// to an agent on another computer. An agent on this computer with no
+// words set is told nothing: there it is the router at hand, and the
+// computer's name stays off its prompts.
+func hubWhere(r *http.Request) string {
+	if n := settings.CleanRouterNote(settings.Shared().RouterNote); n != "" {
+		return n
+	}
+	if !local(r) {
+		return hostName()
+	}
+	return ""
+}
+
+// HostName is this computer's name, what the router says of itself to an
+// agent on another computer when the user set no words of their own.
+func HostName() string { return hostName() }
+
+// hubRootsWait is how long the agent is given to say its roots.
+var hubRootsWait = 3 * time.Second
+
+// hubRoots are the folders of the agent calling, as file URIs: what it
+// answers roots/list with, asked on the call's own stream (Claude Code
+// answers), else the workspaces of Codex's turn the call names, else the
+// folder of the Codex thread it names (Codex declares no roots, and
+// answers none). An agent on another machine has none here.
+func hubRoots(r *http.Request, meta hubCallMeta) []string {
+	if !local(r) {
+		return nil
+	}
+	var roots []string
+	if m, err := askClient(r.Context(), "roots/list", nil, hubRootsWait); err == nil && len(m.Result) > 0 {
+		var res struct {
+			Roots []struct {
+				URI string `json:"uri"`
+			} `json:"roots"`
+		}
+		json.Unmarshal(m.Result, &res)
+		for _, root := range res.Roots {
+			if strings.HasPrefix(root.URI, "file:") {
+				roots = append(roots, root.URI)
+			}
+		}
+	}
+	if len(roots) == 0 {
+		// what the call says itself first; a thread's rollout is read
+		// only when it says no workspace (a folder that isn't a repository)
+		for _, dir := range slices.Sorted(maps.Keys(meta.Turn.Workspaces)) {
+			if filepath.IsAbs(dir) {
+				roots = append(roots, fileURI(dir))
+			}
+		}
+	}
+	if len(roots) == 0 && meta.ThreadID != "" {
+		if dir := sessions.CodexThreadCwd(meta.ThreadID); dir != "" {
+			roots = append(roots, fileURI(dir))
+		}
+	}
+	return roots
+}
+
+// fileURI is the file:// URI of folder dir: file:///C:/p for C:\p.
+func fileURI(dir string) string {
+	p := filepath.ToSlash(dir)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return (&url.URL{Scheme: "file", Path: p}).String()
+}
+
+// hubClient is the product a request's User-Agent starts with
+// (claude-code/2.1.314, codex-mcp-client/0.165.0).
+func hubClient(r *http.Request) string {
+	c, _, _ := strings.Cut(strings.TrimSpace(r.Header.Get("User-Agent")), " ")
+	return c
 }
 
 // hubPruneEvery is how often the gateway ends the servers the hub no

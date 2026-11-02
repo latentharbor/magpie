@@ -80,7 +80,7 @@ function fixture(lang, theme, events, options = {}) {
       let key = keys.find((k) => k.id === lanKeyID);
       if (lan && (!key || body.newKey)) {
         if (!key) {
-          key = { id: "lan-key-" + (++serial), name: "Magpie" };
+          key = { id: "lan-key-" + (++serial), name: "Magpie", lan: true };
           lanKeyID = key.id;
           keys.push(key);
         }
@@ -108,6 +108,11 @@ function fixture(lang, theme, events, options = {}) {
       { id: "relay/m", name: "Model", provider: "relay", providerName: "Relay" },
       { id: "relay/m-mini", name: "Model mini", provider: "relay", providerName: "Relay" },
       { id: "openai/gpt-5", name: "GPT-5", provider: "openai", providerName: "OpenAI" },
+      // options.deciders: decision models, which no agent lists
+      ...(options.deciders ? [
+        { id: "cf/@cf/cloudflare/clef", name: "Clef", provider: "cf", providerName: "Cloudflare", decides: true },
+        { id: "ts/jev-latest", name: "Jev", provider: "ts", providerName: "TypeSafe", decides: true },
+      ] : []),
     ], accounts: options.accounts === false ? [] : [
       { id: "relay/me@example.com", name: "me@example.com", provider: "relay", providerName: "Relay", account: true, plan: "Pro" },
       { id: "relay/spare@example.com", name: "spare@example.com", provider: "relay", providerName: "Relay", account: true },
@@ -169,6 +174,13 @@ function fixture(lang, theme, events, options = {}) {
       if (action === "models-key") k.models = body.models?.length ? body.models : undefined;
       if (action === "accounts-key") k.accounts = body.accounts?.length ? body.accounts : undefined;
       if (action === "quotas-key") k.quotas = body.quotas || undefined;
+      if (action === "access-key") k.readOnly = body.readOnly || undefined;
+      // a key put at a place in the list, as access.Update keeps it;
+      // options.refuseMove: the store can't be written
+      if (action === "move-key") {
+        if (options.refuseMove) return route.fulfill({ status: 500, json: { error: "There is no such place in the list of keys" } });
+        keys.splice(body.index, 0, ...keys.splice(keys.indexOf(k), 1));
+      }
       if (action === "copy-key") secret = k.id === lanKeyID ? lanSecret : secrets.get(k.id);
       return json({ keys, secret });
     }

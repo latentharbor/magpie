@@ -3,6 +3,7 @@ package gui
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,8 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/library"
 	"github.com/yetone/magpie/internal/mcpauth"
+	"github.com/yetone/magpie/internal/settings"
 )
 
 // The problems of the last change to the library stay on the page until the
@@ -139,6 +142,7 @@ func revealable(v *library.View) []string {
 }
 
 func libraryRoutes(mux *http.ServeMux, w Windows) {
+	browserRoutes(mux, w)
 	mux.HandleFunc("GET /api/library", func(rw http.ResponseWriter, r *http.Request) {
 		v, err := libraryRead(nil, r.URL.Query().Get("glance") == "1")
 		if err != nil {
@@ -159,6 +163,10 @@ func libraryRoutes(mux *http.ServeMux, w Windows) {
 	// once asked for, which skills.sh gives one at a time
 	mux.HandleFunc("GET /api/library/market/servers", func(rw http.ResponseWriter, r *http.Request) {
 		list, err := library.MarketServers(r.URL.Query().Get("q"))
+		for i := range list {
+			// magpie's own that can't answer yet says why on its row
+			list[i].Unready = gateway.OwnUnready(list[i].ID)
+		}
 		m := marketOf(list, err)
 		m.Custom = library.CustomAt(r.URL.Query().Get("q"), list)
 		writeJSON(rw, m)
@@ -290,8 +298,21 @@ func libraryRoutes(mux *http.ServeMux, w Windows) {
 		}
 		writeJSON(rw, v)
 	})
+	// distro: in that WSL distro, by rtk's own Linux installer run there
 	mux.HandleFunc("POST /api/library/rtk/install", func(rw http.ResponseWriter, r *http.Request) {
-		v, err := library.InstallRTK()
+		var in struct{ Distro string }
+		// {} or no body: this computer; a body that can't be read, nowhere
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
+			http.Error(rw, "bad body", http.StatusBadRequest)
+			return
+		}
+		var v *library.RTKView
+		var err error
+		if in.Distro != "" {
+			v, err = library.InstallRTKIn(in.Distro)
+		} else {
+			v, err = library.InstallRTK()
+		}
 		if err != nil {
 			fail(rw, err)
 			return
@@ -437,6 +458,7 @@ func libraryRoutes(mux *http.ServeMux, w Windows) {
 			Subagent library.Subagent
 			Agent    string            // the agent whose own skill is in the library's way
 			App      string            // the app the MCP hub is added to (servers/hub-open)
+			Note     string            // what the MCP router says of itself (servers/hub-note)
 			ID       string            // a market server's, or a market skill's in its repository
 			Values   map[string]string // what a market server needs
 			Dir      string            // a project's folder
@@ -469,6 +491,10 @@ func libraryRoutes(mux *http.ServeMux, w Windows) {
 		case "servers/hub":
 			// magpie as the agents' one MCP server (#2679)
 			res, err = library.SetMCPHub(in.On)
+		case "servers/hub-note":
+			// what the router says of itself to the agents, this
+			// computer's own (settings.RouterNote)
+			err = settings.SetRouterNote(in.Note)
 		case "servers/hub-open":
 			// the hub added to another app through its install link,
 			// built here: the page names the app, never the link

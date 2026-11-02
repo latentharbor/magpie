@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -25,6 +26,12 @@ type groupsJSON struct {
 	Deciders []modelRef `json:"deciders"`
 	// Found: magpie finds groups on its own (provider.AutoGroupsOn)
 	Found bool `json:"found"`
+	// Skip: the providers kept out of found groups, by id
+	// (provider.AutoGroupSkip); Skippable: those that can be, each a
+	// provider ready to serve, switched off or not, and one in Skip that
+	// is no more, so it can be let back in
+	Skip      []string        `json:"skip"`
+	Skippable []skippableJSON `json:"skippable"`
 	// Moved: the agents turning found groups off moved off one of them,
 	// to its model from one provider (agent.Reseat)
 	Moved []agent.Move `json:"moved,omitempty"`
@@ -42,6 +49,15 @@ type groupsJSON struct {
 	// Imported: import's answer, the group added and what of the text
 	// this magpie has none of (provider.ImportGroup)
 	Imported *provider.Imported `json:"imported,omitempty"`
+	// Accounts: by provider id, the accounts and keys a group may be held
+	// to (Group.Accounts), as a gateway key's list has them (#905): each
+	// provider with more than one, or one a group names already
+	Accounts map[string][]keyModelJSON `json:"accounts"`
+}
+
+type skippableJSON struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type groupJSON struct {
@@ -66,9 +82,9 @@ type groupJSON struct {
 	// Ref: the id agents pick it by (provider.Group.Ref): auto/<model> for
 	// a group magpie found, group/<id> for any other
 	Ref string `json:"ref"`
-	// ClassifierFailed: its classifier couldn't say the last time it was
-	// asked, and why (gateway.ClassifierFailure), which its card says
-	// (#1929): otherwise only each request's details did
+	// ClassifierFailed: its classifier couldn't say the last time this
+	// group asked it, and why (gateway.GroupClassifierFailure), which its
+	// card says (#1929): otherwise only each request's details did
 	ClassifierFailed *classifierFailedJSON `json:"classifierFailed,omitempty"`
 }
 
@@ -77,8 +93,9 @@ type classifierFailedJSON struct {
 	At    time.Time `json:"at"`
 }
 
-// classifierFailure is gateway.ClassifierFailure, which a test stands in for
-var classifierFailure = gateway.ClassifierFailure
+// classifierFailure is gateway.GroupClassifierFailure, which a test stands
+// in for
+var classifierFailure = gateway.GroupClassifierFailure
 
 type memberJSON struct {
 	ID       string `json:"id"`
@@ -118,6 +135,10 @@ type memberJSON struct {
 	// own `images` decides then). Named apart from the Gateway page's
 	// `imageSet`, which means the user answered for the model themselves
 	ImagesUnknown bool `json:"imagesUnknown,omitempty"`
+	// Free: Free first and Cheapest first count it as costing nothing
+	// (provider.FreeModel): its provider is the user's Free for me, or its
+	// vendor serves it free. The Routing page tags it (jiabubu on Discord)
+	Free bool `json:"free,omitempty"`
 }
 
 type modelRef struct {
@@ -233,6 +254,32 @@ type clockJSON struct {
 	Offset int    `json:"offset"`
 }
 
+// groupAccounts is groupsJSON's Accounts: the accounts and keys of each
+// provider with more than one, which a group may be held to some of, and
+// of each one a group in gs names already, so its choice can be undone.
+func groupAccounts(gs []provider.Group) map[string][]keyModelJSON {
+	named := map[string]bool{}
+	for _, g := range gs {
+		for _, a := range g.Accounts {
+			if pid, _, ok := strings.Cut(a, "/"); ok {
+				named[strings.ToLower(pid)] = true
+			}
+		}
+	}
+	out := map[string][]keyModelJSON{}
+	for _, p := range provider.All() {
+		refs := p.AccountIDs()
+		if len(refs) < 2 && !named[strings.ToLower(p.ID)] {
+			continue
+		}
+		name := cmp.Or(p.Name, p.ID)
+		for _, a := range refs {
+			out[p.ID] = append(out[p.ID], keyModelJSON{ID: p.ID + "/" + a.ID, Name: a.Shown(p), Provider: p.ID, ProviderName: name, Account: !a.Key, Key: a.Key, Plan: a.Plan})
+		}
+	}
+	return out
+}
+
 func groupsState() groupsJSON {
 	_, offset := time.Now().Zone()
 	out := groupsJSON{Groups: []groupJSON{}, Models: []modelRef{}, Pools: []poolJSON{}, Deciders: []modelRef{}, Found: provider.AutoGroupsOn(), Templates: provider.Templates(),
@@ -255,6 +302,7 @@ func groupsState() groupsJSON {
 	for _, e := range provider.OfferedDeciders(func(id string) bool { return named[id] }) {
 		out.Deciders = append(out.Deciders, modelRef{ID: e.ID, Name: e.Name, Provider: e.Provider.ID, PName: e.Provider.Name, Icon: e.Provider.Icon, Sub: e.Provider.Account != nil})
 	}
+	out.Accounts = groupAccounts(all)
 	served := provider.Served()
 	for _, e := range served {
 		if e.Group == "" {
@@ -276,7 +324,7 @@ func groupsState() groupsJSON {
 		gj.Decides = g.Decides()
 		gj.Ref = g.Ref()
 		if g.Classifier != "" {
-			if why, at, ok := classifierFailure(g.Classifier); ok {
+			if why, at, ok := classifierFailure(g.ID, g.Classifier); ok {
 				gj.ClassifierFailed = &classifierFailedJSON{Error: why, At: at}
 			}
 		}
@@ -326,6 +374,7 @@ func groupsState() groupsJSON {
 				m.CanFast = provider.CanFast(p, model)
 				m.OwnFast = m.CanFast && provider.OwnFast(p, model)
 				m.Fast = m.CanFast && g.IsFast(id)
+				m.Free = p.FreeModel(model)
 				for _, e := range served {
 					if e.Group == "" && e.Provider.ID == p.ID && e.Model == model {
 						m.Context, m.Images, m.ImagesUnknown = e.Context, seesImages(e), imagesUnknown(e)
@@ -348,6 +397,21 @@ func groupsState() groupsJSON {
 			gj.Ready = i >= 0 && gj.Info[i].Ready
 		}
 		out.Groups = append(out.Groups, gj)
+	}
+	out.Skip = provider.AutoGroupSkip()
+	if out.Skip == nil {
+		out.Skip = []string{}
+	}
+	out.Skippable = []skippableJSON{}
+	for _, p := range provider.All() {
+		if p.Ready() || slices.Contains(out.Skip, p.ID) {
+			out.Skippable = append(out.Skippable, skippableJSON{ID: p.ID, Name: p.Name})
+		}
+	}
+	for _, id := range out.Skip {
+		if !slices.ContainsFunc(out.Skippable, func(k skippableJSON) bool { return k.ID == id }) {
+			out.Skippable = append(out.Skippable, skippableJSON{ID: id, Name: id})
+		}
 	}
 	for _, p := range provider.All() {
 		if !p.On() {
@@ -380,6 +444,9 @@ func groupRoutes(mux *http.ServeMux) {
 			provider.Group
 			From string `json:"from"` // the id the group had: another is a rename
 			On   bool   `json:"on"`   // found: magpie finds groups on its own
+			// skip: the providers kept out of found groups
+			// (provider.SetAutoGroupSkip)
+			Skip []string `json:"skip"`
 			// arrange: the groups by id, in the order the Routing page
 			// lists them (#779), which /v1/models follows too
 			Order []string `json:"order"`
@@ -406,6 +473,10 @@ func groupRoutes(mux *http.ServeMux) {
 			// from one provider; a request still naming one goes there too
 			// (provider.AutoStandIn)
 			moved, err = agent.Reseat(func() error { return provider.SetAutoGroups(body.On) })
+		case "skip":
+			// an agent set to a found group skipping took away is moved to
+			// its model from one provider, as turning found groups off does
+			moved, err = agent.Reseat(func() error { return provider.SetAutoGroupSkip(body.Skip) })
 		case "save":
 			to := strings.ToLower(strings.TrimSpace(in.ID))
 			if body.From == "" || body.From == to {

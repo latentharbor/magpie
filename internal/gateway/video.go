@@ -99,8 +99,20 @@ func Videomakers(p provider.Provider) []catalog.Model {
 // videos (provider.SetModelKind, #1399). They are asked at the
 // OpenAI-shaped videos API under its base, as another magpie's are. A
 // model's name alone makes none of them one: a list that doesn't say so,
-// and a user who doesn't, leave the provider making no videos.
+// and a user who doesn't, leave the provider making no videos. A plugin's
+// are the models it says give video (capabilities.output.video), asked
+// through its fetch on the account (XYenon's Google AI Studio plugin, Veo).
 func customVideomakers(p provider.Provider) []catalog.Model {
+	if p.IsPlugin() && !drawsGrok(p) {
+		var out []catalog.Model
+		for _, m := range p.Available() {
+			if slices.Contains(m.OutputModalities, "video") {
+				m.Provider = p.ID
+				out = append(out, m)
+			}
+		}
+		return out
+	}
 	if p.Account != nil || p.IsRemoteMagpie() || len(p.PlanVideos()) > 0 || filmsMiniMax(p) || videoBase(p) == "" {
 		return nil
 	}
@@ -120,9 +132,10 @@ func customVideomakers(p provider.Provider) []catalog.Model {
 
 // videoBase is the root of the OpenAI-shaped videos API of another magpie
 // or a provider set up with a base URL: its Chat base, or a Responses-only
-// relay's Responses base, under which it serves the images API too.
+// relay's Responses base, under which it serves the images API too; a
+// plugin's fetch whatever API its chat is on (Provider.OpenAIBase).
 func videoBase(p provider.Provider) string {
-	return strings.TrimRight(cmp.Or(p.Base(provider.Chat), p.Base(provider.Responses)), "/")
+	return strings.TrimRight(cmp.Or(p.OpenAIBase(), p.Base(provider.Responses)), "/")
 }
 
 // filmsCustom is whether p makes model at its OpenAI-shaped videos API, as
@@ -134,8 +147,12 @@ func filmsCustom(p provider.Provider, model string) bool {
 // keyMark is the mark of the key p sends with, in the id of a video it
 // started at its OpenAI-shaped videos API: the vendor keeps a video for the
 // key that started it, so it is asked after on that key, whichever comes
-// first now. "0" for a provider with no key (a local server).
+// first now. "0" for a provider with no key (a local server); a plugin's
+// account's signer, the vendor keeping it for that account.
 func keyMark(p provider.Provider) string {
+	if p.IsPlugin() {
+		return "a" + signer(p)
+	}
 	if p.Key == "" {
 		return "0"
 	}
@@ -151,6 +168,15 @@ func customVideoID(p provider.Provider, theirs string, t time.Time) string {
 // markedKey is p on its key whose mark is by (keyMark), while that key is
 // still on.
 func markedKey(p provider.Provider, by string) (provider.Provider, bool) {
+	if p.IsPlugin() {
+		// the plugin's account that started it, while it is still on
+		for _, q := range append([]provider.Provider{p}, p.AlsoOn()...) {
+			if keyMark(q) == by {
+				return q, true
+			}
+		}
+		return p, false
+	}
 	if p.Key == "" {
 		return p, by == "0"
 	}
@@ -747,6 +773,9 @@ func (s *Server) videosCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g, ms, isGroup := drawingGroup(f.Model, p, model)
+	if isGroup {
+		r = heldByGroup(r, g) // held to the group's accounts, if it is
+	}
 	keyWho, keyHeld := keyHolds(r)
 	if keyHeld && named && (isGroup && !groupAllowed(keyWho, g, ms) || !isGroup && !modelAllowed(keyWho, p, model)) {
 		fail(403, keyModelError(keyWho, f.Model))

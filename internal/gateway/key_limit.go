@@ -117,10 +117,20 @@ func protoOfPath(path string) provider.Protocol {
 // what a magpie from before them reads.
 func (s *Server) keyLimit(w http.ResponseWriter, r *http.Request) {
 	who := access.Caller(r.Context())
+	out := map[string]any{"limited": false, "key": who.KeyName}
+	// an issued key is held to the limits of the key it was issued under
+	// too, which count every key issued under it: "issuerLimits"
+	if who.KeyID != "" && who.Issuer != nil && len(who.Issuer.Limits()) > 0 {
+		out["issuerLimits"] = budget.All(access.Key{ID: who.Issuer.KeyID, Name: who.Issuer.KeyName, Limit: who.Issuer.Limit, More: who.Issuer.More}, limitClock())
+	}
+	if !who.Expires.IsZero() {
+		out["expires"] = who.Expires
+	}
 	if who.KeyID == "" || len(who.Limits()) == 0 {
-		writeJSON(w, 200, map[string]any{"limited": false, "key": who.KeyName})
+		writeJSON(w, 200, out)
 		return
 	}
 	all := budget.All(access.Key{ID: who.KeyID, Name: who.KeyName, Limit: who.Limit, More: who.More}, limitClock())
-	writeJSON(w, 200, map[string]any{"limited": true, "key": who.KeyName, "limit": budget.Binding(all), "limits": all})
+	out["limited"], out["limit"], out["limits"] = true, budget.Binding(all), all
+	writeJSON(w, 200, out)
 }
