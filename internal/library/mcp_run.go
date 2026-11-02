@@ -672,6 +672,14 @@ func ServeRun(w http.ResponseWriter, r *http.Request, name string) {
 		runReply(w, rpcError(m.ID, -32603, err.Error()))
 		return
 	}
+	stream := strings.Contains(r.Header.Get("Accept"), "text/event-stream")
+	var events chan []byte
+	if stream {
+		// A server can ask roots/list as soon as it reads tools/call.
+		// Register the client's stream before sending that call to it.
+		events = s.open()
+		defer s.close(events)
+	}
 	reply := c.wait(m.ID)
 	if err := c.send(line.Bytes()); err != nil {
 		c.unwait(m.ID)
@@ -689,7 +697,7 @@ func ServeRun(w http.ResponseWriter, r *http.Request, name string) {
 			remember(spec, m.Method, r.Result)
 		}
 	}
-	if !strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+	if !stream {
 		select {
 		case b, ok := <-reply:
 			if !ok {
@@ -703,8 +711,6 @@ func ServeRun(w http.ResponseWriter, r *http.Request, name string) {
 		}
 		return
 	}
-	events := s.open()
-	defer s.close(events)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)

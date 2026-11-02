@@ -50,6 +50,13 @@ sign-in status cannot be squeezed to a zero-width label.
 
 ## Constraints and failure behavior
 
+For a streamed `magpie run` MCP tool call, `ServeRun` registers the client's
+SSE stream before writing `tools/call` to the server. A server may immediately
+ask `roots/list`; `runSession.deliver` must find that stream rather than
+answering the server as though no client were connected. A non-streamed call
+still cannot receive a server-initiated request. `TestRunServerAsks` exercises
+the request and the client's reply through the real HTTP handler.
+
 - magpie takes away only what `Applied` or its mark says it wrote. A folder of the user's with a skill's name is never touched. The user's own fields in an MCP entry are kept.
 - An edit never silently loses. When an agent's copy of a skill and the library both changed, the newest edit wins, and the losing one is kept with the backups.
 - An update from GitHub or a git repository never silently replaces a skill changed here. It is refused, or skipped in an update of several, until the user says to replace it, and the version replaced goes to the backups.
