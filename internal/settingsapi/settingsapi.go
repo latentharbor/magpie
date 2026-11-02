@@ -45,7 +45,7 @@ var Keys = []string{
 	"codexWarmup", "claudeWarmup", "codexWarmAt", "claudeWarmAt", "codexWarmAts", "claudeWarmAts",
 	"workbuddyCheckin", "traeCheckin", "minimaxCheckin", "qoderCheckin",
 	// models: replies, vision, images, search
-	"memberModel", "noLoopGuard", "claudeLeanPrompt", "claudePrintMode", "refusalRetries",
+	"memberModel", "noLoopGuard", "claudeLeanPrompt", "claudePrintMode", "claudeTransport", "refusalRetries",
 	"vision", "visionEffort", "imageGen", "imageTimeout", "classifyTimeout",
 	"searcher", "searcherThen", "searcherEffort", "searchFirst",
 	// updates
@@ -67,6 +67,7 @@ var Choices = map[string][]string{
 	"updateChannel":  {settings.UpdateStable},
 	"updateEvery":    ints(settings.UpdateEveries),
 	"searchFirst":    {settings.SearchFirstModel, settings.SearchFirstAPI},
+	"claudeTransport": {"cli", "http"},
 }
 
 func ints(v []int) []string {
@@ -217,6 +218,14 @@ func Merge(body []byte, cur settings.Settings, web bool) (settings.Settings, err
 	// nor whether a value masked for the first time is told (Must2333)
 	if _, sent := fields["maskAlert"]; !sent {
 		in.MaskAlert = cur.MaskAlert
+	}
+	// A save from an older page must not switch the subscription transport
+	// or its CLI mode behind an active conversation.
+	if _, sent := fields["claudeTransport"]; !sent {
+		in.ClaudeTransport = cur.ClaudeTransport
+	}
+	if _, sent := fields["claudePrintMode"]; !sent {
+		in.ClaudePrintMode = cur.ClaudePrintMode
 	}
 	in.AgentOrder, in.AgentsHidden, in.AgentsShown = cur.AgentOrder, cur.AgentsHidden, cur.AgentsShown
 	in.Window, in.WindowMaximised, in.WindowAt = cur.Window, cur.WindowMaximised, cur.WindowAt // the window's own, as it was last resized and moved
