@@ -208,7 +208,15 @@ jobs:
         shell: bash
         run: |
           go test -race -c -o "$RUNNER_TEMP/gateway.race" -tags "${{ steps.tags.outputs.tags }}" ./internal/gateway/
-          build/race-shards.sh internal/gateway "$RUNNER_TEMP/gateway.race" "$(getconf _NPROCESSORS_ONLN)" -test.timeout=20m
+          shards="$(getconf _NPROCESSORS_ONLN)"
+          timeout=20m
+          if [ "$RUNNER_OS" = macOS ]; then
+            # The Intel runner has fewer effective cores under -race;
+            # four concurrent large-stream shards overran 20 minutes.
+            shards=2
+            timeout=45m
+          fi
+          build/race-shards.sh internal/gateway "$RUNNER_TEMP/gateway.race" "$shards" -test.timeout="$timeout"
           go test -race -tags "${{ steps.tags.outputs.tags }}" ./internal/redact/
 
       # Account usage mixes cached results with concurrent fetches.
