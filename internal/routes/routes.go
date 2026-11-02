@@ -5,7 +5,8 @@
 // failover itself; a Strategy only says the order.
 //
 // Smart, the default, is the core's. The others a provider or group can be
-// routed by (order, rotate, usage, pace, weight, free, fast) are here for a plugin to
+// routed by (order, rotate, usage, pace, weight, free, fast, cheap,
+// drain) are here for a plugin to
 // register: plugins/rotation does, and off, a pool routed by one of them is
 // tried in its listed order, as an unknown routing always was.
 package routes
@@ -44,6 +45,9 @@ type Seat struct {
 	Weight int
 	// Resting: it rests after a failure now
 	Resting bool
+	// Spent: it rests because it is out of quota or credit, not for a
+	// rate limit or a failure. Drain goes on from it.
+	Spent bool
 	// Tokens is what magpie sent it lately, decayed by an hour's half-life
 	Tokens float64
 	// Free: the model this seat would be asked for costs nothing on it —
@@ -54,6 +58,11 @@ type Seat struct {
 	// credits, and is let spend them. All but used up, it goes before
 	// those used up with nothing to go on with.
 	Credits bool
+	// First: such an account the user set to spend its credits before
+	// another account (provider.CodexCreditsFirst): its windows running
+	// out never put it behind the others (seatTier), so it keeps the
+	// place an account with room has.
+	First bool
 	// TTFT is how long it took lately to the first of its reply, in ms,
 	// for the model this seat would be asked for: a decayed average of its
 	// recent streamed answers, 0 when it hasn't answered one lately.
@@ -69,6 +78,14 @@ type Seat struct {
 	// another provider's, or another unit.
 	Left   float64
 	LeftIn string
+	// Priced: what its model costs on it now is known. Cost is then what
+	// a million tokens in and a million out cost at the request's time —
+	// the user's own price, else the list's, at its provider's rate and
+	// rate window, doubled in its vendor's peak hours (catalog.Price.In) —
+	// and CacheCost a million read from the cache. Its model free there
+	// costs 0. Cheapest goes by them.
+	Priced          bool
+	Cost, CacheCost float64
 }
 
 // Strategy orders a pool.
@@ -91,6 +108,11 @@ type Strategy struct {
 	// BySpeed: it weighs by TTFT and TPS, so the gateway reads each seat's
 	// recent speed, and the routing trace then shows it.
 	BySpeed bool
+	// ByPrice: it weighs by Priced, Cost and CacheCost, so the gateway
+	// prices each seat's model at the request's time, and the routing
+	// trace then shows it. Only when set: pricing reads each provider's
+	// model list and the user's prices.
+	ByPrice bool
 }
 
 var reg = struct {

@@ -21,6 +21,7 @@ magpie.plugin("usage", (ctx) => {
     <div class="segs" id="period"></div>
     <div class="segs" id="sessRange" hidden></div>
     <span class="ctx-range" id="ctxRange" hidden></span>
+    <button class="usage-range-menu" id="usageRangeMenu" type="button" aria-haspopup="menu" hidden></button>
     <span class="grow"></span>
     <span class="usage-refresh" id="usageRefresh">
       <button class="icon" id="usageReload" type="button" aria-label="Refresh now" data-tt><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3"/></svg></button>
@@ -37,6 +38,7 @@ magpie.plugin("usage", (ctx) => {
       <div class="segs" id="quotaMode" hidden></div>
     </div>
     <section class="subscription-usage" id="subscriptionUsage"></section>
+    <div class="us-hid" id="quotaHid" hidden><button class="text us-hidline" type="button" aria-expanded="false"></button><div class="list" hidden></div></div>
     <p class="usage-note" id="usageScope" data-t>Gateway calls only; session-log calls are in Requests. Local rejections are excluded from totals.</p>
     <section class="stats" id="stats"></section>
     <section class="chart" id="chart"></section>
@@ -60,6 +62,7 @@ magpie.plugin("usage", (ctx) => {
       <button class="sess-pick" id="ledPurpose" type="button" hidden></button>
       <button class="sess-pick" id="ledProvider" type="button" hidden></button>
       <button class="sess-pick led-more" id="ledProviderMore" type="button" aria-haspopup="menu" hidden></button>
+      <button class="sess-pick" id="ledModel" type="button" hidden></button>
       <button class="sess-pick" id="ledAccount" type="button" hidden></button>
       <button class="sess-pick" id="ledKey" type="button" hidden></button>
       <div class="segs" id="ledStatus"></div>

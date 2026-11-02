@@ -60,6 +60,10 @@ magpie.plugin("sessions", (ctx) => {
   let fitObserver = null;
   let focus = null;           // { agent, id, until }: a session to bring into sight once drawn
   let recordingBusy = false;
+  // the agents picked in the consent (RustCats on X), by id, and whether
+  // the choice is being saved
+  const consentPicked = new Set();
+  let consentBusy = false;
   // An open folder draws its latest SM_PAGE sessions and a "Show N more"
   // that adds the next page where it is (ChildhoodAndy on X: with thousands
   // of sessions, switching to the page or to another agent, a keystroke in
@@ -355,6 +359,82 @@ magpie.plugin("sessions", (ctx) => {
     return card;
   }
 
+  // The consent (RustCats on X: a new install showed every agent's history
+  // before anyone agreed to it). Until the reader says which agents'
+  // sessions magpie may read (data.reads.asked), it reads none of them and
+  // this card comes first: the agents found here, each with its own
+  // switch, off; Allow selected reads those picked, and Allow all every
+  // agent, those found later too. Settings › Privacy changes it later.
+  const consentApplies = () => data?.reads && data.reads.asked === false;
+
+  function consentCard() {
+    const found = data.reads.found || [];
+    const card = el("div", "sm-consent");
+    const title = el("b", "sm-consent-title", t("Show your agents' sessions?"));
+    title.id = "smConsentTitle";
+    card.setAttribute("role", "group");
+    card.setAttribute("aria-labelledby", title.id);
+    card.append(title, el("p", "sm-consent-sub", t("magpie reads no agent's session history until you allow it. Pick the agents whose sessions this page may show; what magpie's gateway served is counted either way. You can change this in Settings › Privacy.")));
+    if (found.length) {
+      const list = el("div", "list sm-consent-list");
+      for (const x of found) {
+        const on = consentPicked.has(x.agent);
+        const row = el("div", "row sm-consent-row");
+        const name = el("span", "sm-consent-name", x.name);
+        name.id = "smConsent-" + x.agent;
+        const sw = el("button", "lib-switch" + (on ? " on" : ""));
+        sw.type = "button";
+        sw.setAttribute("role", "switch");
+        sw.setAttribute("aria-checked", String(on));
+        sw.setAttribute("aria-labelledby", name.id);
+        sw.disabled = consentBusy;
+        sw.append(el("i"));
+        sw.onclick = (e) => {
+          e.stopPropagation();
+          if (consentPicked.has(x.agent)) consentPicked.delete(x.agent); else consentPicked.add(x.agent);
+          const now = consentPicked.has(x.agent);
+          sw.classList.toggle("on", now);
+          sw.setAttribute("aria-checked", String(now));
+          const some = card.querySelector(".sm-consent-some");
+          if (some) some.disabled = consentBusy || !consentPicked.size;
+        };
+        row.onclick = () => sw.click();
+        row.append(icon(x.icon), name, sw);
+        list.append(row);
+      }
+      card.append(list);
+    } else {
+      card.append(el("p", "sm-consent-none", t("No agent's sessions were found on this computer yet.")));
+    }
+    const acts = el("div", "sm-consent-acts");
+    const save = async (all) => {
+      consentBusy = true;
+      draw();
+      const agents = {};
+      for (const x of found) agents[x.agent] = all || consentPicked.has(x.agent);
+      try {
+        await api("sessions/reads", { all, agents });
+        consentPicked.clear();
+        await load();
+      } catch (err) { status(err.message, "err"); }
+      finally { consentBusy = false; draw(); }
+    };
+    if (found.length) {
+      const some = el("button", "text sm-consent-some", t("Allow selected"));
+      some.type = "button";
+      some.disabled = consentBusy || !consentPicked.size;
+      some.onclick = () => save(false);
+      acts.append(some);
+    }
+    const all = el("button", "text primary sm-consent-all", t("Allow all"));
+    all.type = "button";
+    all.disabled = consentBusy;
+    all.onclick = () => save(true);
+    acts.append(all);
+    card.append(acts);
+    return card;
+  }
+
   function head() {
     const h = el("div", "usage-head sm-head");
     const wrap = el("div", "sm-switch");
@@ -429,8 +509,10 @@ magpie.plugin("sessions", (ctx) => {
       return box;
     }
     if (trashOn) { box.append(...trash()); return box; }
+    if (consentApplies()) box.append(consentCard());
     if (recordingApplies()) box.append(recordingCard());
     if (!data.agents.length) {
+      if (consentApplies()) return box;
       const e = el("div", "empty-state");
       e.append(el("b", "", t("No sessions yet")), el("span", "", t("Claude Code's, Codex's, Hermes's, OpenCode's and Pi's sessions on this computer show up here, by the folder they ran in.")));
       box.append(e);
@@ -536,17 +618,36 @@ magpie.plugin("sessions", (ctx) => {
     ed.append(h);
     const names = el("ul", "sm-ask-list sm-provider-list");
     const go = el("button", "text primary", t("Move"));
+    // over a longer list: how many are picked, Select all (Deselect all
+    // once all are) and Invert selection (Cyrus on Discord)
+    const pick = el("div", "sm-provider-pick");
+    const n = el("span", "note sm-count");
+    const all = el("button", "text sm-pick-all");
+    const flip = el("button", "text sm-pick-invert", t("Invert selection"));
+    all.type = flip.type = "button";
+    pick.append(n, el("span", "grow"), all, flip);
+    if (list.length > 1) ed.append(pick);
+    const boxes = [];
+    const sync = () => {
+      for (const [c, id] of boxes) c.checked = chosen.has(id);
+      go.disabled = !chosen.size;
+      n.textContent = t("{n} selected", { n: chosen.size });
+      all.textContent = t(chosen.size === list.length ? "Deselect all" : "Select all");
+    };
+    all.onclick = (e) => { e.stopPropagation(); const on = chosen.size < list.length; for (const s of list) on ? chosen.add(s.id) : chosen.delete(s.id); sync(); };
+    flip.onclick = (e) => { e.stopPropagation(); for (const s of list) chosen.has(s.id) ? chosen.delete(s.id) : chosen.add(s.id); sync(); };
     for (const s of list) {
       const li = el("li");
       const lab = el("label");
       const c = el("input", "sm-check");
       c.type = "checkbox";
-      c.checked = true;
-      c.onchange = () => { c.checked ? chosen.add(s.id) : chosen.delete(s.id); go.disabled = !chosen.size; };
+      c.onchange = () => { c.checked ? chosen.add(s.id) : chosen.delete(s.id); sync(); };
+      boxes.push([c, s.id]);
       lab.append(c, el("span", "name", s.title || s.id), el("span", "sm-prov", s.provider), el("span", "note", ago(s.last)));
       li.append(lab);
       names.append(li);
     }
+    sync();
     ed.append(names);
     ed.append(el("p", "lib-confirm", t("Only the provider each one names is changed, in its files and in Codex's database: its messages, id, title and archive stay as they are. A copy of its files is kept in magpie's trash folder first, and Undo moves them back. A session written to in the last minute is left alone.")));
     const bar = el("div", "bar");

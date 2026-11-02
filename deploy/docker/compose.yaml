@@ -1,0 +1,19 @@
+services:
+  magpie:
+    image: ${MAGPIE_IMAGE:-ghcr.io/latentharbor/magpie:latest}
+    restart: unless-stopped
+    stop_grace_period: 2m
+    ports:
+      # Bind the gateway to a VPN/LAN IP to share it. Keep the admin page local.
+      - "${MAGPIE_BIND_IP:-127.0.0.1}:3425:3425"
+      - "127.0.0.1:3430:3430"
+    environment:
+      MAGPIE_ADDR: 0.0.0.0:3425
+      MAGPIE_PUBLIC_URL: ${MAGPIE_PUBLIC_URL:?Set the URL clients use to reach the gateway}
+      MAGPIE_WEB_KEY: ${MAGPIE_WEB_KEY:?Set a persistent random admin key}
+    volumes:
+      - magpie-config:/config
+    command: [web, --addr, 0.0.0.0:3430, --no-open]
+
+volumes:
+  magpie-config:

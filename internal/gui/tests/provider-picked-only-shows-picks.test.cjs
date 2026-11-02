@@ -5,7 +5,9 @@
 // ticked, all 8 still shown under 仅所选). The others wait behind Show the
 // other n; a click on a model while picking leaves them all in sight, and
 // Picked only clicked again folds them away. Vendor's list and Usage only
-// show every model. In every language, Chromium and WebKit, at 1100 and 420.
+// show every model, and Picked only after them gives the picks back (to
+// the list and back, every model came back picked). In every language,
+// Chromium and WebKit, at 1100 and 420.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -65,6 +67,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           await browser.close();
         });
         page.setDefaultTimeout(5000);
+        page.setDefaultNavigationTimeout(60000);
         const errors = [];
         page.on("pageerror", (e) => errors.push(e.message));
         await page.route("**/*", serve(lang));
@@ -85,6 +88,18 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal((await rest.innerText()).trim(), w.rest);
         const box = await rest.boundingBox(), ed = await editor.boundingBox();
         assert.ok(box && box.x >= ed.x - 1 && box.x + box.width <= ed.x + ed.width + 1, "the button fits the editor");
+
+        // to the vendor's list and back (yyddbds' second report: back on
+        // Picked only, every model came back picked), and by Usage only: the
+        // same 3 picks, the others behind the button
+        for (const away of ["list", "none"]) {
+          await seg(away).click();
+          assert.deepEqual(await shown(), names.map(([, n]) => n), away + ": every model");
+          await seg("picked").click();
+          assert.deepEqual(await shown(), picked.map(nameOf), "back from " + away + ": the picks, not the list");
+          assert.equal(await editor.locator(".mchips .mchip:not(.on)").count(), 0);
+          assert.equal((await rest.innerText()).trim(), w.rest);
+        }
 
         // shown, all 8 are there to pick from, and a pick keeps them in sight
         await rest.click();

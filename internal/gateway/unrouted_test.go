@@ -2,8 +2,6 @@ package gateway
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -136,6 +134,28 @@ func TestUnroutedUnknownHoldAnsweredSooner(t *testing.T) {
 	unlock()
 	if r.err != nil || r.code != http.StatusGatewayTimeout || !strings.Contains(r.body, "without routing it to any provider") {
 		t.Fatalf("held request answered %d %q %v", r.code, r.body, r.err)
+	}
+	heldSaved(t, s)
+}
+
+// heldSaved waits for the report of the request s answered 504 for
+// being held before routing: the 504 goes first and the report is saved
+// after it, so a test that returns on the 504 alone has its HOME removed
+// under the write ("TempDir RemoveAll cleanup: … magpie/held: directory
+// not empty" on mote, 10-29).
+func heldSaved(t *testing.T, s *Server) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		// any route: once let go, the request may have begun one of
+		// its own beside the one shown while it was held
+		for _, r := range routesOf(s, "probe/text") {
+			if r.Held != "" {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the held request's report was never saved: %+v", routesOf(s, "probe/text"))
+		}
 	}
 }
 
@@ -276,19 +296,12 @@ func TestUnroutedSlotWaitNotCutOff(t *testing.T) {
 // returned, closed to let it go with text.
 func heldSight(t *testing.T, s *Server) (release func(text string)) {
 	t.Helper()
-	model, ok := seer()
-	if !ok {
+	if _, ok := seer(); !ok {
 		t.Fatal("no model to describe images with")
 	}
-	sum := sha256.Sum256([]byte(model + "\x00" + visionEffort(model) + "\x00" + "data:image/png;base64,aGVsbG8="))
-	key := hex.EncodeToString(sum[:])
 	e := &sight{done: make(chan struct{})}
 	s.sightMu.Lock()
-	if s.sights == nil {
-		s.sights = map[string]*sight{}
-	}
-	s.sights[key] = e
-	s.sightOrder = append(s.sightOrder, key)
+	s.keepSightLocked(sightKey("data:image/png;base64,aGVsbG8="), e)
 	s.sightMu.Unlock()
 	closed := false
 	t.Cleanup(func() {
@@ -389,6 +402,7 @@ func TestUnroutedRequestShownThenAnswered(t *testing.T) {
 	if len(rs) != 1 || !rs[0].Done || rs[0].Status != http.StatusGatewayTimeout || !strings.Contains(rs[0].Error, "without routing") {
 		t.Fatalf("the held request's route: %+v", rs)
 	}
+	heldSaved(t, s)
 }
 
 // One shown while it waited gives way to its own route once routed: the

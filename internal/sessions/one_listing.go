@@ -72,7 +72,8 @@ var heldWaiting func()
 
 // heldFiles is list(), or, under a hold, the listing of key taken since
 // the latest hold began. The folders are listed outside the lock, once
-// for the reads that ask meanwhile.
+// for the reads that ask meanwhile. The listing is theirs together: a
+// reader never writes to it, and sorts or filters a copy of its own.
 func heldFiles(key string, list func() []file) []file {
 	held.Lock()
 	if held.n == 0 {
@@ -85,7 +86,7 @@ func heldFiles(key string, list func() []file) []file {
 			heldWaiting()
 		}
 		<-l.ready
-		return slices.Clone(l.files)
+		return l.files
 	}
 	mine := &heldList{gen: held.gen, ready: make(chan struct{})}
 	if held.lists == nil {
@@ -94,8 +95,10 @@ func heldFiles(key string, list func() []file) []file {
 	held.lists[key] = mine
 	held.Unlock()
 	defer close(mine.ready)
-	files := list()
-	// before ready is closed, so whoever waited reads it
-	mine.files = slices.Clone(files)
-	return files
+	// one listing for every read under the hold, not a copy each: ~95 MB
+	// of a minute of polls (#2278). They only read it, and clipped, an
+	// append to it is made elsewhere. Before ready is closed, so whoever
+	// waited reads it.
+	mine.files = slices.Clip(list())
+	return mine.files
 }

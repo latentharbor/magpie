@@ -104,6 +104,13 @@ func readZhipuPlan(b []byte) (string, []QuotaWindow, error) {
 	if code, msg, ok := zhipuEnvelope(b); ok && ZhipuKeyRefused(code) {
 		// the key itself refused, which no plan can be read past
 		return "", nil, zhipuKeyRefusal{msg}
+	} else if ok && code != 1113 && zhipuCodeStatus(code) == http.StatusTooManyRequests {
+		// /api/monitor answers its rate limits 200 in the envelope too
+		// (1302 "并发数过高", 1303 "频率过高", …), in Chinese words a
+		// passing failure isn't recognised by: said as the 429 it is, so
+		// the card keeps what was last read (keepLast) instead of losing
+		// it to a read that told nothing about the plan
+		return "", nil, fmt.Errorf("429 rate limited (%d): %s", code, msg)
 	}
 	if r.Success != nil && !*r.Success || r.Data == nil {
 		if r.Msg != "" {
@@ -413,9 +420,14 @@ func KimiCodeSearch(p Provider) string {
 //	"usages":{"limit_5h":{"used_ratio":0.4372,"reset_time":"…"},
 //	  "limit_7d":{…},"limit_month_total":{…},"limit_month_code":{…}}
 //
-// limit_month_total is the month's allowance; limit_month_code is the
-// share of it code has used, no allowance of its own, so it isn't shown.
-// A window told both ways is taken from usages, as kimi-code does.
+// limit_month_total is the month's allowance. limit_month_code is code's
+// share of it (kimi-code) or, on the membership of 2026-09, the coding
+// allowance itself with no total beside it (GCMP's kimiUsage.ts), so it
+// is the month only when limit_month_total isn't there. A window told
+// both ways is taken from usages, as kimi-code does. Each share is read
+// under its camelCase name too, a reset as text or epoch seconds or
+// milliseconds (EchoBird's fixture), and a limits[] window counted in
+// weeks or months by its length.
 func readKimiCode(b []byte) (string, []QuotaWindow, error) {
 	type row map[string]any
 	var r struct {
@@ -439,6 +451,25 @@ func readKimiCode(b []byte) (string, []QuotaWindow, error) {
 		}
 		return 0, false
 	}
+	// a reset as RFC 3339 text or as epoch seconds or milliseconds, under
+	// either spelling of its name
+	resetOf := func(d row) *time.Time {
+		for _, k := range []string{"resetTime", "resetAt", "reset_at", "reset_time"} {
+			if s, _ := d[k].(string); s != "" {
+				if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+					return &t
+				}
+			}
+			if n, ok := num(d[k]); ok && n > 0 {
+				t := time.Unix(int64(n), 0)
+				if n > 1e11 {
+					t = time.UnixMilli(int64(n))
+				}
+				return &t
+			}
+		}
+		return nil
+	}
 	window := func(d row, name string, span time.Duration) (QuotaWindow, bool) {
 		limit, ok := num(d["limit"])
 		if !ok || limit <= 0 {
@@ -453,14 +484,7 @@ func readKimiCode(b []byte) (string, []QuotaWindow, error) {
 			used = limit - left
 		}
 		w := QuotaWindow{Name: name, Span: span, Used: max(0, min(100, used/limit*100))}
-		for _, k := range []string{"resetTime", "resetAt", "reset_at", "reset_time"} {
-			if s, _ := d[k].(string); s != "" {
-				if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-					w.ResetsAt = &t
-					break
-				}
-			}
-		}
+		w.ResetsAt = resetOf(d)
 		return w, true
 	}
 	out := []QuotaWindow{}
@@ -479,9 +503,15 @@ func readKimiCode(b []byte) (string, []QuotaWindow, error) {
 			span = time.Duration(n) * time.Hour
 		case strings.Contains(unit, "DAY"):
 			span = time.Duration(n) * 24 * time.Hour
+		case strings.Contains(unit, "WEEK"):
+			span = time.Duration(n) * 7 * 24 * time.Hour
+		case strings.Contains(unit, "MONTH"):
+			span = time.Duration(n) * 30 * 24 * time.Hour
 		}
 		name := "Allowance"
 		switch {
+		case span == 30*24*time.Hour:
+			name = "Month"
 		case span > 24*time.Hour && span%(24*time.Hour) == 0:
 			name = fmt.Sprintf("%d days", span/(24*time.Hour))
 		case span >= time.Hour && span%time.Hour == 0:
@@ -500,19 +530,21 @@ func readKimiCode(b []byte) (string, []QuotaWindow, error) {
 	for _, k := range []struct {
 		key, name string
 		span      time.Duration
-	}{{"limit_5h", "5 hours", 5 * time.Hour}, {"limit_7d", "7 days", 7 * 24 * time.Hour}, {"limit_month_total", "Month", 30 * 24 * time.Hour}} {
+	}{{"limit_5h", "5 hours", 5 * time.Hour}, {"limit_7d", "7 days", 7 * 24 * time.Hour},
+		{"limit_month_total", "Month", 30 * 24 * time.Hour}, {"limit_month_code", "Month", 30 * 24 * time.Hour}} {
 		d := r.Usages[k.key]
+		if d == nil {
+			d = r.Usages[camel(k.key)]
+		}
 		ratio, ok := num(d["used_ratio"])
-		if d == nil || !ok || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
+		if !ok {
+			ratio, ok = num(d["usedRatio"])
+		}
+		if d == nil || !ok || math.IsNaN(ratio) || math.IsInf(ratio, 0) ||
+			slices.ContainsFunc(shares, func(s QuotaWindow) bool { return s.Span == k.span }) {
 			continue
 		}
-		w := QuotaWindow{Name: k.name, Span: k.span, Used: max(0, min(100, ratio*100))}
-		if s, _ := d["reset_time"].(string); s != "" {
-			if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-				w.ResetsAt = &t
-			}
-		}
-		shares = append(shares, w)
+		shares = append(shares, QuotaWindow{Name: k.name, Span: k.span, Used: max(0, min(100, ratio*100)), ResetsAt: resetOf(d)})
 	}
 	if len(shares) > 0 {
 		out = slices.DeleteFunc(out, func(w QuotaWindow) bool {
@@ -757,9 +789,15 @@ func PlanQuotas(ctx context.Context) []SubscriptionQuota {
 			case err == nil && len(ws) == 0:
 				return // a key with no plan
 			case err != nil && !j.src.sure:
-				// no plan, unless one was read before
+				// no plan, unless one was read before: a key whose windows
+				// were read is a plan's, and a read of it that fails is
+				// unknown, not "no plan" — its card stays, with what was
+				// last read when the failure passes, else with why
+				// (larchsis on X: the second of two GLM Coding Plan keys
+				// lost its card on each refresh)
 				q.Error = err.Error()
-				if q = keepReading(ctx, q, tag); q.AsOf != nil {
+				known := hadReading(q.Provider, tag)
+				if q = keepReading(ctx, q, tag); q.AsOf != nil || known {
 					got[i] = &q
 				}
 				return
@@ -897,4 +935,16 @@ func zhipuKeyTeamAt(ctx context.Context, root, quotaURL, key string, team *Zhipu
 	}
 	_, ws, err := readZhipuPlan(b)
 	return "GLM Coding Team", ws, err
+}
+
+// camel spells a snake_case name in camelCase: limit_month_total is
+// limitMonthTotal.
+func camel(s string) string {
+	parts := strings.Split(s, "_")
+	for i := 1; i < len(parts); i++ {
+		if parts[i] != "" {
+			parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+		}
+	}
+	return strings.Join(parts, "")
 }

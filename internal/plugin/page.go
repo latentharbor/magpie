@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/yetone/magpie/internal/proc"
 )
 
 // WindowSpec is what a plugin adds to magpie's window: its page
@@ -44,6 +46,11 @@ type PageSpec struct {
 	// its own address to a browser on another computer, where the
 	// service's 127.0.0.1 is that computer's own.
 	Service *ServiceSpec
+	// KeepAlive keeps the page's frame while the reader is on another
+	// page, however long (magpie.page.keepAlive true; anything else is
+	// false, never a package that doesn't parse): a page that works when
+	// no one looks at it. Others are let go after a while hidden.
+	KeepAlive bool
 }
 
 // ServiceSpec is a page's local service: an HTTP server on 127.0.0.1 at
@@ -145,15 +152,16 @@ func Window(target string) (w *WindowSpec, only bool) {
 		return nil, false
 	}
 	type part struct {
-		Title    string          `json:"title"`
-		Titles   json.RawMessage `json:"titles"`
-		File     string          `json:"file"`
-		Icon     string          `json:"icon"`
-		Slot     string          `json:"slot"`
-		Replaces string          `json:"replaces"`
-		ID       string          `json:"id"`
-		Menu     string          `json:"menu"`
-		Service  json.RawMessage `json:"service"`
+		Title     string          `json:"title"`
+		Titles    json.RawMessage `json:"titles"`
+		File      string          `json:"file"`
+		Icon      string          `json:"icon"`
+		Slot      string          `json:"slot"`
+		Replaces  string          `json:"replaces"`
+		ID        string          `json:"id"`
+		Menu      string          `json:"menu"`
+		Service   json.RawMessage `json:"service"`
+		KeepAlive json.RawMessage `json:"keepAlive"`
 	}
 	var pkg struct {
 		Main    string          `json:"main"`
@@ -171,7 +179,7 @@ func Window(target string) (w *WindowSpec, only bool) {
 	w = &WindowSpec{}
 	if pg := pkg.Magpie.Page; pg != nil {
 		if file, ok := htmlInside(target, pg.File); ok {
-			p := &PageSpec{Title: strings.TrimSpace(pg.Title), Titles: titles(pg.Titles), File: file, Dir: filepath.Dir(file)}
+			p := &PageSpec{Title: strings.TrimSpace(pg.Title), Titles: titles(pg.Titles), File: file, Dir: filepath.Dir(file), KeepAlive: string(pg.KeepAlive) == "true"}
 			// the icon is served with the page, so it sits in the page's folder
 			if icon, ok := inside(target, pg.Icon); ok {
 				if rel, err := filepath.Rel(p.Dir, icon); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -297,7 +305,11 @@ func htmlInside(dir, rel string) (string, bool) {
 }
 
 // inside is rel joined to dir, if that stays inside dir: no "..", no
-// absolute path, and no symbolic link out of it.
+// absolute path, and no link out of it. Both sides are resolved with
+// proc.RealPath, which follows a Windows junction as well as a symlink:
+// filepath.EvalSymlinks gives up on a path through a junction since Go
+// 1.23, and a config dir under Scoop's persist junction lost every page
+// (#4265).
 func inside(dir, rel string) (string, bool) {
 	rel = strings.TrimSpace(rel)
 	if rel == "" || filepath.IsAbs(rel) || strings.HasPrefix(rel, "/") || strings.Contains(rel, `\`) {
@@ -308,11 +320,11 @@ func inside(dir, rel string) (string, bool) {
 		return "", false
 	}
 	full := filepath.Join(dir, clean)
-	realDir, err := filepath.EvalSymlinks(dir)
+	realDir, err := proc.RealPath(dir)
 	if err != nil {
 		return "", false
 	}
-	real, err := filepath.EvalSymlinks(full)
+	real, err := proc.RealPath(full)
 	if err != nil {
 		return "", false
 	}

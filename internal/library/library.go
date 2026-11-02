@@ -35,6 +35,11 @@ type Library struct {
 	// Applied is what magpie wrote into each agent, so that what it takes
 	// away is only ever its own.
 	Applied map[string]*Applied `json:"applied,omitempty"`
+	// Away are other computers' servers by the name of one kept to this
+	// computer here (Server.Local), as a sync last brought them: never
+	// given to an agent here, and carried on as they came, so a sync from
+	// here takes them from nobody (carry.go)
+	Away []*Server `json:"away,omitempty"`
 	// Icons are the icons of the servers added from the market, by what
 	// each runs, for the page to show them by
 	Icons map[string]string `json:"icons,omitempty"`
@@ -50,6 +55,9 @@ type Library struct {
 	// which hands each call on to the library's servers ticked for it, in
 	// place of their own entries (#2679, mcp_hub.go)
 	MCPHub bool `json:"mcpHub,omitempty"`
+	// PluginsOffered are the plugins (plugin.Name) given a server of their
+	// tools, for one the user removed not to come back (plugin_tools.go)
+	PluginsOffered []string `json:"pluginsOffered,omitempty"`
 	// SeenSkills are, by repository and ref ("owner/repo@ref"), the
 	// folders of skills there the page has offered: picked or not at
 	// install, or set aside after a check. A check offers only the others
@@ -114,6 +122,16 @@ type Applied struct {
 	Startup map[string]float64 `json:"startup,omitempty"`
 }
 
+// empty is whether a holds nothing magpie wrote: a sync that only looked
+// at an agent — its hooks, its subagents, its MCP file, with nothing of
+// the library's to give it — makes no record, and a save drops the entry
+// it looked at the agent through (#4247).
+func (a *Applied) empty() bool {
+	return !a.Instructions && a.InstrHash == "" && len(a.MCP) == 0 && len(a.Skills) == 0 &&
+		len(a.ToolsOff) == 0 && len(a.ToolRules) == 0 && len(a.Hooks) == 0 &&
+		len(a.Subagents) == 0 && len(a.Startup) == 0
+}
+
 var mu lock // one change at a time, from the page or the CLI's process
 
 // lock is a mutex that counts the times it was taken, for Sync to tell
@@ -163,7 +181,15 @@ func (l *Library) save() error {
 	for _, s := range l.Subagents {
 		s.Agents = orNone(s.Agents)
 	}
-	for _, a := range l.Applied {
+	// an entry with nothing in it is no record of what magpie wrote, and
+	// is not kept: a sync that only looked at an agent used to leave one
+	// behind, one per agent, and the write its save brought into a file
+	// otherwise unchanged was caught red by a test of the CLI's (#4247)
+	for id, a := range l.Applied {
+		if a.empty() {
+			delete(l.Applied, id)
+			continue
+		}
 		sort.Strings(a.MCP)
 		sort.Strings(a.Skills)
 	}
@@ -175,6 +201,7 @@ func (l *Library) save() error {
 	for _, s := range l.MCP {
 		s.Agents = orNone(s.Agents)
 	}
+	sort.Slice(l.Away, func(i, j int) bool { return l.Away[i].Name < l.Away[j].Name })
 	l.Instructions.Agents = orNone(l.Instructions.Agents)
 	b, err := json.MarshalIndent(l, "", "  ")
 	if err != nil {
@@ -273,6 +300,7 @@ func changeLocked(f func(l *Library) error) (*Result, error) {
 	if err := f(l); err != nil {
 		return nil, err
 	}
+	l.settleAway()
 	l.heal() // a server f brought in, from another computer too
 	if err := l.save(); err != nil {
 		return nil, err

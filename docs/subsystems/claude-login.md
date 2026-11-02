@@ -114,6 +114,11 @@ stream acceptance, and sends their touches to the gateway with official
 credentials stripped. It does not rewrite the touch body or infer a new turn.
 Only still-mapped targets qualify. Unknown IDs stay official when official
 inference is allowed; with gateway-managed usage they fail explicitly.
+The generic gateway rejects Message Thread create and continue requests
+before routing because it cannot carry server-side state across providers.
+The native Claude Team HTTP path retains its earlier behavior for Desktop
+builds that recover an upstream `thread_not_found` by replaying the complete
+turn. A seat handoff can still require that caller replay.
 The gateway separately resolves the original inference account and checks its
 current eligibility and grants; the proxy's model mapping cannot select OAuth
 credentials itself. Ownership metadata is bounded, process-local and does not

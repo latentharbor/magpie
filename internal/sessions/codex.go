@@ -394,12 +394,17 @@ func codexSubagentTaskTitles(files []file) map[codexTaskTitle]string {
 		if f.agent != "codex" || cache[f.path] == nil {
 			continue
 		}
+		st := cache[f.path]
+		// most threads spawn no agent: four maps for each of them on every
+		// poll were ~140 MB in 80s of polls over ~34k sessions (#2278)
+		if len(st.CodexSpawnConflicts) == 0 && len(st.CodexAgentConflicts) == 0 && len(st.CodexSpawnNames) == 0 && len(st.CodexAgentIDs) == 0 {
+			continue
+		}
 		calls := parents[f.key]
 		if calls == nil {
 			calls = &parentCalls{names: map[string]string{}, children: map[string]string{}, badNames: map[string]bool{}, badChildren: map[string]bool{}}
 			parents[f.key] = calls
 		}
-		st := cache[f.path]
 		for id := range st.CodexSpawnConflicts {
 			calls.badNames[id] = true
 		}

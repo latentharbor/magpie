@@ -3,9 +3,11 @@ package gateway
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/budget"
+	"github.com/yetone/magpie/internal/netguard"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/settings"
 	"github.com/yetone/magpie/internal/usage"
@@ -182,19 +185,36 @@ func LANURLs() []string {
 // the other). Private ones come first: in the interfaces' order the public
 // one came first, and Settings offered it as the address under "Share on
 // local network" (the same user, asking why sharing was on the internet).
+// Of the private ones, RFC 1918's (a home or office network) come before
+// carrier-grade NAT's (Tailscale). A proxy's TUN address is left out:
+// 198.18.0.0/15 (netguard.FakeIP), which Clash, Mihomo, sing-box, Surge
+// and Stash take for their TUN interfaces and fake-ip answers, and which
+// no network hands out: no other device reaches this computer there, and
+// Settings offered http://198.18.0.1 instead of 192.168.110.x (coeo91 on
+// Discord). It goes by the address, not the interface's name: Tailscale's
+// is a utun too, and its address is reached.
 func LANHosts() []string {
-	var near, far []string
+	var home, near, far []string
 	for _, ip := range hostIPs() {
-		if ip.To4() == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		if ip.To4() == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || fakeIP(ip) {
 			continue
 		}
-		if PublicIP(ip) {
+		switch {
+		case ip.IsPrivate():
+			home = append(home, ip.String())
+		case PublicIP(ip):
 			far = append(far, ip.String())
-		} else {
+		default:
 			near = append(near, ip.String())
 		}
 	}
-	return append(near, far...)
+	return slices.Concat(home, near, far)
+}
+
+// fakeIP: ip is a proxy's TUN or fake-ip address (netguard.FakeIP).
+func fakeIP(ip net.IP) bool {
+	a, ok := netip.AddrFromSlice(ip)
+	return ok && netguard.FakeIP(a)
 }
 
 // sharedRanges are IPv4 ranges outside RFC 1918 that still aren't the
@@ -348,6 +368,26 @@ func lanGuard(next http.Handler) http.Handler {
 			http.Error(w, "magpie isn't shared on the local network", http.StatusForbidden)
 			return
 		}
+		// the key page itself is the same bytes for everyone, so it is
+		// opened before the key it asks for is typed; its data isn't
+		if remote && keyPageOpen(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// a link the image server handed out opens with its own token
+		// and no key (imageTokenAsked); the handler judges the token, and
+		// refuses one that opens nothing as a request without a key
+		if remote && imageTokenAsked(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// a CI job's OIDC token traded for a key carries the token, not a
+		// key: the handler verifies it, and counts one it refuses against
+		// tooManyAuthFails (oidc_keys.go)
+		if remote && oidcExchange(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if remote || managedKey(r) {
 			var ok bool
 			r, ok = identifyCaller(w, r)
@@ -493,10 +533,25 @@ func callerGuard(next http.Handler) http.Handler {
 func identifyCaller(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
 	var who access.Identity
 	ok := false
+	var refused *access.Refused
 	for _, k := range callerKeys(r) {
-		if who, ok = access.Authenticate(k); ok {
+		var err error
+		if who, err = access.Check(k); err == nil {
+			ok = true
 			break
 		}
+		if refused == nil {
+			errors.As(err, &refused)
+		}
+	}
+	if !ok && refused != nil {
+		// an expired key, or one its issuer no longer lets in, is told so
+		// on every route, from this computer too: a sandbox's agent on
+		// loopback holding a key that has run out is not let on as one
+		// with no key, which would hand it everything its key held it from
+		log.Printf("refused %s %s from %s: %s", r.Method, r.URL.Path, r.RemoteAddr, refused.Why)
+		writeError(w, provider.Chat, http.StatusUnauthorized, refused.Why)
+		return r, false
 	}
 	if !ok && !local(r) {
 		if over, retry := tooManyAuthFails(); over {
@@ -549,10 +604,14 @@ func appendUsage(r *http.Request, rec usage.Record) {
 		rec.Subagent, rec.ParentAgent = subagentOf(r.Header)
 	}
 	who := access.Caller(r.Context())
-	rec.CallerKeyID, rec.CallerKeyName = who.KeyID, who.KeyName
+	rec.CallerKeyID, rec.CallerKeyName, rec.CallerIssuerID = who.KeyID, who.KeyName, who.IssuerID()
 	rec.Local = local(r)
 	if r.Context().Value(observedKey{}) != nil {
 		rec.Watched = true
+	}
+	if !rec.IsProbe() {
+		// a request an MCP tool call made: its row names the model (mcpUse)
+		mcpUseOf(r.Context()).used(rec.Provider, rec.Model)
 	}
 	budget.Append(rec)
 }

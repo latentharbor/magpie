@@ -737,7 +737,8 @@ func TestCodexPoolSaysTheClientsVersion(t *testing.T) {
 		t.Fatalf("status %d: %s (User-Agent %q, version %q)", rec.Code, rec.Body.String(), uas, vers)
 	}
 	for i := range uas {
-		if !strings.HasPrefix(uas[i], "codex_cli_rs/0.161.0 (") || vers[i] != "0.161.0" {
+		v, _, _ := strings.Cut(strings.TrimPrefix(uas[i], "codex_cli_rs/"), " ")
+		if !strings.HasPrefix(uas[i], "codex_cli_rs/") || older(v, "0.161.0") || vers[i] != v {
 			t.Errorf("request %d: User-Agent %q, version %q", i, uas[i], vers[i])
 		}
 	}

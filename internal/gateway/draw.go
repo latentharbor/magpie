@@ -175,15 +175,21 @@ func resolveDrawing(id string) (provider.Provider, string, bool) {
 // drawsFamily is whether a subscription whose image models magpie lists
 // itself (codexDrawers, grokDrawers) draws id, a model of the family those
 // are of: any grok-imagine-image* on a Grok subscription, any gpt-image-*
-// on a ChatGPT account. The vendor's newer ones work before magpie names
-// them, as grok-imagine-video* do for videos; one it doesn't serve is
-// refused by the vendor, in its own words.
+// on a ChatGPT account, and any gpt-image-* on a keyed relay at a Responses
+// base (a Codex backend relay such as sub2api) whose own list draws one of
+// that family already (#4432). The vendor's newer ones work before magpie
+// names them, as grok-imagine-video* do for videos; one it doesn't serve is
+// refused by the vendor, in its own words. A relay whose list draws no
+// GPT Image isn't taken to: a Codex turn on it draws with the Settings
+// pick, as it did (TestCodexDrawingFallsBackToImageSetting).
 func drawsFamily(p provider.Provider, id string) bool {
 	switch {
 	case drawsGrok(p):
 		return strings.HasPrefix(id, grokDrawerFamily)
 	case drawsCodex(p):
 		return strings.HasPrefix(id, codexDrawerFamily)
+	case p.Account == nil && p.Base(provider.Responses) != "" && strings.HasPrefix(id, codexDrawerFamily):
+		return slices.ContainsFunc(Drawers(p), func(m catalog.Model) bool { return strings.HasPrefix(m.ID, codexDrawerFamily) })
 	}
 	return false
 }
@@ -266,7 +272,13 @@ func drawsCodex(p provider.Provider) bool {
 // own picks named for images, and those the user said draw (#1399), less
 // those they said make videos; a ChatGPT account's GPT Image, a Grok
 // subscription's Grok Imagine, a WorkBuddy plan's those its config lists.
-func Drawers(p provider.Provider) []catalog.Model {
+func Drawers(p provider.Provider) []catalog.Model { return DrawersOf(p, p.Available) }
+
+// DrawersOf is Drawers with p's model list from avail, called only when
+// it is wanted: the Providers page has each provider's list at hand, and
+// reading it again for each was 15 MB of what twenty window polls
+// allocated. What avail gives is only read.
+func DrawersOf(p provider.Provider, avail func() []catalog.Model) []catalog.Model {
 	if drawsWorkBuddy(p) {
 		return wbDrawers(p)
 	}
@@ -284,7 +296,7 @@ func Drawers(p provider.Provider) []catalog.Model {
 		// the image models a Google sign-in lists (Antigravity's
 		// gemini-3.1-flash-image), which draw on Code Assist (#757)
 		var out []catalog.Model
-		for _, m := range p.Available() {
+		for _, m := range avail() {
 			if catalog.DrawsID(m.ID) {
 				m.Provider = p.ID
 				out = append(out, m)
@@ -297,9 +309,17 @@ func Drawers(p provider.Provider) []catalog.Model {
 		// its list names that draw on the images API, sent through its
 		// fetch under the base its chat goes to (01huadalang on Discord:
 		// the SenseNova plugin's sensenova-u1.5-lite)
+		// A model the plugin speaks Gemini's API to (@ai-sdk/google) draws
+		// as a Google sign-in's do, on generateContent asking for images,
+		// when it says it gives images or is named for them (XYenon's
+		// Google AI Studio plugin).
 		var out []catalog.Model
-		for _, m := range p.Available() {
-			if catalog.DrawsID(m.ID) && catalog.ImagesAPI(m.ID) && p.PluginOpenAICompatible(m.ID) && p.ModelKind(m.ID) != provider.KindVideo {
+		for _, m := range avail() {
+			if p.ModelKind(m.ID) == provider.KindVideo {
+				continue
+			}
+			if catalog.DrawsID(m.ID) && catalog.ImagesAPI(m.ID) && p.PluginOpenAICompatible(m.ID) ||
+				pluginDrawsGemini(p, m.ID) && (catalog.DrawsID(m.ID) || slices.Contains(m.OutputModalities, "image")) {
 				m.Provider = p.ID
 				out = append(out, m)
 			}
@@ -514,6 +534,9 @@ func (s *Server) images(edit bool) http.HandlerFunc {
 			return
 		}
 		g, ms, isGroup := drawingGroup(d.Model, p, model)
+		if isGroup {
+			r = heldByGroup(r, g) // held to the group's accounts, if it is
+		}
 		keyWho, keyHeld := keyHolds(r)
 		if keyHeld && named && (isGroup && !groupAllowed(keyWho, g, ms) || !isGroup && !modelAllowed(keyWho, p, model)) {
 			fail(403, keyModelError(keyWho, d.Model))
@@ -1069,7 +1092,7 @@ func (s *Server) draw(ctx context.Context, p provider.Provider, model string, d 
 	if drawsCodex(p) || drawsGrok(p) {
 		return s.drawImages(ctx, p, model, d)
 	}
-	if googleAccount(p) {
+	if googleAccount(p) || pluginDrawsGemini(p, model) {
 		return s.drawCodeAssist(ctx, p, model, d)
 	}
 	if p.Base(provider.Chat) == "" && p.Base(provider.Responses) == "" {
@@ -1157,7 +1180,7 @@ func (s *Server) sendWith(ctx context.Context, p provider.Provider, method, url,
 	} else {
 		// Google's API keys go in their own header
 		req.Header.Set("x-goog-api-key", p.Key)
-		for k, v := range p.Headers {
+		for k, v := range p.SentHeaders(ctx) {
 			catalog.PutUserHeader(req.Header, k, v)
 		}
 	}
@@ -1293,6 +1316,9 @@ func (s *Server) drawImages(ctx context.Context, p provider.Provider, model stri
 	}
 	if isArk(p) {
 		return s.drawArk(ctx, p, model, d)
+	}
+	if dashScopeDraws(p, model) {
+		return s.drawDashScope(ctx, p, model, d)
 	}
 	base := strings.TrimRight(p.Base(provider.Chat), "/")
 	if base == "" {
@@ -1789,6 +1815,14 @@ func (s *Server) drawGemini(ctx context.Context, p provider.Provider, model stri
 	})
 }
 
+// pluginDrawsGemini is whether model is one p, a plugin, speaks Gemini's
+// generateContent to (its npm @ai-sdk/google) and isn't an Imagen, which
+// draws on :predict: such a model draws through the plugin's fetch as a
+// Google sign-in's draws, on drawCodeAssist.
+func pluginDrawsGemini(p provider.Provider, model string) bool {
+	return p.IsPlugin() && !catalog.ImagesAPI(model) && slices.Equal(p.APIs(model), []provider.Protocol{provider.CodeAssist})
+}
+
 // drawCodeAssist asks an image model on a Google sign-in to draw, as it is
 // asked to chat: on Code Assist, in the account's envelope, which asks for
 // images beside text for an image model (buildCodeAssistSent); what it
@@ -1805,7 +1839,7 @@ func (s *Server) drawCodeAssist(ctx context.Context, p provider.Provider, model 
 		}
 		parts = append(parts, Part{Kind: Image, MediaType: pic.Mime, Data: base64.StdEncoding.EncodeToString(pic.Data)})
 	}
-	req := &Request{Messages: []Message{{Role: "user", Parts: parts}}}
+	req := &Request{Messages: []Message{{Role: "user", Parts: parts}}, draws: true}
 	return s.eachDrawing(d.N, func() (drawn, int, error) {
 		// one each: the drawings are asked for at once
 		ask := s.askTranslated(p, provider.CodeAssist, model, http.Header{}, http.Header{})

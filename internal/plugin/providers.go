@@ -91,6 +91,20 @@ type Model struct {
 	// OpenCode's order: not image alone (#1595)
 	Inputs  []string `json:"inputs,omitempty"`
 	Outputs []string `json:"outputs,omitempty"`
+	// OutputsSaid is whether capabilities.output said yes or no to any
+	// kind: an embedding's {"text": false} gives no Outputs and is still
+	// said (#3279), where a model said nothing of gives none and isn't
+	OutputsSaid bool `json:"outputsSaid,omitempty"`
+	// Temperature is whether the model takes temperature and top_p, where
+	// something said so: the config model's temperature (Factory's OpenAI
+	// route, plugins#154), models.dev's own, or the models hook's. Unsaid
+	// is nil, which keeps what the client sent.
+	Temperature *bool `json:"temperature,omitempty"`
+	// InputsSaid is whether capabilities.input is someone's word on what
+	// the model takes (models.dev, the config, the plugin's own models
+	// hook): the host's default for a config model said nothing of, input
+	// {"text": true} alone, is nobody's word (#1595, #4436)
+	InputsSaid bool `json:"inputsSaid,omitempty"`
 	// Fast is set by the plugin on a model it runs in its vendor's fast
 	// mode when the request says service_tier "priority" (m.fast: Cursor's
 	// plugin from 0.2.2, for a model Cursor has a fast variant of)
@@ -161,6 +175,12 @@ type Provider struct {
 	// magpie.maxConcurrency); 0 for none said. The user's setting on the
 	// provider goes over it.
 	MaxConcurrency int `json:"maxConcurrency,omitempty"`
+	// MaxAccounts is how many of its accounts the plugin says may take
+	// requests at the same time (the auth hook's maxAccounts, else
+	// package.json's magpie.maxAccounts: a vendor that blocks an address
+	// asking for more accounts at once); 0 for none said. The user's
+	// setting on the provider goes over it.
+	MaxAccounts int `json:"maxAccounts,omitempty"`
 }
 
 // Option is a switch a plugin declares for its provider (auth.options,
@@ -175,6 +195,16 @@ type Option struct {
 	// Confirm is asked before the switch is turned on, when the plugin
 	// says turning it on does something the user should agree to
 	Confirm string `json:"confirm,omitempty"`
+	// Labels, Descriptions and Confirms are the same words in the window's
+	// other languages, by its language ("zh", "zh-TW", "ja", "de"), as a
+	// page's Titles are (plugins#590); the plain ones are the fallback
+	Labels       map[string]string `json:"labels,omitempty"`
+	Descriptions map[string]string `json:"descriptions,omitempty"`
+	Confirms     map[string]string `json:"confirms,omitempty"`
+	// FiltersModels says the plugin's model list leaves models out while
+	// the switch is on (WorkBuddy's "Free models only"): the editor says
+	// so by the models
+	FiltersModels bool `json:"filtersModels,omitempty"`
 }
 
 // OptionOn is option o of a provider as it stands with the user's values
@@ -261,7 +291,7 @@ func forgetProviders() {
 // need be, and keeps the answer for Cached.
 func Providers(ctx context.Context) ([]Provider, error) {
 	var ps []Provider
-	if err := Call(ctx, "providers", map[string]any{"proxies": listingProxies()}, &ps); err != nil {
+	if err := Call(ctx, "providers", listingArgs(), &ps); err != nil {
 		return nil, err
 	}
 	ps = commitProviders(ps, nil)
@@ -331,7 +361,7 @@ var (
 // under still stood. Tests replace it to stall or fail an ask without Bun.
 var refreshProviders = func(ctx context.Context, epoch uint64) error {
 	var ps []Provider
-	if err := callWithTimeout(ctx, "providers", map[string]any{"proxies": listingProxies()}, &ps, refreshDeadline); err != nil {
+	if err := callWithTimeout(ctx, "providers", listingArgs(), &ps, refreshDeadline); err != nil {
 		return err
 	}
 	commitProviders(ps, &epoch)
@@ -396,6 +426,26 @@ func refreshProvidersInBackground(ctx context.Context, epoch uint64) {
 // account at key, or of the provider for key "": set by the providers
 // magpie keeps, which know them.
 var ProxyFor func(provider, key string) string
+
+// ListingOff is the plugin providers (by the plugin's own id) switched off
+// in magpie: set by the providers magpie keeps, which know them. A
+// listing asks none of them their models (ChangQiu on Discord): Off means no request
+// goes to the provider, and a models hook asks its vendor, renewing the
+// sign-in first.
+var ListingOff func() []string
+
+// listingArgs is what a providers call is given: the proxies each list is
+// asked through, and the providers not to ask (ListingOff), which keep the
+// list they told last.
+func listingArgs() map[string]any {
+	args := map[string]any{"proxies": listingProxies()}
+	if ListingOff != nil {
+		if off := ListingOff(); len(off) > 0 {
+			args["off"] = off
+		}
+	}
+	return args
+}
 
 // listingProxies are the proxies each provider's model list is asked
 // through, by provider and account key ("" the provider's own): a

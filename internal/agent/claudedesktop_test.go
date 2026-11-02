@@ -244,6 +244,65 @@ func TestClaudeDesktopKeepsTheUsers(t *testing.T) {
 	}
 }
 
+// dev_quj on X: "Claude Desktop 已不经过 magpie：配置已变更" after a
+// restart, with Desktop on magpie. Desktop 4.4212 drops a stored
+// deploymentMode itself and never reads the Claude folder's, so the check
+// follows Desktop's own rule (desktop3p): off magpie only when Claude-3p
+// says "1p" and the profile leaves Desktop's chooser on.
+func TestClaudeDesktopModeAsDesktopReadsIt(t *testing.T) {
+	home, p := desktopSandbox(t)
+	a := claudeDesktop(home)
+	if err := a.Field("provider").Set("magpie"); err != nil {
+		t.Fatal(err)
+	}
+	quiet := func(why string) {
+		t.Helper()
+		if c := a.Check(); c != "" {
+			t.Errorf("%s: check %q", why, c)
+		}
+		if d := a.Drift(); d != nil && d.Kind == "unwired" {
+			t.Errorf("%s: drift %+v", why, d)
+		}
+	}
+	said := func(why string) {
+		t.Helper()
+		if c := a.Check(); !strings.Contains(c, "is 1p now") {
+			t.Errorf("%s: check %q", why, c)
+		}
+		if d := a.Drift(); d == nil || d.Kind != "unwired" {
+			t.Errorf("%s: drift %+v", why, d)
+		}
+	}
+	quiet("on")
+	// what 4.4212 writes at start ("deploymentMode written { mode: undefined }")
+	desktopWrite(t, p.config3p, `{"preferences":{"x":1}}`)
+	quiet("Claude-3p's deploymentMode dropped by Desktop")
+	desktopWrite(t, p.config, `{}`)
+	quiet("the Claude folder's deploymentMode gone")
+	desktopWrite(t, p.config3p, `{"deploymentMode":"1p"}`)
+	quiet("1p with the chooser off: Desktop starts in 3p")
+
+	if err := edit.SetJSON(p.prof, edit.KV{Path: "disableDeploymentModeChooser", Value: false}); err != nil {
+		t.Fatal(err)
+	}
+	said("1p picked in Desktop's chooser")
+	desktopWrite(t, p.config3p, `{}`)
+	quiet("none with the chooser on: Desktop starts in 3p")
+	desktopWrite(t, p.config3p, `{"deploymentMode":"1p"}`)
+	if err := a.Reapply(); err != nil {
+		t.Fatal(err)
+	}
+	quiet("after Reconnect")
+	// another gateway applied is still said
+	meta := desktopJSON(t, p.meta)
+	meta["appliedId"] = "mine"
+	b, _ := json.Marshal(meta)
+	desktopWrite(t, p.meta, string(b))
+	if c := a.Check(); !strings.Contains(c, "another gateway") {
+		t.Errorf("another profile applied: check %q", c)
+	}
+}
+
 // Desktop or the user changing things after magpie: Check says so, off
 // leaves what they chose, and the profile the user's own settings in it.
 func TestClaudeDesktopChangedSince(t *testing.T) {
@@ -271,10 +330,20 @@ func TestClaudeDesktopChangedSince(t *testing.T) {
 	if c := a.Check(); c != "" {
 		t.Errorf("check after on: %s", c)
 	}
+	// the Claude folder's deploymentMode is one Desktop doesn't read
 	desktopWrite(t, p.config, `{"deploymentMode":"1p"}`)
+	if c := a.Check(); c != "" {
+		t.Errorf("check: the Claude folder's 1p is said: %s", c)
+	}
+	// Claude-3p's is, with the profile's chooser on
+	if err := edit.SetJSON(p.prof, edit.KV{Path: "disableDeploymentModeChooser", Value: false}); err != nil {
+		t.Fatal(err)
+	}
+	desktopWrite(t, p.config3p, `{"deploymentMode":"1p"}`)
 	if c := a.Check(); c == "" {
 		t.Error("check: 1p is fine")
 	}
+	desktopWrite(t, p.config3p, `{"deploymentMode":"3p"}`)
 	// off: the user's 1p stays, their profile is applied again
 	if err := f.Set(""); err != nil {
 		t.Fatal(err)
@@ -533,8 +602,11 @@ func TestClaudeDesktopMSIX(t *testing.T) {
 		t.Errorf("check: %s", c)
 	}
 	// Desktop's chooser turns the real one back to 1p: the check says so
+	if err := edit.SetJSON(r.prof, edit.KV{Path: "disableDeploymentModeChooser", Value: false}); err != nil {
+		t.Fatal(err)
+	}
 	desktopWrite(t, r.config3p, `{"deploymentMode":"1p","preferences":{"x":1}}`)
-	if c := a.Check(); !strings.Contains(c, "no longer 3p") || !strings.Contains(c, r.dir3p) {
+	if c := a.Check(); !strings.Contains(c, "is 1p now") || !strings.Contains(c, r.dir3p) {
 		t.Errorf("check: %q", c)
 	}
 	desktopWrite(t, r.config3p, `{"deploymentMode":"3p","preferences":{"x":1}}`)
@@ -639,8 +711,11 @@ func TestClaudeDesktopMSIXChecksTheFoldersDesktopRuns(t *testing.T) {
 	}
 	// the one Desktop runs in, turned back to 1p, is said
 	r := desktopPathsOf(filepath.Join(local, "Claude"), real3p)
+	if err := edit.SetJSON(r.prof, edit.KV{Path: "disableDeploymentModeChooser", Value: false}); err != nil {
+		t.Fatal(err)
+	}
 	desktopWrite(t, r.config3p, `{"deploymentMode":"1p","preferences":{"x":1}}`)
-	if c := a.Check(); !strings.Contains(c, "no longer 3p") || !strings.Contains(c, real3p) {
+	if c := a.Check(); !strings.Contains(c, "is 1p now") || !strings.Contains(c, real3p) {
 		t.Fatalf("check: %q", c)
 	}
 	if d := a.Drift(); d == nil || d.Kind != "unwired" {
@@ -1091,4 +1166,47 @@ func TestClaudeDesktopImportedProfileIsOnMagpie(t *testing.T) {
 			t.Errorf("applied after reconnect: %q", id)
 		}
 	})
+}
+
+// Desktop's 3p mode runs in Claude-3p, a userData of its own, so the
+// chats, projects and Code sessions of the Anthropic sign-in (in Claude/)
+// aren't shown on magpie (xgddm88 on X: 之前的工程和会话记录全没了). Turning
+// Desktop on and off leaves every byte of that history as it was, and the
+// notice says before the restart that it stays and comes back.
+func TestClaudeDesktopKeepsTheSignedInHistory(t *testing.T) {
+	home, p := desktopSandbox(t)
+	history := map[string]string{
+		filepath.Join(p.dir, "config.json"):                                                 `{"locale":"zh-CN","oauth:tokenCache":"x"}`,
+		filepath.Join(p.dir, "Local Storage", "leveldb", "000003.log"):                      "chats",
+		filepath.Join(p.dir, "IndexedDB", "https_claude.ai_0.indexeddb.leveldb", "CURRENT"): "MANIFEST-000001\n",
+		filepath.Join(p.dir, "claude-code-sessions", "a", "b", "local_1.json"):              `{"cwd":"/Users/me/proj"}`,
+		filepath.Join(p.dir, "local-agent-mode-sessions", "s", "session.json"):              `{"title":"proj"}`,
+	}
+	for f, s := range history {
+		desktopWrite(t, f, s)
+	}
+	a := claudeDesktop(home)
+	f := a.Field("provider")
+	if err := f.Set("magpie"); err != nil {
+		t.Fatal(err)
+	}
+	for f, s := range history {
+		if b, err := os.ReadFile(f); err != nil || string(b) != s {
+			t.Errorf("on changed %s: %q %v", f, b, err)
+		}
+	}
+	if n := a.Notice(); !strings.Contains(n, noticeClaudedesktop3.String()) {
+		t.Errorf("on, the notice doesn't say the signed-in history stays: %q", n)
+	}
+	if err := f.Set(""); err != nil {
+		t.Fatal(err)
+	}
+	for f, s := range history {
+		if b, err := os.ReadFile(f); err != nil || string(b) != s {
+			t.Errorf("off changed %s: %q %v", f, b, err)
+		}
+	}
+	if n := a.Notice(); !strings.Contains(n, noticeClaudedesktop4.String()) {
+		t.Errorf("off, the notice doesn't say the history is back: %q", n)
+	}
 }
