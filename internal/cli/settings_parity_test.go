@@ -171,6 +171,7 @@ var notYet = map[string]string{
 	"GET /api/claude-team/":                      P,  // claude_team.go: multi-organization state
 	"GET /api/claude-team/subscriptions":         P,  // claude_team.go: account discovery
 	"POST /api/claude-team/":                     P,  // claude_team.go: configuration
+	"POST /api/claude-team/config":               P,  // claude_team.go: organization settings
 	"POST /api/claude-team/quota":                P,  // claude_team.go: quota collection
 	"POST /api/claude-team/refresh":              P,  // claude_team.go: cloud refresh
 	"POST /api/claude-team/rotate":               P,  // claude_team.go: seat handoff

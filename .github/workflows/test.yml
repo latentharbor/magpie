@@ -112,10 +112,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         include:
-          # Use the same macOS image as the arm64 release build. The floating
-          # label has remained queued while this image builds successfully.
+          # GitHub repeatedly failed to acquire a hosted macOS arm64 runner
+          # for the full suite; Intel still covers macOS behavior while the
+          # release workflow separately builds both macOS architectures.
           - os: macos-latest
-            runner: macos-15
+            runner: macos-15-intel
     runs-on: ${{ matrix.runner || matrix.os }}
 
     steps:
