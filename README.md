@@ -54,7 +54,7 @@ The [latentharbor Docker Compose example](deploy/docker/README.md) runs this dis
 curl -fsSL https://usemagpie.ai/install.sh | sh
 ```
 
-<sub>Mac builds are signed and notarised, and every build updates itself. On Linux the script installs the desktop app, and on a desktop without WebKitGTK 4.1 installs it first with your package manager (sudo asks for your password); with no desktop, or no terminal to ask at, it installs the terminal build and says which package to add. `--gui` or `--tui` chooses. Behind a firewall, use `--proxy` or `--mirror`. Or `go install github.com/yetone/magpie@latest`, or the [Docker image](https://usemagpie.ai/docs/docker). Remove what the script installed with `curl -fsSL https://usemagpie.ai/install.sh | sh -s -- --uninstall`; your settings in `~/.config/magpie` stay unless you add `--purge`, which disconnects your agents and deletes them too.</sub>
+<sub>For the latentharbor distribution, use its [Releases](https://github.com/latentharbor/magpie/releases) or [Docker Compose deployment](deploy/docker/README.md). The upstream installer, notarised builds and `go install github.com/yetone/magpie@latest` install yetone's build. On Linux the upstream script installs the desktop app, and on a desktop without WebKitGTK 4.1 installs it first with your package manager (sudo asks for your password); with no desktop, or no terminal to ask at, it installs the terminal build and says which package to add. `--gui` or `--tui` chooses. Behind a firewall, use `--proxy` or `--mirror`. Remove what the upstream script installed with `curl -fsSL https://usemagpie.ai/install.sh | sh -s -- --uninstall`; your settings in `~/.config/magpie` stay unless you add `--purge`, which disconnects your agents and deletes them too.</sub>
 
 **2 · Add a provider.** Open magpie and go to **Providers → Add provider**. Pick a preset and paste a key, or sign in with a subscription.
 
@@ -270,7 +270,7 @@ Find them under Plugins › Discover › Gateway middleware. See [Gateway middle
 | :-- | :-- |
 | **Local network** | Turn on *Share on local network* and give each client a named gateway key with its own daily, weekly or monthly token and cost limit |
 | **[Remote magpie](https://usemagpie.ai/docs/remote)** | A laptop uses the providers, accounts and groups of the magpie on your desktop, and still wires its own agents |
-| **[Docker](https://usemagpie.ai/docs/docker)** | Run `ghcr.io/yetone/magpie` on a server or a NAS and manage it from the web UI |
+| **[Docker](deploy/docker/README.md)** | Run `ghcr.io/latentharbor/magpie` on one server or NAS for several devices |
 | **Sync** | Back up to a file, or sync machines over WebDAV (Nutstore, Nextcloud…), S3, or an encrypted GitHub repository backup |
 
 ### Also
@@ -292,7 +292,7 @@ Find them under Plugins › Discover › Gateway middleware. See [Gateway middle
 | **[Intent routing](https://usemagpie.ai/docs/intent)** | Route each turn by what it asks for |
 | **[Import links](https://usemagpie.ai/docs/import)** | "Add to magpie" buttons for provider websites |
 | **[Remote magpie](https://usemagpie.ai/docs/remote)** | Use one magpie's providers and groups from your other computers |
-| **[Docker](https://usemagpie.ai/docs/docker)** | Run magpie on a server or a NAS |
+| **[Docker](deploy/docker/README.md)** | Deploy this distribution on a server or NAS |
 
 ## Privacy
 
