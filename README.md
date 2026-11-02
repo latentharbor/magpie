@@ -44,6 +44,8 @@ It's for you if you use more than one agent, more than one provider, or more tha
 
 Runs on macOS, Windows and Linux (menu bar app, window, TUI, web UI and CLI), in Docker, and on Termux.
 
+The [latentharbor Docker Compose example](deploy/docker/README.md) runs this distribution as one persistent gateway for several devices, with a separate gateway key per client.
+
 ## Quick start
 
 **1 · Install.** Download the app from **[usemagpie.ai](https://usemagpie.ai)**, or run:
