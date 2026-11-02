@@ -3,8 +3,6 @@ package routes
 import (
 	"slices"
 	"testing"
-
-	"github.com/yetone/magpie/internal/provider"
 )
 
 // dzxx0496 on Discord: free accounts one after another, each until its
@@ -77,9 +75,9 @@ func TestDrainStaysThroughARateLimit(t *testing.T) {
 		t.Fatalf("a key: %v, want it kept first", got)
 	}
 	low := a
-	low.Used = provider.SpentShare
+	low.Used = UsedShare
 	if got := Apply(Drain, pool, []Seat{low, b}); !slices.Equal(got, []int{0, 1}) {
-		t.Fatalf("a at %v%%: %v, want it kept first", provider.SpentShare, got)
+		t.Fatalf("a at %v%%: %v, want it kept first", UsedShare, got)
 	}
 }
 
@@ -111,9 +109,9 @@ func TestDrainAllSpentAndGone(t *testing.T) {
 }
 
 func TestDrainIsBuiltin(t *testing.T) {
-	s, ok := Builtin[provider.Drain]
+	s, ok := Builtin["drain"]
 	if !ok || !s.Exact {
-		t.Fatalf("Builtin[%q] = %+v, %v; want an exact strategy", provider.Drain, s, ok)
+		t.Fatalf("Builtin[drain] = %+v, %v; want an exact strategy", s, ok)
 	}
 }
 

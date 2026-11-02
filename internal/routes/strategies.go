@@ -223,7 +223,7 @@ func Drained(key string) {
 // accounts one after another, the first not taking the requests back when
 // its quota renews). The one it is on goes first, the others after it in
 // their listed order from there, so failover goes on as Ordered's does.
-// Used up is a window of it used up (provider.SpentShareOf: 100, as In
+// Used up is a window of it used up (100%, as In
 // order goes on at, #530), resting out of quota or credit (Seat.Spent),
 // or refused so since the pool's last request (Drained); a rate limit or
 // a failure only rests a seat, which the gateway tries last meanwhile,
@@ -233,7 +233,7 @@ func Drained(key string) {
 // nothing changed gives the same order, so a preview moves nothing.
 var Drain = Strategy{Exact: true, Order: func(pool string, seats []Seat) []int {
 	spent := func(s Seat) bool {
-		return s.Spent || !s.First && s.Known && s.Used >= provider.SpentShareOf(provider.Drain)
+		return s.Spent || !s.First && s.Known && s.Used >= 100
 	}
 	drains.Lock()
 	defer drains.Unlock()
@@ -511,4 +511,5 @@ var Builtin = map[string]Strategy{
 	"weight": Weighted,
 	"free":   FreeFirst,
 	"fast":   Fastest,
+	"drain":  Drain,
 }
