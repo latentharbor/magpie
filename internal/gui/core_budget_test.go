@@ -35,7 +35,9 @@ func TestCoreScriptBudget(t *testing.T) {
 	// Shared menus use an explicit action-only class on older WebKit, and
 	// header fitting waits for a frame outside ResizeObserver delivery (+512B).
 	// A primary press ends coasting before native focus can scroll (+256B).
-	appBudget, coreBudget := appScriptBudget+1792, coreScriptBudget+21_888
+	// The fork's Team account controls and native-login entrypoint now add
+	// 1,152 bytes of shared page code after upstream's 11-02 split.
+	appBudget, coreBudget := appScriptBudget+1792, coreScriptBudget+23_040
 	page, err := os.ReadFile("assets/index.html")
 	if err != nil {
 		t.Fatal(err)

@@ -511,5 +511,6 @@ var Builtin = map[string]Strategy{
 	"weight": Weighted,
 	"free":   FreeFirst,
 	"fast":   Fastest,
+	"cheap":  Cheapest,
 	"drain":  Drain,
 }

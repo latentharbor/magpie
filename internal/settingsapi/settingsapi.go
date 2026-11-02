@@ -227,6 +227,9 @@ func Merge(body []byte, cur settings.Settings, web bool) (settings.Settings, err
 	if _, sent := fields["claudePrintMode"]; !sent {
 		in.ClaudePrintMode = cur.ClaudePrintMode
 	}
+	if _, sent := fields["signInLinkOnly"]; !sent {
+		in.SignInLinkOnly = cur.SignInLinkOnly
+	}
 	in.AgentOrder, in.AgentsHidden, in.AgentsShown = cur.AgentOrder, cur.AgentsHidden, cur.AgentsShown
 	in.Window, in.WindowMaximised, in.WindowAt = cur.Window, cur.WindowMaximised, cur.WindowAt // the window's own, as it was last resized and moved
 	// and what other pages keep here: which models an agent is shown, and

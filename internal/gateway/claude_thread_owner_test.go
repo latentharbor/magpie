@@ -138,7 +138,7 @@ func TestClaudeCacheTouchThroughHandler(t *testing.T) {
 		res.Body.Close()
 		return res.StatusCode
 	}
-	if status := post("/v1/messages", `{"model":"claude/claude-sonnet-5","max_tokens":64,"thread":{"type":"create"},"messages":[{"role":"user","content":"original"}]}`); status != 200 {
+	if status := post("/v1/messages", `{"model":"claude/claude-sonnet-5","max_tokens":64,"messages":[{"role":"user","content":"original"}]}`); status != 200 {
 		t.Fatalf("create: %d", status)
 	}
 	if status := post("/v1/messages/cache_touch", `{"request_id":"req_fixture"}`); status != 204 {

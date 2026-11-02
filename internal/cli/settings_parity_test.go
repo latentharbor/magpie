@@ -124,6 +124,10 @@ const (
 
 // cliForRoute is the command that does what a route does, as `magpie …`.
 var cliForRoute = map[string]string{
+	"GET /api/claude-login":                "magpie claude-login",
+	"POST /api/claude-login":               "magpie claude-login",
+	"POST /api/claude-login/prepare":       "magpie claude-login prepare",
+	"POST /api/claude-login/prepare-usage": "magpie claude-login prepare-usage",
 	"GET /api/agent-models/{id}":           "magpie models",
 	"GET /api/settings":                    "magpie settings list",
 	"POST /api/settings":                   "magpie settings set",
@@ -157,12 +161,19 @@ var cliForRoute = map[string]string{
 	"GET /api/usage/quotas/history":        "magpie quota history",
 	"GET /api/usage/requests.csv":          "magpie usage --csv",
 	"POST /api/usage/workbuddy-checkin":    "magpie accounts checkin",
+	"POST /api/usage/checkin-account":      "magpie accounts checkin",
 	"GET /api/update":                      "magpie update check",
 	"POST /api/update/check":               "magpie update check",
 	"POST /api/update/install":             "magpie update",
 }
 
 var notYet = map[string]string{
+	"GET /api/claude-team/":                      P,  // claude_team.go: multi-organization state
+	"GET /api/claude-team/subscriptions":         P,  // claude_team.go: account discovery
+	"POST /api/claude-team/":                     P,  // claude_team.go: configuration
+	"POST /api/claude-team/quota":                P,  // claude_team.go: quota collection
+	"POST /api/claude-team/refresh":              P,  // claude_team.go: cloud refresh
+	"POST /api/claude-team/rotate":               P,  // claude_team.go: seat handoff
 	"POST /api/agent-fast":                       A,  // agent_models.go
 	"POST /api/agent-models/{id}":                A,  // agent_models.go
 	"GET /api/agents/cli":                        A,  // api.go

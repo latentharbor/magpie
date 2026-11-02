@@ -162,6 +162,9 @@ func loginUsageOf(ctx context.Context, agent string, only map[string]bool) (map[
 	var wg sync.WaitGroup
 	oldest := asked
 	for _, l := range logins {
+		if only != nil && !only[strings.ToLower(l.User)] {
+			continue
+		}
 		if agent == "claude" && (claudeLoginInTeam(l.User) && !claudeTeamRoutingOn(l.User) || alone && !claudeTeamRoutingOn(l.User)) {
 			continue
 		}

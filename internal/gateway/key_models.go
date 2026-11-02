@@ -92,6 +92,12 @@ func modelAllowed(who access.Identity, p provider.Provider, model string) bool {
 	if allows(who, p.ID+"/"+model) {
 		return true
 	}
+	if own := p.OwnModelID(model); own != model && allows(who, p.ID+"/"+own) {
+		return true
+	}
+	if local := p.ListedModelID(model); local != model && allows(who, p.ID+"/"+local) {
+		return true
+	}
 	// Only the migrated original organization owns the old Claude namespace;
 	// adding another organization must not inherit these model grants.
 	if provider.ClaudeTeamOf(p) != "" && slices.Contains(p.Was, "claude") {

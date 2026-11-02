@@ -39,7 +39,10 @@ func keyLimited(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		who := access.Caller(r.Context())
 		limits := who.Limits()
-		if len(limits) == 0 || r.Method != http.MethodPost || strings.HasPrefix(r.URL.Path, "/_magpie/") || strings.HasPrefix(r.URL.Path, "/mcp/") || strings.HasSuffix(r.URL.Path, "/count_tokens") || r.URL.Path == "/v1/messages/cache_touch" {
+		if who.Issuer != nil {
+			limits = append(slices.Clone(limits), who.Issuer.Limits()...)
+		}
+		if !who.Limited() || r.Method != http.MethodPost || strings.HasPrefix(r.URL.Path, "/_magpie/") || strings.HasPrefix(r.URL.Path, "/mcp/") || strings.HasSuffix(r.URL.Path, "/count_tokens") || r.URL.Path == "/v1/messages/cache_touch" || r.URL.Path == KeysPath {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -127,6 +130,9 @@ func (s *Server) keyLimit(w http.ResponseWriter, r *http.Request) {
 		out["expires"] = who.Expires
 	}
 	if who.KeyID == "" || len(who.Limits()) == 0 {
+		if who.Issuer != nil && len(who.Issuer.Limits()) > 0 {
+			out["limited"] = true
+		}
 		writeJSON(w, 200, out)
 		return
 	}

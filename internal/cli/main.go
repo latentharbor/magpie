@@ -547,6 +547,8 @@ func run(args []string) error {
 		return githubCmd(args[1:])
 	case "claude-code":
 		return claudeCodeCmd(args[1:])
+	case "settings":
+		return settingsCmd(args[1:])
 	case "claude-login":
 		return claudeLoginCmd(args[1:])
 	}
