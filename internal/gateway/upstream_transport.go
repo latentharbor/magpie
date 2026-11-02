@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -185,16 +186,21 @@ func (t replayable) RoundTrip(req *http.Request) (*http.Response, error) {
 		r.Header["X-Idempotency-Key"] = nil
 	}
 	for n := 0; ; n++ {
-		var fresh, h2 atomic.Bool
+		var fresh, h2, wrote atomic.Bool
 		trace := &httptrace.ClientTrace{GotConn: func(i httptrace.GotConnInfo) {
 			fresh.Store(!i.Reused)
 			if tc, ok := i.Conn.(interface{ ConnectionState() tls.ConnectionState }); ok {
 				h2.Store(tc.ConnectionState().NegotiatedProtocol == "h2")
 			}
+		}, WroteRequest: func(i httptrace.WroteRequestInfo) {
+			if i.Err == nil {
+				wrote.Store(true)
+			}
 		}}
 		try := r.WithContext(httptrace.WithClientTrace(r.Context(), trace))
 		res, err := t.RoundTripper.RoundTrip(try)
-		if err == nil || !fresh.Load() || h2.Load() || !closedBeforeSent(err) || req.Context().Err() != nil {
+		if err == nil || !fresh.Load() || h2.Load() || wrote.Load() ||
+			!(closedBeforeSent(err) || errors.Is(err, io.EOF)) || req.Context().Err() != nil {
 			return res, err
 		}
 		if n >= len(unsentAgain) || (r.Body != nil && r.Body != http.NoBody && r.GetBody == nil) {
