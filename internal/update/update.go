@@ -294,7 +294,7 @@ func Stage(ctx context.Context, rel *Release, bundle string) (string, error) {
 		os.RemoveAll(dir)
 		return "", err
 	}
-	out := filepath.Join(dir, "app")
+	out := filepath.Join(dir, "unzip")
 	if a.signed {
 		if err := unpackDistribution(zip, out); err != nil {
 			os.RemoveAll(dir)
@@ -318,7 +318,16 @@ func Stage(ctx context.Context, rel *Release, bundle string) (string, error) {
 		os.RemoveAll(dir)
 		return "", err
 	}
-	return app, nil
+	// No .app named folder may stay beside the installed bundle. The
+	// signature was checked on the extracted bundle before this rename.
+	staged := filepath.Join(dir, stagedName)
+	if err := os.Rename(app, staged); err != nil {
+		os.RemoveAll(dir)
+		return "", err
+	}
+	os.RemoveAll(out)
+	unregister(app) // LaunchServices may have seen it during extraction.
+	return staged, nil
 }
 
 // sameSigner accepts app only if its signature is intact and made by the
