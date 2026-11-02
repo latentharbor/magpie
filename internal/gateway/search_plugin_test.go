@@ -147,6 +147,10 @@ func TestServingGatesTools(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	deadline = time.Now().Add(3 * time.Second)
+	for gwtool.Served(gwtool.WebSearch) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if gwtool.Served(gwtool.WebSearch) {
 		t.Error("serving, with the plugin off: web search still served")
 	}

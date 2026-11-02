@@ -3327,7 +3327,7 @@ func (s *Server) codexCompact(w http.ResponseWriter, r *http.Request, body []byt
 	rec, res, err := ask(body)
 	local := ""
 	if first := rec.status; lacksEndpoint(first) || itemNotFound(rec) || upstreamFailed(rec) || protectionRefused(first, rec.body.Bytes()) ||
-		summaryTooLarge(rec) || err != nil && protectionWords.MatchString(err.Error()) {
+		summaryTooLarge(rec) || err != nil && (protectionWords.MatchString(err.Error()) || byteCapWords.MatchString(err.Error())) {
 		who, msg := compactFailure(body, rec)
 		if err != nil {
 			msg = "broken off: " + err.Error()
@@ -3542,7 +3542,8 @@ var upstreamFailedWords = regexp.MustCompile(`(?i)upstream request failed`)
 // too.
 func summaryTooLarge(rec *recorder) bool {
 	return rec.status == http.StatusRequestEntityTooLarge || overflowed(rec.status, rec.body.Bytes()) ||
-		(rec.status == http.StatusBadGateway && byteCapRefusal(rec.status, rec.body.Bytes()))
+		(rec.status == http.StatusBadGateway && (byteCapRefusal(rec.status, rec.body.Bytes()) ||
+			strings.Contains(provider.APIError(rec.body.Bytes(), ""), "(request_too_large)")))
 }
 
 // itemNotFound is a 400 refusing an item of the input by its id, as Azure

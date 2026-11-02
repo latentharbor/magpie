@@ -102,6 +102,9 @@ func underCap(t *testing.T, sent []byte) {
 // again with its oldest screenshots left out, and Codex gets the model's
 // summary.
 func TestCompactionOverByteCapLeavesOutOldImages(t *testing.T) {
+	if raceOn {
+		t.Skip("the 40 MB fixture exceeds the race runner's request-body hold; the full non-race suite checks it")
+	}
 	for _, proto := range []provider.Protocol{provider.Responses, provider.Chat} {
 		t.Run(string(proto), func(t *testing.T) {
 			up := &capped{proto: proto, most: commandCodeMost, status: 400, ctype: "application/json", body: commandCodeCap}
@@ -236,6 +239,9 @@ func TestWithoutOldImagesEachProtocol(t *testing.T) {
 // compaction is asked as text and then made without a model, not sent
 // again into the compaction guard's hold.
 func TestCompactionOverByteCapEveryTime(t *testing.T) {
+	if raceOn {
+		t.Skip("the 40 MB fixture exceeds the race runner's request-body hold; the full non-race suite checks it")
+	}
 	up := &capped{proto: provider.Responses, most: 0, status: 400, ctype: "application/json", body: commandCodeCap}
 	cappedOn(t, up)
 	code, body := codexPost(t, screenshotSession(true))
