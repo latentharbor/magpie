@@ -293,7 +293,7 @@ func mayStageDistribution(rel *Release) error {
 	return nil
 }
 
-func stagedSigner(ctx context.Context, installed, downloaded string, rel *Release) error {
+var stagedSigner = func(ctx context.Context, installed, downloaded string, rel *Release) error {
 	err := sameSigner(ctx, installed, downloaded)
 	if err == nil {
 		return nil

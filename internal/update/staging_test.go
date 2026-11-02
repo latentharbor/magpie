@@ -124,6 +124,12 @@ func TestStageUnpacksNoApp(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("ditto and codesign")
 	}
+	// This test checks the staging path and LaunchServices cleanup. Signing
+	// policy is exercised separately in distribution_test.go; its fake apps
+	// have no Developer ID and cannot authenticate as a real release.
+	oldSigner := stagedSigner
+	stagedSigner = func(context.Context, string, string, *Release) error { return nil }
+	t.Cleanup(func() { stagedSigner = oldSigner })
 	forgot := stubUnregister(t)
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
