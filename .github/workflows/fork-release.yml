@@ -73,9 +73,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # GitHub canceled macos-15 ARM before runner acquisition during
-          # this release; macos-26 is another official arm64 hosted image.
-          - runner: macos-26
+          # GitHub could not acquire macos-15 or macos-26 ARM runners.
+          # Xcode on Intel can target arm64; verify the resulting slice.
+          - runner: macos-15-intel
             arch: arm64
           - runner: macos-15-intel
             arch: amd64
@@ -92,11 +92,16 @@ jobs:
         env:
           VERSION: ${{ needs.gate.outputs.version }}
           ARCH: ${{ matrix.arch }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 1
         run: |
           set -euo pipefail
           test "$(go env GOARCH)" = "$ARCH"
           FLAGS="$(python3 build/fork_release.py flags "$VERSION")"
           make app VERSION="$VERSION" LDFLAGS="$FLAGS"
+          expected="$ARCH"
+          if [ "$ARCH" = amd64 ]; then expected=x86_64; fi
+          test "$(lipo -archs magpie.app/Contents/MacOS/magpie)" = "$expected"
           codesign --force --deep --sign - magpie.app
           codesign --verify --deep --strict magpie.app
           codesign -dv magpie.app 2>&1 | grep -Fx 'Signature=adhoc'
