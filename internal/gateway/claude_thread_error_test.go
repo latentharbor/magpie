@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tidwall/gjson"
 	"github.com/yetone/magpie/internal/provider"
@@ -78,9 +79,9 @@ func TestClaudeThreadRecoveryDetailDoesNotInventCodes(t *testing.T) {
 	}
 }
 
-// The gateway cannot keep a Message Thread across account handoffs. Both
-// native thread forms are refused before routing, then a complete stateless
-// caller replay reaches the selected account without changing seats.
+// Exercise the actual account routing/holding stack, including a delayed
+// upstream refusal. Code requires the HTTP status as well as the replay code;
+// premature HTTP-200 keepalives prevent its native recovery classifier firing.
 func TestClaudeThreadRecoveryThroughHandler(t *testing.T) {
 	f := nativeTeamFixture(t)
 	conf := settings.Load()
@@ -93,6 +94,9 @@ func TestClaudeThreadRecoveryThroughHandler(t *testing.T) {
 		return provider.ClaudeHTTPCredentials{Token: a.User, DeviceID: "fixture-device", AccountUUID: a.User}, nil
 	}
 	t.Cleanup(func() { claudeHTTPAuth = oldAuth })
+	oldAfter, oldEvery := keepHeldAfter, watchEvery
+	keepHeldAfter, watchEvery = time.Millisecond, time.Millisecond
+	t.Cleanup(func() { keepHeldAfter, watchEvery = oldAfter, oldEvery })
 	s := New()
 	t.Cleanup(s.subscription.abortAll)
 	calls := 0
@@ -100,10 +104,21 @@ func TestClaudeThreadRecoveryThroughHandler(t *testing.T) {
 		calls++
 		b, _ := io.ReadAll(r.Body)
 		rec := httptest.NewRecorder()
-		if r.Header.Get("Authorization") != "Bearer a@example.com" || gjson.GetBytes(b, "thread").Exists() || len(gjson.GetBytes(b, "messages").Array()) != 3 || gjson.GetBytes(b, "tools.0.name").String() != "Read" {
-			t.Error("the stateless replay lost its history, tools or account")
+		if r.Header.Get("Authorization") != "Bearer a@example.com" {
+			t.Error("thread failure rerouted to another account")
 		}
-		writeJSON(rec, 200, map[string]any{"id": "msg_recovered", "type": "message", "role": "assistant", "content": []map[string]string{{"type": "text", "text": "recovered"}}, "stop_reason": "end_turn", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1}})
+		if calls == 1 {
+			if gjson.GetBytes(b, "thread.type").String() != "continue" {
+				t.Error("changed continuation")
+			}
+			time.Sleep(30 * time.Millisecond)
+			writeJSON(rec, 404, map[string]any{"type": "error", "error": map[string]any{"type": "not_found_error", "message": "No thread state was found for the requested previous_message_id", "details": map[string]string{"error_code": "thread_not_found"}}})
+		} else {
+			if gjson.GetBytes(b, "thread.type").String() != "create" || len(gjson.GetBytes(b, "messages").Array()) != 3 || gjson.GetBytes(b, "tools.0.name").String() != "Read" {
+				t.Error("lost caller's complete replay")
+			}
+			writeJSON(rec, 200, map[string]any{"id": "msg_recovered", "type": "message", "role": "assistant", "content": []map[string]string{{"type": "text", "text": "recovered"}}, "stop_reason": "end_turn", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1}})
+		}
 		return rec.Result(), nil
 	})}
 	h := httptest.NewServer(s.Handler())
@@ -121,21 +136,15 @@ func TestClaudeThreadRecoveryThroughHandler(t *testing.T) {
 	first := request(`{"model":"claude/claude-sonnet-5","stream":true,"max_tokens":64,"thread":{"type":"continue","previous_message_id":"msg_anchor"},"messages":[{"role":"user","content":"delta"}]}`)
 	b, _ := io.ReadAll(first.Body)
 	first.Body.Close()
-	if first.StatusCode != 400 || gjson.GetBytes(b, "error.details.error_code").String() != threadUnsupportedCode || calls != 0 {
-		t.Fatalf("continuation reached a provider: status=%d calls=%d body=%s", first.StatusCode, calls, b)
+	if first.StatusCode != 404 || gjson.GetBytes(b, "error.details.error_code").String() != "thread_not_found" || calls != 1 {
+		t.Fatalf("native replay refused: status=%d calls=%d body=%s", first.StatusCode, calls, b)
 	}
+	// This is the caller replay, not a gateway-generated partial retry.
 	second := request(`{"model":"claude/claude-sonnet-5","max_tokens":64,"thread":{"type":"create"},"system":"original instructions","tools":[{"name":"Read","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"original"},{"role":"assistant","content":"prior reply"},{"role":"user","content":"delta"}]}`)
 	b, _ = io.ReadAll(second.Body)
 	second.Body.Close()
-	if second.StatusCode != 400 || gjson.GetBytes(b, "error.details.error_code").String() != threadUnsupportedCode || calls != 0 {
-		t.Fatalf("thread creation reached a provider: status=%d calls=%d body=%s", second.StatusCode, calls, b)
-	}
-	// This is the caller's complete replay, with no thread to strand.
-	third := request(`{"model":"claude/claude-sonnet-5","max_tokens":64,"system":"original instructions","tools":[{"name":"Read","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"original"},{"role":"assistant","content":"prior reply"},{"role":"user","content":"delta"}]}`)
-	b, _ = io.ReadAll(third.Body)
-	third.Body.Close()
-	if third.StatusCode != 200 || !bytes.Contains(b, []byte("recovered")) || calls != 1 {
-		t.Fatalf("stateless replay failed: %d calls=%d %s", third.StatusCode, calls, b)
+	if second.StatusCode != 200 || !bytes.Contains(b, []byte("recovered")) || calls != 2 {
+		t.Fatalf("replay failed: %d calls=%d %s", second.StatusCode, calls, b)
 	}
 	f.mu.Lock()
 	writes := f.writes

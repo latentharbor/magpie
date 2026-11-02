@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/tidwall/gjson"
+	"github.com/yetone/magpie/internal/provider"
+	"github.com/yetone/magpie/internal/settings"
 )
 
 // Claude Code's Message Threads (the message-threads-2026-08-12 beta):
@@ -34,6 +36,18 @@ const threadUnsupportedCode = "thread_unsupported_request"
 func namesThread(body []byte) bool {
 	t := gjson.GetBytes(body, "thread")
 	return t.Exists() && t.Type != gjson.Null
+}
+
+// The native Team HTTP path predates the generic stateless guard. Older
+// Desktop Code builds recover a lost Team thread from the upstream's 404
+// by replaying the whole turn; they are not known to understand the newer
+// thread_unsupported_request signal. Keep that path's existing behavior.
+func nativeTeamThread(model string) bool {
+	if settings.Load().ClaudeTransport != "http" {
+		return false
+	}
+	p, _, ok := provider.Resolve(model)
+	return ok && provider.ClaudeTeamOf(p) != ""
 }
 
 // refuseThread answers a request that names a thread as Anthropic's API

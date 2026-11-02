@@ -1797,7 +1797,7 @@ func (s *Server) handle(from provider.Protocol) http.HandlerFunc {
 		noteAsked(r.Context(), model)
 		// a Claude Code Message Thread magpie keeps no history for: sent
 		// again whole, without it (message_threads.go, #2480)
-		if from == provider.Anthropic && namesThread(body) {
+		if from == provider.Anthropic && namesThread(body) && !nativeTeamThread(model) {
 			refuseThread(w)
 			return
 		}
