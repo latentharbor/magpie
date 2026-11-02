@@ -1343,6 +1343,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	updateRoutes(mux, w)
 	whatsNewRoutes(mux)
 	cliBehindRoutes(mux)
+	configRepairRoutes(mux, !isWeb(w))
 	claudeLoginRoutes(mux)
 	gatewayFixRoutes(mux)
 	gatewayModeRoutes(mux)

@@ -16,6 +16,19 @@ import (
 
 func TestMain(m *testing.M) { testenv.Main(m) }
 
+func TestOlderSettingsPageKeepsClaudeTransport(t *testing.T) {
+	cur := settings.Defaults()
+	cur.ClaudeTransport = "http"
+	cur.ClaudePrintMode = true
+	in, err := Merge([]byte(`{"theme":"dark"}`), cur, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.ClaudeTransport != "http" || !in.ClaudePrintMode {
+		t.Fatalf("an older settings page changed the Claude mode: transport=%q print=%v", in.ClaudeTransport, in.ClaudePrintMode)
+	}
+}
+
 // home gives the test a home of its own, with no settings.json yet.
 func home(t *testing.T) {
 	t.Helper()
