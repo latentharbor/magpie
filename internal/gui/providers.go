@@ -87,6 +87,7 @@ type providerJSON struct {
 	ID               string                   `json:"id"`
 	Name             string                   `json:"name"`
 	Icon             string                   `json:"icon"`
+	IconFrom         string                   `json:"iconFrom,omitempty"`
 	Preset           string                   `json:"preset"`
 	Host             string                   `json:"host"`
 	Chat             string                   `json:"chat"`
