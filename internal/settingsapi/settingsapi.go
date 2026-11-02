@@ -57,16 +57,16 @@ var Keys = []string{
 // checks a saved value against (a value outside them is refused there,
 // from the window as from the CLI). A setting's "" is its default.
 var Choices = map[string][]string{
-	"theme":          settings.Themes,
-	"lang":           settings.Langs,
-	"tray":           settings.Trays,
-	"currency":       settings.Currencies,
-	"codexWarmup":    {"off", "week", "all"},
-	"claudeWarmup":   {"off", "week", "all"},
-	"trayUsageEvery": ints(settings.TrayEvery),
-	"updateChannel":  {settings.UpdateStable},
-	"updateEvery":    ints(settings.UpdateEveries),
-	"searchFirst":    {settings.SearchFirstModel, settings.SearchFirstAPI},
+	"theme":           settings.Themes,
+	"lang":            settings.Langs,
+	"tray":            settings.Trays,
+	"currency":        settings.Currencies,
+	"codexWarmup":     {"off", "week", "all"},
+	"claudeWarmup":    {"off", "week", "all"},
+	"trayUsageEvery":  ints(settings.TrayEvery),
+	"updateChannel":   {settings.UpdateStable},
+	"updateEvery":     ints(settings.UpdateEveries),
+	"searchFirst":     {settings.SearchFirstModel, settings.SearchFirstAPI},
 	"claudeTransport": {"cli", "http"},
 }
 
