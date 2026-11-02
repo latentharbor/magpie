@@ -3327,7 +3327,7 @@ func (s *Server) codexCompact(w http.ResponseWriter, r *http.Request, body []byt
 	rec, res, err := ask(body)
 	local := ""
 	if first := rec.status; lacksEndpoint(first) || itemNotFound(rec) || upstreamFailed(rec) || protectionRefused(first, rec.body.Bytes()) ||
-		summaryTooLarge(rec) || err != nil && (protectionWords.MatchString(err.Error()) || byteCapWords.MatchString(err.Error())) {
+		summaryTooLarge(rec) || err != nil && (protectionWords.MatchString(err.Error()) || bodyCapWords.MatchString(err.Error())) {
 		who, msg := compactFailure(body, rec)
 		if err != nil {
 			msg = "broken off: " + err.Error()
