@@ -54,7 +54,11 @@ func pluginReplyGateway(t *testing.T, vendor http.Handler) (string, string, *htt
 		return c, err
 	}
 	t.Cleanup(tr.CloseIdleConnections)
-	return gw.URL, pid + "/fake-1", &http.Client{Transport: tr, Timeout: 75 * time.Second}
+	timeout := 75 * time.Second
+	if raceOn {
+		timeout = 3 * time.Minute
+	}
+	return gw.URL, pid + "/fake-1", &http.Client{Transport: tr, Timeout: timeout}
 }
 
 func pluginReplyRequest(model string, stream bool) string {
