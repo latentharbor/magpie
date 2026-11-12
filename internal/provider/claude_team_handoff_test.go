@@ -86,7 +86,7 @@ func TestClaudeTeamReauthRequiresSelectedMember(t *testing.T) {
 func TestClaudeTeamSmartTrustAndDwell(t *testing.T) {
 	tm, _, c := teamFixture(t)
 	now := time.Now()
-	seats := []claudeTeamSeat{{teamID(2), "team_tier_1"}, {teamID(3), "unassigned"}, {teamID(4), "unassigned"}}
+	seats := []claudeTeamSeat{{AccountID: teamID(2), SeatTier: "team_tier_1"}, {AccountID: teamID(3), SeatTier: "unassigned"}, {AccountID: teamID(4), SeatTier: "unassigned"}}
 	for _, n := range []int{2, 3, 4} {
 		tm.disk.Limits[teamID(n)] = []ClaudeLimit{
 			{Kind: "five_hour", Used: .1, ResetsAt: now.Add(4 * time.Hour).Unix()},

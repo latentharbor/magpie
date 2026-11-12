@@ -11,7 +11,7 @@ import (
 func TestClaudeTeamSmartSpendsExpiringAllowanceFirst(t *testing.T) {
 	tm, _, c := teamFixture(t)
 	now := time.Now()
-	seats := []claudeTeamSeat{{teamID(2), "team_tier_1"}, {teamID(3), "unassigned"}, {teamID(4), "unassigned"}}
+	seats := []claudeTeamSeat{{AccountID: teamID(2), SeatTier: "team_tier_1"}, {AccountID: teamID(3), SeatTier: "unassigned"}, {AccountID: teamID(4), SeatTier: "unassigned"}}
 	tm.disk.Limits[teamID(2)] = []ClaudeLimit{{Kind: "five_hour", Used: 1, ResetsAt: now.Add(time.Hour).Unix()}}
 	set := func(id string, five, week float64, fh, wh time.Duration) {
 		tm.disk.Limits[id] = []ClaudeLimit{{Kind: "five_hour", Used: five, ResetsAt: now.Add(fh).Unix()}, {Kind: "seven_day", Used: week, ResetsAt: now.Add(wh).Unix()}}
@@ -57,7 +57,7 @@ func TestClaudeTeamSmartRebalancesExpiringWeekWithoutChurn(t *testing.T) {
 	set(teamID(2), .2, now.Add(72*time.Hour))
 	set(teamID(3), .99, now.Add(2*time.Hour))
 	set(teamID(4), .1, now.Add(48*time.Hour))
-	seats := []claudeTeamSeat{{teamID(2), "team_tier_1"}, {teamID(3), "unassigned"}, {teamID(4), "unassigned"}}
+	seats := []claudeTeamSeat{{AccountID: teamID(2), SeatTier: "team_tier_1"}, {AccountID: teamID(3), SeatTier: "unassigned"}, {AccountID: teamID(4), SeatTier: "unassigned"}}
 	from, to, err := tm.choose(c, seats, "")
 	if err != nil || from != teamID(2) || to != teamID(3) {
 		t.Fatalf("did not spend expiring week: %s -> %s: %v", from, to, err)
@@ -125,7 +125,7 @@ func TestClaudeTeamSmartKeepsOtherPremiumSeats(t *testing.T) {
 		tm.disk.Observed[teamID(n)] = time.Now()
 		tm.disk.Limits[teamID(n)] = []ClaudeLimit{{Kind: "five_hour", Used: .1, ResetsAt: now.Add(4 * time.Hour).Unix()}, {Kind: "seven_day", Used: .1, ResetsAt: now.Add(week).Unix()}}
 	}
-	seats := []claudeTeamSeat{{teamID(2), "team_tier_1"}, {teamID(3), "unassigned"}, {teamID(4), "team_tier_1"}, {teamID(9), "team_tier_1"}}
+	seats := []claudeTeamSeat{{AccountID: teamID(2), SeatTier: "team_tier_1"}, {AccountID: teamID(3), SeatTier: "unassigned"}, {AccountID: teamID(4), SeatTier: "team_tier_1"}, {AccountID: teamID(9), SeatTier: "team_tier_1"}}
 	from, to, err := tm.choose(c, seats, "")
 	if err != nil || from != teamID(4) || to != teamID(3) {
 		t.Fatalf("wrong Premium displaced: %s -> %s %v", from, to, err)

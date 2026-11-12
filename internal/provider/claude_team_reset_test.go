@@ -139,7 +139,7 @@ func TestClaudeTeamSmartUsesFixedWeeklyResetAfterExpiry(t *testing.T) {
 	// before B's two remaining days, rather than a week from now.
 	tm.disk.Limits[teamID(3)] = []ClaudeLimit{{Kind: "five_hour"}, {Kind: "seven_day", Used: 1, ResetsAt: now.Add(-week + 24*time.Hour).Unix()}}
 	tm.disk.Limits[teamID(4)] = []ClaudeLimit{{Kind: "five_hour"}, {Kind: "seven_day", Used: .2, ResetsAt: now.Add(48 * time.Hour).Unix()}}
-	seats := []claudeTeamSeat{{teamID(2), "team_tier_1"}, {teamID(3), "unassigned"}, {teamID(4), "unassigned"}}
+	seats := []claudeTeamSeat{{AccountID: teamID(2), SeatTier: "team_tier_1"}, {AccountID: teamID(3), SeatTier: "unassigned"}, {AccountID: teamID(4), SeatTier: "unassigned"}}
 	_, to, err := tm.choose(c, seats, "")
 	if err != nil || to != teamID(3) {
 		t.Fatalf("Smart lost the fixed weekly expiry: to=%s err=%v", to, err)

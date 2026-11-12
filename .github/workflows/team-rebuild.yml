@@ -67,5 +67,9 @@ jobs:
         run: go test -tags nogui -run '^$' ./...
       - name: Team and retained transports
         run: |
-          go test -race -timeout 10m ./internal/claudeteam
+          go test -race -count=20 -timeout 10m ./internal/claudeteam
           go test -tags nogui -timeout 20m ./internal/provider ./internal/gateway ./internal/agent ./internal/claudelogin ./internal/claudeanchor ./internal/update -run 'TestClaudeTeam|TestClaudeHTTP|TestClaudeThread|TestDesktopLogin|TestDistribution|TestKeepClaude|TestClaudeLogin'
+      - name: Repeated coordination races
+        run: |
+          go test -race -tags nogui -count=20 -timeout 20m ./internal/provider -run '^(TestClaudeTeamRefusalDuringReconcileKeepsHandoffPending|TestClaudeTeamControllerWaitsForPreviousOwner|TestClaudeTeamDrainMultipleSeatsAndLostResponses)$'
+          go test -race -tags nogui -count=20 -timeout 20m ./internal/gateway -run '^TestClaudeTeam'

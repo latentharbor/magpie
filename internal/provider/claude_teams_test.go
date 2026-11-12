@@ -88,7 +88,7 @@ func TestClaudeTeamMultipleOrganizationsKeepCredentialsQuotasAndRoutesSeparate(t
 func TestClaudeTeamStandbyUsesRoutingAndBothResetTimes(t *testing.T) {
 	tm, _, c := teamFixture(t)
 	now := time.Now().Truncate(time.Hour)
-	seats := []claudeTeamSeat{{teamID(2), "team_tier_1"}, {teamID(3), "unassigned"}, {teamID(4), "unassigned"}}
+	seats := []claudeTeamSeat{{AccountID: teamID(2), SeatTier: "team_tier_1"}, {AccountID: teamID(3), SeatTier: "unassigned"}, {AccountID: teamID(4), SeatTier: "unassigned"}}
 	tm.disk.Limits[teamID(2)] = []ClaudeLimit{{Kind: "five_hour", Used: 1, ResetsAt: now.Add(4 * time.Hour).Unix()}}
 	window := func(five, week time.Duration) []ClaudeLimit {
 		return []ClaudeLimit{{Kind: "five_hour", Used: .2, ResetsAt: now.Add(five).Unix()}, {Kind: "seven_day", Used: .2, ResetsAt: now.Add(week).Unix()}}
