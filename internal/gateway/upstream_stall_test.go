@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -20,17 +21,11 @@ import (
 // answers pings (Go's server does) and the sender is left in
 // awaitFlowControl for good. @imty42 on X: a 535971ms net.send, 499 after
 // 8m56s, on a connection the health ping called healthy.
-func starvingVendor(t *testing.T, hits *atomic.Int32) *httptest.Server {
+func starvingVendor(t *testing.T, hits *atomic.Int32) (*httptest.Server, string) {
 	t.Helper()
 	release := make(chan struct{})
-	vendor := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Logf("starving request method=%s path=%s marker=%q remote=%s", r.Method, r.URL.Path, r.Header.Get("X-Stall-Test"), r.RemoteAddr)
-		hits.Add(1)
-		select {
-		case <-release:
-		case <-r.Context().Done():
-		}
-	}))
+	mark := rand.Text()
+	vendor := httptest.NewUnstartedServer(starvingHandler(mark, hits, release))
 	vendor.EnableHTTP2 = true
 	vendor.Config.HTTP2 = &http.HTTP2Config{MaxReceiveBufferPerConnection: 128 << 10, MaxReceiveBufferPerStream: 128 << 10}
 	vendor.StartTLS()
@@ -38,13 +33,52 @@ func starvingVendor(t *testing.T, hits *atomic.Int32) *httptest.Server {
 		close(release)
 		vendor.Close()
 	})
-	return vendor
+	return vendor, mark
+}
+
+// A late request from another race shard can reach a reused test port (#3357).
+// Attribute tries to this request without deduplicating any of its real sends.
+func starvingHandler(mark string, hits *atomic.Int32, release <-chan struct{}) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Stall-Test") != mark {
+			w.WriteHeader(http.StatusMisdirectedRequest)
+			return
+		}
+		hits.Add(1)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+}
+
+func TestStallVendorCountsOnlyItsRequest(t *testing.T) {
+	var hits atomic.Int32
+	mark := rand.Text()
+	h := starvingHandler(mark, &hits, make(chan struct{}))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the handler counts an owned request, then returns without a wait
+	ask := func(value string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+		r.Header.Set("X-Stall-Test", value)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if w := ask("another test"); w.Code != http.StatusMisdirectedRequest || hits.Load() != 0 {
+		t.Fatalf("foreign request reached the counter: status=%d hits=%d", w.Code, hits.Load())
+	}
+	ask(mark)
+	ask(mark)
+	if n := hits.Load(); n != 2 {
+		t.Fatalf("owned sends were deduplicated: got %d, want both attempts", n)
+	}
 }
 
 func TestBodyStalledByFlowControlIsGivenUp(t *testing.T) {
 	fresh(t)
 	var hits atomic.Int32
-	vendor := starvingVendor(t, &hits)
+	vendor, mark := starvingVendor(t, &hits)
 	trustVendor(t, vendor)
 	was := bodyStall
 	bodyStall = 400 * time.Millisecond
@@ -60,7 +94,7 @@ func TestBodyStalledByFlowControlIsGivenUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Stall-Test", t.Name())
+	req.Header.Set("X-Stall-Test", mark)
 	res, err := s.client.Do(req)
 	if err == nil {
 		res.Body.Close()
@@ -183,7 +217,7 @@ func TestStallBodyClock(t *testing.T) {
 // remote MCP server that never opens its window is given up the same way.
 func TestMCPRelayBodyStalledIsGivenUp(t *testing.T) {
 	var hits atomic.Int32
-	vendor := starvingVendor(t, &hits)
+	vendor, mark := starvingVendor(t, &hits)
 	was := bodyStall
 	bodyStall = 400 * time.Millisecond
 	t.Cleanup(func() { bodyStall = was })
@@ -198,6 +232,7 @@ func TestMCPRelayBodyStalledIsGivenUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	req.Header.Set("X-Stall-Test", mark)
 	res, err := c.Do(req)
 	if err == nil {
 		res.Body.Close()

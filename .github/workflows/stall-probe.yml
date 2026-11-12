@@ -18,4 +18,19 @@ jobs:
         with:
           bun-version: 1.4.2
       - name: Repeated flow-control stall
-        run: go test -race -tags nogui -count=100 -timeout 5m ./internal/gateway -run '^TestBodyStalledByFlowControlIsGivenUp$' -v
+        run: go test -race -tags nogui -count=100 -timeout 5m ./internal/gateway -run '^Test(BodyStalledByFlowControlIsGivenUp|MCPRelayBodyStalledIsGivenUp|StallVendorCountsOnlyItsRequest)$' -v
+      - name: Request attribution fails without isolation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/gateway/upstream_stall_test.go')
+          text=p.read_text()
+          needle='if r.Header.Get("X-Stall-Test") != mark {'
+          assert text.count(needle)==1
+          p.write_text(text.replace(needle,'if false {'))
+          PY
+          if go test -tags nogui ./internal/gateway -run '^TestStallVendorCountsOnlyItsRequest$' > /tmp/stall-isolation.log 2>&1; then
+            cat /tmp/stall-isolation.log
+            exit 1
+          fi
+          grep -F 'foreign request reached the counter' /tmp/stall-isolation.log
