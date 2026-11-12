@@ -13,32 +13,43 @@ import (
 // accepted step to finish before relinquishing ownership.
 type Runtime struct {
 	LockPath string
-	Wake <-chan struct{}
-	Waiting func()
-	Open func() error
-	Step func(context.Context)
-	Stopped func()
-	Failed func(error)
+	Wake     <-chan struct{}
+	Waiting  func()
+	Open     func() error
+	Step     func(context.Context)
+	Stopped  func()
+	Failed   func(error)
 }
 
 func (r Runtime) Run(ctx context.Context) {
 	r.Waiting()
 	unlock, err := filelock.LockContext(ctx, r.LockPath)
-	if err != nil { r.Failed(err); return }
+	if err != nil {
+		r.Failed(err)
+		return
+	}
 	defer unlock()
-	if ctx.Err() != nil { return }
-	if err := r.Open(); err != nil { r.Failed(err); return }
+	if ctx.Err() != nil {
+		return
+	}
+	if err := r.Open(); err != nil {
+		r.Failed(err)
+		return
+	}
 	defer r.Stopped()
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
 		select {
-		case <-ctx.Done(): return
+		case <-ctx.Done():
+			return
 		case <-timer.C:
 		case <-r.Wake:
 		}
-		if ctx.Err() != nil { return }
+		if ctx.Err() != nil {
+			return
+		}
 		r.Step(ctx)
-		timer.Reset(5*time.Minute)
+		timer.Reset(5 * time.Minute)
 	}
 }

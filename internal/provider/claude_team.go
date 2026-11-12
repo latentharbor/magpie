@@ -650,14 +650,7 @@ func (t *claudeTeamController) note(user string, ls []ClaudeLimit) {
 	}
 }
 
-func teamSpent(ws []ClaudeLimit, threshold float64, now time.Time) bool {
-	for _, w := range ws {
-		if (w.Kind == "five_hour" || w.Kind == "seven_day") && w.Used*100 >= threshold && (w.ResetsAt == 0 || w.ResetsAt > now.Unix()) {
-			return true
-		}
-	}
-	return false
-}
+func teamSpent(ws []ClaudeLimit,threshold float64,now time.Time)bool { return claudeteam.Spent(ws,threshold,now) }
 
 // A confirmed sign-out closes stale admissions immediately and wakes the
 // existing background transfer. Call only after releasing credential locks;
@@ -931,98 +924,27 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 			}
 		}
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	now := time.Now()
-	from, to := "", ""
-	var candidates []string
-	var weights []routes.Seat
-	var reliable []bool
-	for _, s := range seats {
-		if !slices.Contains(c.Members, s.AccountID) {
-			continue
-		}
-		if s.SeatTier == "team_tier_1" && (manual != "" && manual == s.AccountID ||
-			manual == "" && (identities[s.AccountID].Lapsed != "" || teamSpent(t.disk.Limits[s.AccountID], c.Threshold, now))) && from == "" {
-			from = s.AccountID
-		}
-		if s.SeatTier != "unassigned" || unavailable[s.AccountID] || teamSpent(t.disk.Limits[s.AccountID], c.Threshold, now) {
-			continue
-		}
-		ws := claudeLimitWindows(t.disk.Limits[s.AccountID])
-		a := allowanceOf(ws, now)
-		used, _ := a.For("", now)
-		pace, _ := a.Pace("", now)
-		known := len(ws) > 0
-		if !known {
-			pace = FreshPace
-		}
-		candidates = append(candidates, s.AccountID)
-		reliable = append(reliable, t.disk.QuotaErrors[s.AccountID] == "" &&
-			!t.disk.Observed[s.AccountID].IsZero() && now.Sub(t.disk.Observed[s.AccountID]) <= 24*time.Hour)
-		if c.Routing == "" {
-			known = claudeTeamQuotaKnown(t.disk.Limits[s.AccountID])
-		}
-		weights = append(weights, routes.Seat{Key: s.AccountID, Account: true, Known: known, Learns: !known, Used: used, Pace: pace, Soon: a.Renewal("", now), Weight: 1})
-	}
-	if len(candidates) > 0 {
-		to = candidates[0]
-		if c.Routing == "" {
-			order := ClaudeTeamSmart(weights)
-			to = candidates[order[0]]
-			// Failed reads/old snapshots are probes after observed usable
-			// alternatives, even when their projected reset sorts earlier.
-			for _, i := range order {
-				if reliable[i] && weights[i].Known {
-					to = candidates[i]
-					break
-				}
-			}
-		} else if strategy, ok := routes.Find(c.Routing); ok {
-			if order := routes.Apply(strategy, claudeTeamPrefix+c.OrganizationID+"/standby", weights); len(order) > 0 {
-				to = candidates[order[0]]
-			}
-		}
-	}
-	// Smart also spends a parked account's expiring allowance before it is
-	// lost, rather than waiting for an unrelated active account to run dry.
-	// Only complete observations justify a voluntary transfer; threshold and
-	// manual handoffs above remain authoritative. The normal drain is reused.
-	if from == "" && to != "" && manual == "" && c.Routing == "" {
-		var latest routes.Seat
-		standby := weights[slices.Index(candidates, to)]
-		recent := false
-		for _, h := range t.disk.History {
-			if h.Result == "assigned" && now.Sub(h.At) < 15*time.Minute {
-				recent = true
-			}
-		}
-		if standby.Known && reliable[slices.Index(candidates, to)] && !recent {
-			for _, s := range seats {
-				ls := t.disk.Limits[s.AccountID]
-				if s.SeatTier != "team_tier_1" || !slices.Contains(c.Members, s.AccountID) || identities[s.AccountID].Lapsed != "" || !claudeTeamQuotaKnown(ls) {
-					continue
-				}
-				active := routes.Seat{Key: s.AccountID, Known: true, Soon: allowanceOf(claudeLimitWindows(ls), now).Renewal("", now)}
-				if ClaudeTeamSmart([]routes.Seat{active, standby})[0] != 1 {
-					continue
-				}
-				if !claudeTeamExpiryWorthwhile(active, standby, now) {
-					continue
-				}
-				if from == "" || ClaudeTeamSmart([]routes.Seat{active, latest})[0] == 1 {
-					from, latest = s.AccountID, active
-				}
-			}
-		}
-	}
-	if manual != "" && from == "" {
-		return "", "", errors.New("the chosen source has no Premium seat in this pool")
-	}
-	if from != "" && to == "" {
-		return from, "", errors.New("all Claude Team alternatives are cooling down, signed out or unknown; see the earliest reset")
-	}
-	return from, to, nil
+ t.mu.Lock()
+ defer t.mu.Unlock()
+ now:=time.Now()
+ var members []claudeteam.Candidate
+ for _,seat:=range seats {
+  if !slices.Contains(c.Members,seat.AccountID) {continue}
+  ls:=t.disk.Limits[seat.AccountID]
+  ws:=claudeLimitWindows(ls)
+  a:=allowanceOf(ws,now)
+  used,_:=a.For("",now);pace,_:=a.Pace("",now)
+  known:=len(ws)>0
+  if !known {pace=FreshPace}
+  if c.Routing=="" {known=claudeteam.QuotaKnown(ls)}
+  members=append(members,claudeteam.Candidate{
+   ID:seat.AccountID,Tier:seat.SeatTier,Limits:ls,Lapsed:identities[seat.AccountID].Lapsed!="",
+   Unavailable:unavailable[seat.AccountID],
+   Reliable:t.disk.QuotaErrors[seat.AccountID]=="" && !t.disk.Observed[seat.AccountID].IsZero() && now.Sub(t.disk.Observed[seat.AccountID])<=24*time.Hour,
+   Weight:routes.Seat{Key:seat.AccountID,Account:true,Known:known,Learns:!known,Used:used,Pace:pace,Soon:a.Renewal("",now),Weight:1},
+  })
+ }
+ return claudeteam.Choose(c,members,manual,t.disk.History,now)
 }
 
 func (t *claudeTeamController) reconcile(ctx context.Context, manual string) error {

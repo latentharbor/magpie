@@ -5053,11 +5053,7 @@ func renderClaudePromptAt(req *Request, split int) ([]map[string]any, error) {
 		}
 		blocks[chunk]["cache_control"] = req.runMark()
 	}
-	blocks = closeBlocks(blocks, &text)
-	if req.clientCache == nil && autoModeClassifier(req) {
-		blocks = cacheClaudeClassifier(blocks, instructions)
-	}
-	return blocks, nil
+	return closeBlocks(blocks, &text), nil
 }
 
 // toolChoiceAsk is the client's tool choice in words, which Claude Code

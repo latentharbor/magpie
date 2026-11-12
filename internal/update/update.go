@@ -61,13 +61,13 @@ func Feed() string {
 
 // Release is one published version.
 type Release struct {
-	Schema int `json:"schema,omitempty"`
+	Schema     int    `json:"schema,omitempty"`
 	Repository string `json:"repository,omitempty"`
-	proof *distributionProof
-	Version string           `json:"version"` // "0.2.0", no v
-	Notes   string           `json:"notes"`   // markdown
-	URL     string           `json:"url"`     // the release page
-	Assets  map[string]Asset `json:"assets"`  // by file name
+	proof      *distributionProof
+	Version    string           `json:"version"` // "0.2.0", no v
+	Notes      string           `json:"notes"`   // markdown
+	URL        string           `json:"url"`     // the release page
+	Assets     map[string]Asset `json:"assets"`  // by file name
 	// Signed is what vouches for Assets' hashes (signed.go).
 	Signed *Signed `json:"signed,omitempty"`
 }
@@ -75,10 +75,10 @@ type Release struct {
 // Asset is one downloadable file of a release.
 type Asset struct {
 	Platform string `json:"platform,omitempty"`
-	signed bool
-	URL    string `json:"url"`
-	Size   int64  `json:"size"`
-	SHA256 string `json:"sha256"`
+	signed   bool
+	URL      string `json:"url"`
+	Size     int64  `json:"size"`
+	SHA256   string `json:"sha256"`
 	// API is GitHub's API address of the file, asked when URL is busy
 	// (apiroute.go); a feed without it has it looked up from URL.
 	API string `json:"api,omitempty"`
@@ -1316,6 +1316,11 @@ func download(ctx context.Context, a Asset, path string) error {
 		// (biubiu8802 on X: "unexpected EOF" on each try)
 		ctx = netproxy.OverHTTP1(ctx)
 	}
+	if err != nil && len(before) > 0 {
+		last := "from " + hostOf(on.URL)
+		if viaAPI { last = "through api.github.com" }
+		err = fmt.Errorf("%s, and %s: %w", strings.Join(before, ", "), last, err)
+	}
 	return err
 }
 
@@ -1389,13 +1394,6 @@ func fetchSigned(ctx context.Context, a Asset, path string) error {
 		err = &MirrorError{Mirror: strings.TrimSuffix(u, a.URL), Err: err}
 	}
 	if err != nil {
-		if len(before) > 0 {
-			last := "from " + hostOf(on.URL)
-			if viaAPI {
-				last = "through api.github.com"
-			}
-			err = fmt.Errorf("%s, and %s: %w", strings.Join(before, ", "), last, err)
-		}
 		if cerr := clearFile(path); cerr != nil {
 			err = errors.Join(err, cerr)
 		}

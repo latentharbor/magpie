@@ -55,7 +55,9 @@ func NotesBetween(ctx context.Context, after, upto, lang string) ([]Note, error)
 func NotesBetweenTotal(ctx context.Context, after, upto, lang string) ([]Note, int, error) {
 	if distributionTrust != "" {
 		r, err := LatestIn(ctx, lang)
-		if err != nil { return nil, 0, err }
+		if err != nil {
+			return nil, 0, err
+		}
 		notes := Between([]Note{{Version: r.Version, Notes: r.Notes, URL: r.URL}}, after, upto)
 		return notes, len(notes), nil
 	}

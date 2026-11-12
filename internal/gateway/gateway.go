@@ -553,7 +553,7 @@ type Server struct {
 	codexTurns sync.Map
 	// held is the most prompt tokens each provider's model answered
 	// (heldOf), by provider id and model
-	held sync.Map
+	held          sync.Map
 	claudeAnchors claudeanchor.Store[claudeThreadOwner]
 	// codexLeads is the model each Codex conversation's own turns last
 	// went on, for its side calls to follow (codexFollowTo)

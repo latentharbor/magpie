@@ -3,8 +3,8 @@
 package all
 
 import (
-	_ "github.com/yetone/magpie/plugins/claude-team"
 	_ "github.com/yetone/magpie/plugins/budget"
+	_ "github.com/yetone/magpie/plugins/claude-team"
 	_ "github.com/yetone/magpie/plugins/gateway"
 	_ "github.com/yetone/magpie/plugins/groups"
 	_ "github.com/yetone/magpie/plugins/library"

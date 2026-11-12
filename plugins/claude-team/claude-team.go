@@ -12,8 +12,8 @@ func init() {
 		ID: "claude-team", API: "^1", Requires: []string{"window", "providers", "gateway"},
 		Name: "Claude Team", Sub: "Manage organization seats and standby accounts",
 		Opens: "providers", One: "1 organization", Many: "{n} organizations",
-		InUse: provider.ClaudeTeamConfiguredCount,
-		Parts: []pluginrt.Part{{Slot:"part",Key:"claude-team"}},
+		InUse:  provider.ClaudeTeamConfiguredCount,
+		Parts:  []pluginrt.Part{{Slot: "part", Key: "claude-team"}},
 		Client: []string{"i18n.js", "client.js", "team.css"},
 	})
 }

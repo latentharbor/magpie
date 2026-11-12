@@ -19,6 +19,7 @@ const claudeTeamPrefix = "claude-team-"
 // A configured organization keeps its management UI available, including
 // when its journal is unreadable and must be repaired rather than forgotten.
 func ClaudeTeamConfiguredCount() (int, error) {
+	discoverClaudeTeams()
 	var n int
 	for _, t := range claudeTeamControllers() {
 		c, err := t.readConfig()

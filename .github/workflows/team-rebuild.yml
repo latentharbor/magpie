@@ -9,6 +9,27 @@ concurrency:
   group: team-rebuild-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+    env:
+      BROWSER: ${{ matrix.browser }}
+      NODE_PATH: ${{ github.workspace }}/.github/ui-preview/node_modules
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install browser fixtures
+        run: |
+          npm install --ignore-scripts --no-package-lock --prefix .github/ui-preview
+          .github/ui-preview/node_modules/.bin/playwright install --with-deps "$BROWSER"
+      - name: Team and Desktop login UI
+        run: node --test --test-concurrency=2 --test-timeout=600000 internal/gui/tests/claude-team.test.cjs internal/gui/tests/claude-login.test.cjs
   compatibility:
     runs-on: ubuntu-24.04
     timeout-minutes: 45

@@ -1,8 +1,8 @@
 package provider
 
 import (
+	"github.com/yetone/magpie/internal/claudeteam"
 	"slices"
-"github.com/yetone/magpie/internal/claudeteam"
 	"strings"
 	"time"
 )

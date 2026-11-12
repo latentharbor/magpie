@@ -18,9 +18,9 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.18.3
 	github.com/pelletier/go-toml/v2 v2.2.4
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/pierrec/xxHash v0.1.5
 	github.com/refraction-networking/utls v1.8.2
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/tidwall/gjson v1.19.0
 	github.com/tidwall/jsonc v0.3.3
 	github.com/tidwall/sjson v1.2.5
@@ -63,6 +63,7 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
+	golang.org/x/crypto v0.53.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )

@@ -1,4 +1,34 @@
-# Native Claude Team controller (custom build)
+# Claude Team module
+
+The rebuild is based on upstream `836d074f1`. The Team feature is composed of
+an independent coordination module and a host adapter, not an inference
+provider implementation:
+
+- `internal/claudeteam` owns the management protocol, bounded error
+  classification, standby selection, transfer/recovery state machine, process
+  lease and five-minute background schedule. It imports neither `provider`,
+  `gateway`, `gui`, `claudelogin` nor the HTTP subscription transport. It accepts
+  observations and explicit local admission/journal callbacks from its host.
+- `internal/provider/claude_team*.go` adapts native saved accounts, quota
+  observations, catalog entries and private journals to that module. The host
+  retains credential ownership and serializes observation publication. Healthy
+  inference does not call management endpoints.
+- `plugins/claude-team` registers the management UI. Its JavaScript, CSS and
+  translations live under `assets/plugins/claude-team`, with narrow connections
+  to the ordinary provider editor. This is a compiled built-in extension, not
+  a claim that the existing npm plugin API can drain built-in accounts.
+- The optional HTTP transport and `internal/claudelogin` are independent
+  retained features. Team's transaction engine never constructs model requests.
+
+Existing provider IDs, configuration paths, JSON fields, journals and original
+login switches remain compatible. A pending old transfer is recovered under
+the process lock before a new decision. There is no automatic credential or
+certificate migration, and no write to official Desktop data during startup.
+
+Verification runs in GitHub CI. The module's transaction tests check journaling
+before cloud writes, drain cancellation, ambiguous PUT replies and concurrent
+outside-pool assignments; the existing provider/gateway fixtures exercise the
+host adapter, account isolation and request retention end to end.
 
 This opt-in local fork exposes one normal subscription provider per Team
 organization (`claude-team-{organization UUID}`), managing existing Premium

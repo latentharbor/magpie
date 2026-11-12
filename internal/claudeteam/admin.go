@@ -46,7 +46,6 @@ func NewHTTP(c Config) *HTTP {
 	}}
 }
 
-
 func (c *HTTP) call(ctx context.Context, method, path string, payload any, dst any) error {
 	if !UUID.MatchString(c.Org) {
 		return errors.New("invalid Claude Team organization UUID")
