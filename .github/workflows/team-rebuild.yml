@@ -29,7 +29,7 @@ jobs:
           npm install --ignore-scripts --no-package-lock --prefix .github/ui-preview
           .github/ui-preview/node_modules/.bin/playwright install --with-deps "$BROWSER"
       - name: Team and Desktop login UI
-        run: node --test --test-concurrency=2 --test-timeout=600000 internal/gui/tests/claude-team.test.cjs internal/gui/tests/claude-login.test.cjs
+        run: node --test --test-concurrency=2 --test-timeout=600000 internal/gui/tests/claude-team.test.cjs internal/gui/tests/claude-login.test.cjs internal/gui/tests/claude-transport-setting.test.cjs
   compatibility:
     runs-on: ubuntu-24.04
     timeout-minutes: 45

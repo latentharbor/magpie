@@ -6181,7 +6181,7 @@ function renderProviders(quiet) {
   keptIcons = null;
   markUpstream();
   view.scrollTop = top; // first: a closing dialog folds into its row where it is
-  if (dialog) openModal(dialog); else if (!$("#modal .claude-team")) closeModal();
+  if (dialog) openModal(dialog, quiet); else if (!$("#modal .claude-team")) closeModal();
 }
 
 // providerHandle is an on row's logo and its handle (#499): drag, or
@@ -12603,7 +12603,7 @@ async function followSignIn(id) {
 
 // signingKept: a sign-in's site, way, account and proxy across updates
 function signingKept() {
-  return { site: signing.site, method: signing.method, inputs: signing.inputs, forUser: signing.forUser, picked: signing.picked, organizationId: signing.organizationId, askProxy: signing.askProxy, customProxy: signing.customProxy, openError: signing.openError };
+  return { site: signing.site, method: signing.method, inputs: signing.inputs, forUser: signing.forUser, picked: signing.picked, organizationId: signing.organizationId, askProxy: signing.askProxy, customProxy: signing.customProxy, openError: signing.openError, linkOnly: signing.linkOnly };
 }
 
 // signInProxyOf: the proxy an account's sign-in goes through when none is
@@ -14059,7 +14059,6 @@ function accountQuota(data, user, capFor = () => 0, settable = null, prov) {
     line.classList.add("stale");
     line.append(el("span", "aq-asof", asOfText(q)));
   }
-  if (!q?.asOf && q?.windows?.some(w => w.estimated)) line.append(el("span", "aq-asof", t("Reset-based estimate; not refreshed from Claude")));
   if (q?.resets?.count && !q.error) {
     // Codex's are used from here too, as on Usage (roamlog on X)
     const words = resetsWords(q.resets), use = prov == "codex" && !q.resets.byWindow;
@@ -14113,7 +14112,6 @@ function accountQuota(data, user, capFor = () => 0, settable = null, prov) {
       m.title = resetText(at, at.toLocaleString(intlLang()));
       m.append(el("span", "aq-r", resetInText(at)));
     }
-    if (w.estimated && !w.resetsAt && w.used === 0) m.append(el("span", "aq-r", t("Window not started")));
     const out = runsOutText(w, (at) => at.toLocaleString(intlLang()));
     if (out) m.title = tipLines(m.title, out);
     if (w.tiers) m.title = tiersText(w);
@@ -15233,15 +15231,14 @@ function pickPill(opts, value, dflt, title, head, onChange) {
   return pill;
 }
 
-// Focus follows a real move, not a list redrawn under a still pointer.
-// Linux WebKit reports zero screen coordinates; client coordinates still move.
-let pointerAt = "", pointerMoved = false;
-addEventListener("mousemove", (e) => {
-  const at = e.clientX + "," + e.clientY;
-  pointerMoved = at !== pointerAt; pointerAt = at;
-}, true);
+// hoverFocus: an item the pointer moves onto takes the focus. A list
+// redrawn under a still pointer (a search narrowing it) gets a mouseenter
+// too, which took the focus out of the search mid-word (#2439); one where
+// the last mousemove was is a redraw's (mouseenter comes before its move).
+let pointerAt = "";
+addEventListener("mousemove", (e) => { pointerAt = e.screenX + "," + e.screenY; }, true);
 function hoverFocus(b) {
-  b.onmousemove = () => { if (pointerMoved) b.focus({ preventScroll: true }); };
+  b.onmouseenter = (e) => { if (e.screenX + "," + e.screenY !== pointerAt) b.focus(NO_SCROLL); };
 }
 let protoMenu = null;
 // stepFocus: ArrowDown or ArrowUp moves focus round list from i (-1: none)
@@ -15313,7 +15310,6 @@ function openProtoMenu(anchor, opts, value, choose, head = "Protocol this key sp
   // a group heading (o.group, its values) is ticked when all of them are
   const isOn = (v, o) => o?.group ? o.group.every((g) => picked.includes(g)) : typeof o?.ticked === "boolean" ? o.ticked : !multi ? v === value : v === "" ? !picked.length : picked.includes(v);
   const box = el("div", "pop proto-menu" + (cls ? " " + cls : ""));
-  box.classList.toggle("actions-only", !multi && !opts.some((o) => isOn(o.v)));
   box.setAttribute("role", "menu");
   box.append(el("div", "pm-head", t(head)));
   let filter = null;
@@ -15700,15 +15696,16 @@ $("#addProvider").onclick = (e) => {
     return unrollSheet(view, sheet, e);
   }
   if (!scrollOnPurpose(e, 700)) return;
-  const intent = readerScrollEpoch;
   const from = view.scrollTop;
   const to = Math.min(from + sheet.getBoundingClientRect().top - view.getBoundingClientRect().top - 12, view.scrollHeight - view.clientHeight);
   if (calm()) { view.scrollTop = to; return; }
   const t0 = performance.now(), ease = (x) => 1 - Math.pow(1 - x, 3);
+  let set = from;
   const step = (now) => {
-    if (readerScrollEpoch !== intent) return; // the reader took it
+    if (Math.abs(view.scrollTop - set) > 2) return; // the reader took it
     const x = Math.min(1, (now - t0) / 520);
     view.scrollTop = Math.round(from + (to - from) * ease(x));
+    set = view.scrollTop;
     if (x < 1) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
@@ -15752,7 +15749,6 @@ function unrollSheet(view, sheet, e) {
   // can start to move: from there the view goes down as it grows
   const x0 = Math.max(0, h - (room - from));
   const go = scrollOnPurpose(e, ROW_OPEN.ms + 300); // opened by a click, not by code
-  const intent = readerScrollEpoch;
   if (!h || calm()) { if (go) view.scrollTop = to; return; }
   const pad = getComputedStyle(sheet);
   sheet.style.overflow = "hidden";
@@ -15764,12 +15760,14 @@ function unrollSheet(view, sheet, e) {
     c.animate([{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "none" }],
       { duration: 260, delay: 40, easing: "cubic-bezier(.23, 1, .32, 1)", fill: "backwards" });
   }
+  // what the view is at once the sheet starts at no height: a page that
+  // was scrolled to its end is clamped shorter (WebKit), not moved by the reader
+  let set = view.scrollTop;
   const follow = () => {
-    // WebKit can clamp the view while the sheet grows between frames.
-    // A changed scrollTop alone therefore does not mean the reader took it.
-    if (!go || readerScrollEpoch !== intent) return;
+    if (!go || Math.abs(view.scrollTop - set) > 2) return; // the reader took it
     const done = grow.playState === "finished";
     view.scrollTop = Math.round(from + (to - from) * (done ? 1 : Math.min(1, Math.max(0, sheet.offsetHeight - x0) / (h - x0))));
+    set = view.scrollTop; // as far as there was room for
     if (!done) requestAnimationFrame(follow);
   };
   const end = () => { sheet.style.overflow = ""; };
@@ -15783,11 +15781,10 @@ function unrollSheet(view, sheet, e) {
 function unrollInView(fold, button, e) {
   const v = fold.closest(".view");
   if (!v || !scrollOnPurpose(e, UNROLL.ms + 400)) return;
-  const intent = readerScrollEpoch;
   let set = v.scrollTop;
   const until = performance.now() + UNROLL.ms + 300;
   const step = () => {
-    if (readerScrollEpoch !== intent) return false; // the reader took it
+    if (Math.abs(v.scrollTop - set) > 2) return false; // the reader took it
     const b = v.getBoundingClientRect(), pad = parseFloat(getComputedStyle(v).paddingBottom) || 0;
     const want = v.scrollTop + Math.min(fold.getBoundingClientRect().bottom + pad - b.bottom, button.getBoundingClientRect().top - b.top - 4);
     const to = Math.round(Math.max(set, Math.min(want, v.scrollHeight - v.clientHeight)));
@@ -17699,7 +17696,6 @@ function panelBalances(bals) {
 function asOfText(q, short = false) {
   const text = short ? t("As of {when}", { when: stamp(q.asOf) })
     : t(q.readDeferred ? "As of {when} — not refreshed this time" : "As of {when} — couldn't be read just now", { when: new Date(q.asOf).toLocaleString(intlLang()) });
-  if (q.windows?.some(w => w.estimated)) return text + " · " + t("Reset-based estimate; not refreshed from Claude");
   return q.windows?.some((w) => w.resetsAt && new Date(w.resetsAt).getTime() <= Date.now())
     ? text + " · " + t("A cached window has expired; current allowance is unknown") : text;
 }
@@ -19246,7 +19242,7 @@ function openSessCombo(anchor, all, opts, value, choose, head) {
     const cur = !words.length && value && !shown.some((o) => o.v === value) && opts.find((o) => o.v === value);
     items = [...(words.length ? [] : [{ v: "", name: t(all), note: "" }]), ...(cur ? [cur] : []), ...shown].map(item);
     list.replaceChildren(...items);
-    box.classList.toggle("actions-only", !items.some((b) => b.classList.contains("on")));
+    bareTicks(box, items);
     if (!hit.length) list.append(el("div", "sc-none", t("No match")));
     else if (hit.length > shown.length) list.append(el("div", "sc-more", t("{n} more — type to narrow", { n: fmtN(hit.length - shown.length) })));
   };
@@ -22933,12 +22929,6 @@ const panEnds = () => { panning = null; };
 addEventListener("pointerdown", (e) => {
   downAt = [e.clientX, e.clientY];
   panEnds();
-  // End a wheel's coast before native focus can scroll the pressed control.
-  if (e.button === 0) {
-    const v = e.target.closest?.(".view");
-    if (v && performance.now() < purposeUntil) readerLeaves(v);
-    purposeUntil = flingUntil = 0;
-  }
   if (e.button === 1 && e.isTrusted) {
     const pv = e.target instanceof Element ? e.target.closest(".view") : null;
     if (pv && !pv.hidden && pv.scrollHeight > pv.clientHeight) { panning = { v: pv, from: downAt, far: false, lifted: false }; held = null; }
@@ -22966,7 +22956,7 @@ addEventListener("keydown", (e) => {
   panEnds();
   const typing = e.target.closest?.("input, textarea, select, [contenteditable]");
   if (e.key === "Tab" || (!typing && SCROLL_KEYS.has(e.key))) readerScrolls(400);
-  if (e.isTrusted && (e.key === "Enter" || e.key === "Tab")) keyboardFocus(e);
+  if (e.isTrusted && e.key === "Enter") keyboardFocus(e);
 }, true);
 addEventListener("keyup", (e) => {
   if (e.isTrusted && e.key === " " && !e.target.closest?.("input, textarea, select, [contenteditable]")) keyboardFocus(e);
@@ -23040,15 +23030,7 @@ const onScreen = (n, v) => n.getBoundingClientRect().top - v.getBoundingClientRe
 const MOVES = /^(transform|translate|rotate|scale|top|bottom|left|right|inset|margin|offset-|position)/;
 const moving = (a) => a.playState === "running" && (a.transitionProperty ? MOVES.test(a.transitionProperty)
   : !a.effect?.getKeyframes || a.effect.getKeyframes().some((k) => Object.keys(k).some((p) => MOVES.test(p.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase())))));
-const atRest = (n) => {
-  if (!n.isConnected || !n.offsetParent) return false;
-  // A card without its own animation can still ride an entering parent.
-  // Its current coordinates are not a stationary place to hold later.
-  for (let p = n; p && !p.classList.contains("view"); p = p.parentElement) {
-    if (p.getAnimations().some(moving)) return false;
-  }
-  return true;
-};
+const atRest = (n) => n.isConnected && n.offsetParent && !n.getAnimations().some(moving);
 // The room is an empty block last in the view (padding at its foot would
 // count in its height only a frame later), put back when a redraw of the
 // view takes it out.
@@ -23184,7 +23166,7 @@ addEventListener("click", (e) => {
   const chain = [];
   const from = at.closest?.("[data-unrolls]")?.parentElement || at;
   for (let n = from; n && n !== v; n = n.parentElement) {
-    for (const m of [n, n.previousElementSibling, n.nextElementSibling]) if (m instanceof HTMLElement && atRest(m)) chain.push([m, onScreen(m, v), pathIn(v, m)]);
+    for (const m of [n, n.previousElementSibling, n.nextElementSibling]) if (m instanceof HTMLElement && m.offsetParent) chain.push([m, onScreen(m, v), pathIn(v, m)]);
   }
   held = chain.length ? { v, chain, until: performance.now() + 4000, top: v.scrollTop < 1 } : null;
   heldSizes.disconnect();
@@ -23622,12 +23604,7 @@ function fitTop() {
   top.classList.add("crowded");
   if (!fits()) top.classList.add("packed");
 }
-// Changing the observed header's size during delivery makes WebKit report
-// an undelivered ResizeObserver loop. Fit it once on the following frame.
-let topFitFrame = 0;
-const topFit = new ResizeObserver(() => {
-  if (!topFitFrame) topFitFrame = requestAnimationFrame(() => { topFitFrame = 0; fitTop(); });
-});
+const topFit = new ResizeObserver(fitTop);
 for (const e of [".top", ".brand", ".actions"]) topFit.observe($(e));
 document.fonts?.ready.then(fitTop);
 // a font picked later (Settings' Font) can still be loading when it's applied
@@ -24186,12 +24163,13 @@ if (mode === "window") {
       body.classList.remove("tools-tight");
       set("--crumb-max", "none");
       set("--tools-l", Math.ceil(c.left + whole + 16) + "px");
-      if (!head || !over().over && c.left + whole <= a.left - 8) return;
+      if (!head || !over().over) return;
       body.classList.add("tools-tight");
       const o = over();
-      if (!o.over && c.left + whole <= a.left - 8) return;
-      const max = Math.max(0, Math.floor(a.left - 8 - 16 - Math.max(0, o.need) - c.left));
-      // Hide preceding parts before cutting the current page, even with no tools.
+      if (!o.over) return;
+      const max = Math.max(0, Math.floor(a.left - 8 - 16 - o.need - c.left));
+      // where the reader is keeps its last word: "Work / Library /" goes,
+      // a part and its slash at a time, before "MCP servers" is cut
       let w = whole;
       for (let i = 0; i + 1 < kids.length - 1 && w > max; i += 2) {
         kids[i].hidden = kids[i + 1].hidden = true;

@@ -1034,7 +1034,7 @@ func claudeWindows(ctx context.Context, user string, active bool) ([]QuotaWindow
 		if e.ws != nil && time.Since(e.heard) < claudeHeard && !claudeDenied(err.Error()) {
 			return e.windows(time.Now()), nil // a fresh header stands unless the account was refused
 		}
-		if haveTeam && !claudeUsageDenied.MatchString(err.Error()) {
+		if haveTeam && !claudeDenied(err.Error()) {
 			return cached, nil
 		}
 		return ws, err

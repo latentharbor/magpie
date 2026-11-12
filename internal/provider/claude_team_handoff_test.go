@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yetone/magpie/internal/routes"
+	"github.com/yetone/magpie/internal/claudeteam"
 )
 
 func TestClaudeTeamStandbyClearedBeforeAssignment(t *testing.T) {
@@ -136,8 +136,8 @@ func TestClaudeTeamVoluntaryExpiryNeedsBenefit(t *testing.T) {
 		{"distant five hour", []time.Duration{24 * time.Hour, 4 * time.Hour}, []time.Duration{24 * time.Hour, 2 * time.Hour}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			seat := func(ds []time.Duration) routes.Seat {
-				s := routes.Seat{}
+			seat := func(ds []time.Duration) claudeteam.Weight {
+				s := claudeteam.Weight{}
 				for _, d := range ds {
 					s.Soon = append(s.Soon, now.Add(d))
 				}

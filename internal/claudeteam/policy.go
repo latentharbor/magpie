@@ -5,21 +5,21 @@ import (
 	"slices"
 	"time"
 
-	"github.com/yetone/magpie/internal/routes"
+
 )
 
 // Order spends the usable allowance that expires first, even if
 // it has little left. Both inference and standby selection use this order;
 // the ordinary Smart 90/98% bands otherwise leave that allowance unused.
 // Stable hourly ties avoid moving seats for insignificant timestamp drift.
-func Order(seats []routes.Seat) []int {
+func Order(seats []Weight) []int {
 	order := make([]int, len(seats))
 	for i := range seats {
 		order[i] = i
 	}
 	slices.SortStableFunc(order, func(i, j int) int {
 		a, b := seats[i], seats[j]
-		rank := func(s routes.Seat) int {
+		rank := func(s Weight) int {
 			if !s.Known {
 				return 1
 			}
@@ -82,7 +82,7 @@ func QuotaKnown(ls []Limit) bool {
 // Rebalance an expiring week within one prospective 5h work window, or a
 // same-week 5h window in its last hour, with at least an hour of deadline gain.
 // Exhaustion, authentication failures and manual transfers bypass this guard.
-func ExpiryWorthwhile(active, standby routes.Seat, now time.Time) bool {
+func ExpiryWorthwhile(active, standby Weight, now time.Time) bool {
 	for i := 0; i < len(active.Soon) && i < len(standby.Soon); i++ {
 		a, b := active.Soon[i], standby.Soon[i]
 		if a.Truncate(time.Hour).Equal(b.Truncate(time.Hour)) {

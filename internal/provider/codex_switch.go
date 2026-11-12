@@ -48,7 +48,6 @@ import (
 
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/lastgood"
-	"github.com/yetone/magpie/internal/routes"
 )
 
 // ClaudeThroughMagpie is set by the agent package: whether Claude Code's
@@ -158,7 +157,7 @@ func codexOutUntil(u map[string]SubscriptionQuota) time.Time {
 // SpentShare is the share of an allowance past which an account is all
 // but used up: Smart routing keeps it for when no other can take a
 // request, and the agent signed in to it is signed in to another.
-const SpentShare = routes.UsedShare
+const SpentShare = 98
 
 // SpentShareOf is the share past which routing counts an account spent:
 // SpentShare, but In order sends requests to the first until a window of it
@@ -283,10 +282,6 @@ func usedPast(q SubscriptionQuota, share float64, now time.Time) bool {
 // not read yet is read then (readSpare). ok is false when the agent should
 // stay.
 func NextLogin(ctx context.Context, agent string) (from, to string, back, ok bool) {
-	// The Team controller owns switches, not the agent's live OAuth sign-in.
-	if agent == "claude" && ClaudeTeamStatusEnabled() {
-		return "", "", false, false
-	}
 	if leftAlone(agent) {
 		return "", "", false, false // magpie has no say in its sign-in, or was told to leave it be
 	}

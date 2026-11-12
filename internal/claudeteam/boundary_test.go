@@ -20,7 +20,7 @@ func TestCoordinationDoesNotImportItsHosts(t *testing.T) {
 		ast.Inspect(f,func(n ast.Node)bool{
 			i,ok:=n.(*ast.ImportSpec);if !ok{return true}
 			name,_:=strconv.Unquote(i.Path.Value)
-			for _,host:=range []string{"provider","gateway","gui","claudelogin","agent"} {
+			for _,host:=range []string{"provider","gateway","gui","claudelogin","agent","routes"} {
 				if name=="github.com/yetone/magpie/internal/"+host {t.Errorf("%s depends on host %s",path,host)}
 			}
 			return true

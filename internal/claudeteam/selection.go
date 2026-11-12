@@ -5,7 +5,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/yetone/magpie/internal/routes"
+
 )
 
 // Candidate contains observations, never credentials. The host computes the
@@ -14,7 +14,7 @@ type Candidate struct {
 	ID, Tier string
 	Lapsed, Unavailable, Reliable bool
 	Limits []Limit
-	Weight routes.Seat
+	Weight Weight
 }
 
 func Spent(ws []Limit, threshold float64, now time.Time) bool {
@@ -28,7 +28,7 @@ func Spent(ws []Limit, threshold float64, now time.Time) bool {
 func Choose(c Config, members []Candidate, manual string, history []Event, now time.Time) (string,string,error) {
 	from,to:="",""
 	var candidates []Candidate
-	var weights []routes.Seat
+	var weights []Weight
 	for _, s:=range members {
 		if !slices.Contains(c.Members,s.ID) {continue}
 		if s.Tier=="team_tier_1" && (manual!="" && manual==s.ID || manual=="" && (s.Lapsed || Spent(s.Limits,c.Threshold,now))) && from=="" {from=s.ID}
@@ -41,23 +41,23 @@ func Choose(c Config, members []Candidate, manual string, history []Event, now t
 		if c.Routing=="" {
 			order:=Order(weights);at=order[0]
 			for _,i:=range order {if candidates[i].Reliable && weights[i].Known {at=i;break}}
-		} else if strategy,ok:=routes.Find(c.Routing);ok {
-			if order:=routes.Apply(strategy,"claude-team-"+c.OrganizationID+"/standby",weights);len(order)>0 {at=order[0]}
+		} else {
+			at=routeOrder(c.Routing,"claude-team-"+c.OrganizationID+"/standby",weights)[0]
 		}
 		standby=candidates[at];to=standby.ID
 	}
 	if from=="" && to!="" && manual=="" && c.Routing=="" && standby.Weight.Known && standby.Reliable {
 		recent:=slices.ContainsFunc(history,func(e Event)bool{return e.Result=="assigned" && now.Sub(e.At)<15*time.Minute})
 		if !recent {
-			var latest routes.Seat
+			var latest Weight
 			for _,s:=range members {
 				if s.Tier!="team_tier_1" || !slices.Contains(c.Members,s.ID) || s.Lapsed || !QuotaKnown(s.Limits) {continue}
 				active:=s.Weight
 				// Renewal rebalance compares expiry, independent of ordinary
 				// routing's utilization bands, exactly as the standby policy.
 				active.Known=true;active.Used=0
-				if Order([]routes.Seat{active,standby.Weight})[0]!=1 || !ExpiryWorthwhile(active,standby.Weight,now) {continue}
-				if from=="" || Order([]routes.Seat{active,latest})[0]==1 {from,latest=s.ID,active}
+				if Order([]Weight{active,standby.Weight})[0]!=1 || !ExpiryWorthwhile(active,standby.Weight,now) {continue}
+				if from=="" || Order([]Weight{active,latest})[0]==1 {from,latest=s.ID,active}
 			}
 		}
 	}

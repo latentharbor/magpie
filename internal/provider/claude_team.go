@@ -14,7 +14,7 @@ import (
 
 	"github.com/yetone/magpie/internal/filelock"
 "github.com/yetone/magpie/internal/claudeteam"
-	"github.com/yetone/magpie/internal/routes"
+
 )
 
 // ClaudeTeamConfig owns one organization's subscription and seat controller.
@@ -941,7 +941,7 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
    ID:seat.AccountID,Tier:seat.SeatTier,Limits:ls,Lapsed:identities[seat.AccountID].Lapsed!="",
    Unavailable:unavailable[seat.AccountID],
    Reliable:t.disk.QuotaErrors[seat.AccountID]=="" && !t.disk.Observed[seat.AccountID].IsZero() && now.Sub(t.disk.Observed[seat.AccountID])<=24*time.Hour,
-   Weight:routes.Seat{Key:seat.AccountID,Account:true,Known:known,Learns:!known,Used:used,Pace:pace,Soon:a.Renewal("",now),Weight:1},
+   Weight:claudeteam.Weight{Key:seat.AccountID,Account:true,Known:known,Learns:!known,Used:used,Pace:pace,Soon:a.Renewal("",now),Weight:1},
   })
  }
  return claudeteam.Choose(c,members,manual,t.disk.History,now)
