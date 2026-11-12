@@ -14,10 +14,10 @@ import (
 	"net/http"
 	"net/url"
 	"path"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/proc"
 )
 
@@ -32,7 +32,7 @@ type distributionProof struct {
 	fingerprint [32]byte
 }
 
-var stableVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+var stableVersion = lazyre.New(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
 func distributionKey() (ed25519.PublicKey, error) {
 	key, err := base64.StdEncoding.Strict().DecodeString(distributionPublicKey)

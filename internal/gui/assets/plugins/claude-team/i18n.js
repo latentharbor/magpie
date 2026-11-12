@@ -1,4 +1,4 @@
-// Distribution feature strings; upstream translations stay untouched.
+// Distribution feature strings; agent notices remain in the core table.
 magpie.strings({
   "zh": {
     "Usage threshold reached": "已达到用量阈值",
@@ -16,7 +16,6 @@ magpie.strings({
     "Continue": "继续",
     "Official login": "官方登录",
     "Connected · official Claude login with selected models through the local proxy": "已接入 · Claude 官方登录，指定模型经本地代理",
-    "Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings.": "Claude Desktop 保持官方登录；指定模型的推理请求通过本地 HTTPS 代理交给 magpie。更改代理设置后请重启 Desktop。",
     "Official Claude login with selected models through magpie’s local HTTPS proxy": "保持 Claude 官方登录，指定模型经 magpie 本地 HTTPS 代理",
     "Could not load settings": "无法加载设置",
     "Keep Claude signed in": "保持 Claude 登录",
@@ -99,7 +98,6 @@ magpie.strings({
     "Continue": "繼續",
     "Official login": "官方登入",
     "Connected · official Claude login with selected models through the local proxy": "已接入 · Claude 官方登入，指定模型經本機代理",
-    "Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings.": "Claude Desktop 保持官方登入；指定模型的推論請求透過本機 HTTPS 代理交給 magpie。變更代理設定後請重新啟動 Desktop。",
     "Official Claude login with selected models through magpie’s local HTTPS proxy": "保持 Claude 官方登入，指定模型經 magpie 本機 HTTPS 代理",
     "Could not load settings": "無法載入設定",
     "Keep Claude signed in": "保持 Claude 登入",
@@ -184,7 +182,6 @@ magpie.strings({
     "Continue": "続ける",
     "Official login": "公式ログイン",
     "Connected · official Claude login with selected models through the local proxy": "接続済み · Claude 公式ログイン、指定モデルはローカルプロキシ経由",
-    "Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings.": "Claude Desktop の公式ログインを維持し、指定モデルの推論をローカル HTTPS プロキシ経由で magpie に送ります。設定変更後は Desktop を再起動してください。",
     "Official Claude login with selected models through magpie’s local HTTPS proxy": "Claude 公式ログインを維持し、指定モデルを magpie のローカル HTTPS プロキシ経由で使用",
     "Could not load settings": "設定を読み込めませんでした",
     "Keep Claude signed in": "Claude のログインを維持",
@@ -269,7 +266,6 @@ magpie.strings({
     "Continue": "Weiter",
     "Official login": "Offizielle Anmeldung",
     "Connected · official Claude login with selected models through the local proxy": "Verbunden · offizielle Claude-Anmeldung, ausgewählte Modelle über lokalen Proxy",
-    "Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings.": "Claude Desktop bleibt offiziell angemeldet; ausgewählte Modelle laufen über magpies lokalen HTTPS-Proxy. Desktop nach Proxy-Änderungen neu starten.",
     "Official Claude login with selected models through magpie’s local HTTPS proxy": "Offizielle Claude-Anmeldung mit ausgewählten Modellen über magpies lokalen HTTPS-Proxy",
     "Could not load settings": "Einstellungen konnten nicht geladen werden",
     "Keep Claude signed in": "Claude angemeldet lassen",

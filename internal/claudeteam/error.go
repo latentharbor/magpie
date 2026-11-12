@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
+
+	"github.com/yetone/magpie/internal/lazyre"
 )
 
-var claudeTeamRayID = regexp.MustCompile(`^[0-9a-fA-F]{16}-[A-Z]{3}$`)
-var claudeTeamRequestID = regexp.MustCompile(`^(req_[a-zA-Z0-9]{8,64}|[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})$`)
+var claudeTeamRayID = lazyre.New(`^[0-9a-fA-F]{16}-[A-Z]{3}$`)
+var claudeTeamRequestID = lazyre.New(`^(req_[a-zA-Z0-9]{8,64}|[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})$`)
 
 // Only fixed classifications and validated correlation IDs leave this function.
 // A web error can contain credentials or account information, including in a

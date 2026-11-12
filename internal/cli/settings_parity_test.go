@@ -180,6 +180,11 @@ const (
 
 // cliForRoute is the command that does what a route does, as `magpie …`.
 var cliForRoute = map[string]string{
+	"GET /api/claude-login":                "magpie claude-login",
+	"POST /api/claude-login":               "magpie claude-login",
+	"POST /api/claude-login/prepare":       "magpie claude-login prepare",
+	"POST /api/claude-login/prepare-usage": "magpie claude-login prepare-usage",
+
 	"GET /api/agent-models/{id}":           "magpie models",
 	"GET /api/settings":                    "magpie settings list",
 	"POST /api/settings":                   "magpie settings set",
@@ -238,6 +243,14 @@ var cliForRoute = map[string]string{
 }
 
 var notYet = map[string]string{
+	"GET /api/claude-team/":              P, // Team organization state is managed in the provider editor.
+	"GET /api/claude-team/subscriptions": P,
+	"POST /api/claude-team/":             P,
+	"POST /api/claude-team/config":       P,
+	"POST /api/claude-team/quota":        P,
+	"POST /api/claude-team/refresh":      P,
+	"POST /api/claude-team/rotate":       P,
+
 	"POST /api/agent-fast":                       A,  // agent_models.go
 	"POST /api/agent-models/{id}":                A,  // agent_models.go
 	"GET /api/agents/cli":                        A,  // api.go

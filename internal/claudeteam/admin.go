@@ -10,13 +10,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/yetone/magpie/internal/lazyre"
 )
 
-var UUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$`)
+var UUID = lazyre.New(`^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$`)
 
 // This web-client header has worked with a sessionKey-only members GET.
 // It is not a Cloudflare clearance guarantee: admission can also depend on

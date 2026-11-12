@@ -4,6 +4,7 @@
 // works. {name} slots are filled by t(str, vars).
 const I18N = {
   zh: {
+    "Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings.": "Claude Desktop 保持官方登录；指定模型的推理请求通过本地 HTTPS 代理交给 magpie。更改代理设置后请重启 Desktop。",
     "Cards": "卡片",
     "Table": "表格",
     "Quick check": "快速检测",
@@ -5142,6 +5143,7 @@ const I18N = {
     "This report is no longer kept: magpie keeps the last 5.": "这份报告已经不在了：magpie 只保留最近 5 份。",
   },
   "zh-TW": {
+    "Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings.": "Claude Desktop 保持官方登入；指定模型的推論請求透過本機 HTTPS 代理交給 magpie。變更代理設定後請重新啟動 Desktop。",
     "Cards": "卡片",
     "Table": "表格",
     "Quick check": "快速檢測",
@@ -10265,6 +10267,7 @@ const I18N = {
     "This report is no longer kept: magpie keeps the last 5.": "這份報告已經不在了：magpie 只保留最近 5 份。",
   },
   ja: {
+    "Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings.": "Claude Desktop の公式ログインを維持し、指定モデルの推論をローカル HTTPS プロキシ経由で magpie に送ります。設定変更後は Desktop を再起動してください。",
     "Cards": "カード",
     "Table": "表",
     "Quick check": "クイックチェック",
@@ -15390,6 +15393,7 @@ const I18N = {
     "This report is no longer kept: magpie keeps the last 5.": "このレポートはもう残っていません。magpie は最新の 5 件だけを保存します。",
   },
   de: {
+    "Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings.": "Claude Desktop bleibt offiziell angemeldet; ausgewählte Modelle laufen über magpies lokalen HTTPS-Proxy. Desktop nach Proxy-Änderungen neu starten.",
     "Cards": "Karten",
     "Table": "Tabelle",
     "Quick check": "Schnelltest",
@@ -20520,6 +20524,7 @@ const I18N = {
 // internal/agent/notice.go), as tNotice matches them; each has its
 // translation above. TestEveryNoticeIsTranslated keeps the two the same.
 const NOTICES = [
+  "Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings.",
   "Start Codex with codex -p magpie; plain codex keeps its own provider.",
   "Air runs magpie's models through OpenCode's ACP server, and OpenCode isn't installed here: install OpenCode (npm i -g --allow-scripts=@opencode/cli @opencode/cli), then pick Magpie in a new Air task.",
   "Ante reads its catalog at start-up — restart open ante sessions to use this.",
