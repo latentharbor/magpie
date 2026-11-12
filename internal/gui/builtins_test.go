@@ -314,7 +314,7 @@ func TestBuiltinsTranslated(t *testing.T) {
 					continue
 				}
 				k, _ := json.Marshal(s)
-				if !strings.Contains(block, "\n    "+string(k)+": ") {
+				if !strings.Contains("\n"+block, "\n    "+string(k)+": ") {
 					t.Errorf("%s doesn't say %s", lang, k)
 				}
 			}

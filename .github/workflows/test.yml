@@ -34,6 +34,17 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Compiler cache location
+        id: compiler-cache
+        shell: bash
+        run: echo "path=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: restore-compiler-cache
+        with:
+          path: ${{ steps.compiler-cache.outputs.path }}
+          key: compile-${{ matrix.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: compile-${{ matrix.os }}-${{ hashFiles('go.sum') }}-
+
       # The GUI links GTK 3 and WebKitGTK 4.1 through cgo on Linux (see the
       # Makefile), so vet and test need their headers and the gtk3 tag.
       # A stuck apt mirror held main's run here for 2.5 hours (b0d456c3), and
@@ -62,6 +73,15 @@ jobs:
 
       - name: Vet
         run: go vet -tags "${{ steps.tags.outputs.tags }}" ./...
+
+      # Preserve expensive native compilation even if a later behavior test
+      # fails. The next repair then reuses it instead of compiling every cgo
+      # dependency again. The tests themselves still run in full.
+      - uses: actions/cache/save@v4
+        if: steps.restore-compiler-cache.outputs.cache-hit != 'true'
+        with:
+          path: ${{ steps.compiler-cache.outputs.path }}
+          key: compile-${{ matrix.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
 
       - uses: oven-sh/setup-bun@v2
         with:
