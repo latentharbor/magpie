@@ -116,6 +116,12 @@ draft becomes Latest only after all builds, signature generation and final
 main/CI checks succeed. Notes describe maintenance generically and are not
 generated from commit messages or private configuration.
 
+After publication, a separate job verifies the release's target SHA and
+dispatches the Docker workflow at that exact version tag. This is explicit
+because a tag created by `GITHUB_TOKEN` does not trigger a push workflow.
+The container job can be retried independently of the published app assets;
+Docker only advances its stable tags after both image architectures succeed.
+
 On macOS, the post-exit relaunch requests a new LaunchServices instance
 (`open -n`) rather than a reopen event that may target the exited process.
 The ordinary application instance lock still prevents duplicate active apps.
