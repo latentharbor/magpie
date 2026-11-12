@@ -279,8 +279,9 @@ func StandIns(bin string, names []string) error {
 			go func() {
 				defer warming.Done()
 				if proc, err := os.StartProcess(p, []string{p}, &os.ProcAttr{}); err == nil {
-					proc.Wait()
-					record(p)
+					if _, err := waitWarmup(proc, warmupWait); err == nil {
+						record(p)
+					}
 				}
 			}()
 		}

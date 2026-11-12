@@ -71,6 +71,7 @@ jobs:
           go test -tags nogui -timeout 10m ./internal/update
       - name: Team and retained transports
         run: |
+          go test -race -count=20 -timeout 10m ./internal/testenv
           go test -race -count=20 -timeout 10m ./internal/claudeteam
           go test -tags nogui -timeout 20m ./internal/provider ./internal/gateway ./internal/agent ./internal/claudelogin ./internal/claudeanchor ./internal/update -run 'TestClaudeTeam|TestClaudeHTTP|TestClaudeThread|TestDesktopLogin|TestDistribution|TestKeepClaude|TestClaudeLogin'
       - name: Repeated coordination races
@@ -153,3 +154,22 @@ jobs:
             exit 1
           fi
           grep -F 'foreign request reached the counter' "$RUNNER_TEMP/stall-isolation.log"
+      - name: Warm-up deadline regression fails without a timely bound
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/testenv/program.go "$RUNNER_TEMP/program.go"
+          trap 'cp "$RUNNER_TEMP/program.go" internal/testenv/program.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/testenv/program.go')
+          text = p.read_text()
+          line = 'timer := time.NewTimer(after)'
+          assert text.count(line) == 1
+          p.write_text(text.replace(line, 'timer := time.NewTimer(time.Hour)'))
+          PY
+          if go test -timeout 1m ./internal/testenv -run '^TestWarmupWaitKillsAndReapsStalledChild$' > "$RUNNER_TEMP/warmup-regression.log" 2>&1; then
+            cat "$RUNNER_TEMP/warmup-regression.log"
+            exit 1
+          fi
+          grep -F 'warm-up did not return after its deadline' "$RUNNER_TEMP/warmup-regression.log"
