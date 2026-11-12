@@ -32,17 +32,17 @@ type claudeTransportKey struct{}
 type claudeHTTPKey struct{}
 type claudeHTTPProbeKey struct{}
 type claudeHTTPCall struct {
- unsignedDropped int
-	auth        provider.ClaudeHTTPCredentials
-	session     string
-	prompt      string
-	turn        int
-	native      bool
-	headers     http.Header
-	probe       bool
-	diagnostic  *ledger.ClaudeHTTPDiagnostic
-	callerCache bool
-	owner       claudeThreadOwner
+	unsignedDropped int
+	auth            provider.ClaudeHTTPCredentials
+	session         string
+	prompt          string
+	turn            int
+	native          bool
+	headers         http.Header
+	probe           bool
+	diagnostic      *ledger.ClaudeHTTPDiagnostic
+	callerCache     bool
+	owner           claudeThreadOwner
 }
 
 var claudeHTTPAuth = provider.ClaudeHTTPAuth
@@ -106,11 +106,13 @@ func (s *Server) serveClaudeHTTP(w http.ResponseWriter, r *http.Request, from pr
 			c.prompt = id
 		}
 	}
- if from == provider.Anthropic {
-  var cleanErr error
-  body,c.unsignedDropped,cleanErr=claudeHTTPUnsignedHistory(body)
-  if cleanErr!=nil{return writeError(w,from,400,cleanErr.Error()),cleanErr.Error()}
- }
+	if from == provider.Anthropic {
+		var cleanErr error
+		body, c.unsignedDropped, cleanErr = claudeHTTPUnsignedHistory(body)
+		if cleanErr != nil {
+			return writeError(w, from, 400, cleanErr.Error()), cleanErr.Error()
+		}
+	}
 	ctx := context.WithValue(r.Context(), claudeHTTPKey{}, c)
 	r = r.WithContext(ctx)
 	if from == provider.Anthropic {

@@ -23,8 +23,12 @@ func ClaudeTeamConfiguredCount() (int, error) {
 	var n int
 	for _, t := range claudeTeamControllers() {
 		c, err := t.readConfig()
-		if err != nil { return n, err }
-		if c.OrganizationID != "" { n++ }
+		if err != nil {
+			return n, err
+		}
+		if c.OrganizationID != "" {
+			n++
+		}
 	}
 	return n, nil
 }

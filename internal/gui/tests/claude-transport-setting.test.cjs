@@ -5,7 +5,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { watchSettingsReads, settingsDrawn, reach, provPrefsProviders, openProvPrefs } = require("./reader.cjs");
+const { watchSettingsReads, settingsDrawn, reach, provPrefsProviders, openProvPrefs, inEditor, settled, pickItem } = require("./reader.cjs");
 const assets = process.env.MAGPIE_TRANSPORT_ASSETS || path.resolve(__dirname, "../assets");
 const words = {
   en: ["Claude subscription transport", "Claude Code HTTP (experimental)", "restriction or suspension", "not guaranteed", "requests already running"],
@@ -39,7 +39,10 @@ function serve(lang, settings, saved) {
 }
 
 async function reveal(page, row) {
-  await reach(page, row.locator(".pick, .segs button").first());
+  const control = row.locator(".pick, .segs button").first();
+  if (await row.evaluate(e => !!e.closest(".editor"))) await inEditor(page, control);
+  else await reach(page, control);
+  await settled(page);
 }
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
@@ -51,12 +54,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       page.setDefaultTimeout(5000);
       const choose = async name => {
         const item = page.getByRole("menuitemradio", { name, exact: true });
-        await item.click().catch(async error => {
-          const detail = await item.evaluate(e => {
-            const box = e => { const r = e.getBoundingClientRect(); return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,height:r.height}; };
-            return {item:box(e),menu:box(e.closest(".proto-menu")),anchor:box(document.querySelector("#claudeTransportPick")),viewport:[innerWidth,innerHeight],view:box(document.querySelector("#view-settings")),scroll:document.querySelector("#view-settings").scrollTop};
-          });
-          throw new Error(error.message + " menu: " + JSON.stringify(detail));
+        await pickItem(page,item).catch(async error => {
+          const detail = await page.evaluate(() => ({menus:[...document.querySelectorAll('.proto-menu')].map(e=>e.textContent),anchor:document.querySelector('#claudeTransportPick')?.outerHTML}));
+          throw new Error(error.message + " menu: " + JSON.stringify(detail) + " errors: " + JSON.stringify(errors));
         });
       };
       const errors = [];
