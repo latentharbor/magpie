@@ -76,6 +76,7 @@ jobs:
       - name: Repeated coordination races
         run: |
           go test -race -tags nogui -count=100 -timeout 10m ./internal/gui -run '^TestPluginPageService(EarlyResponse|Proxied)$'
+          go test -race -tags nogui -count=100 -timeout 10m ./internal/gateway -run '^Test(BodyStalledByFlowControlIsGivenUp|MCPRelayBodyStalledIsGivenUp|StallVendorCountsOnlyItsRequest)$'
           go test -race -tags nogui -count=20 -timeout 20m ./internal/provider -run '^(TestClaudeTeamRefusalDuringReconcileKeepsHandoffPending|TestClaudeTeamControllerWaitsForPreviousOwner|TestClaudeTeamDrainMultipleSeatsAndLostResponses)$'
           go test -race -tags nogui -count=20 -timeout 20m ./internal/gateway -run '^(TestClaudeTeam|TestUnroutedTimerKeepsItsOwnCaller|TestGatewayWaitsForHubPruner|TestInfoSaysMCPHub|TestHandedOverGatewayFinishesItsStream)'
       - name: Snapshot regression fails without the fix
@@ -133,3 +134,22 @@ jobs:
             exit 1
           fi
           grep -F "second event missing" "$RUNNER_TEMP/stream-regression.log"
+      - name: Stall request attribution fails without isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/gateway/upstream_stall_test.go "$RUNNER_TEMP/upstream_stall_test.go"
+          trap 'cp "$RUNNER_TEMP/upstream_stall_test.go" internal/gateway/upstream_stall_test.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/gateway/upstream_stall_test.go')
+          text = p.read_text()
+          line = 'if r.Header.Get("X-Stall-Test") != mark {'
+          assert text.count(line) == 1
+          p.write_text(text.replace(line, 'if false {'))
+          PY
+          if go test -tags nogui ./internal/gateway -run '^TestStallVendorCountsOnlyItsRequest$' > "$RUNNER_TEMP/stall-isolation.log" 2>&1; then
+            cat "$RUNNER_TEMP/stall-isolation.log"
+            exit 1
+          fi
+          grep -F 'foreign request reached the counter' "$RUNNER_TEMP/stall-isolation.log"
