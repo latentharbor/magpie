@@ -9,7 +9,7 @@ import (
 type blockedPruneHub struct {
 	fakeHub
 	entered, release, stopped chan struct{}
-	once, stopOnce           sync.Once
+	once, stopOnce            sync.Once
 }
 
 func (h *blockedPruneHub) Prune() {
