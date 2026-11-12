@@ -1,0 +1,21 @@
+name: Stall retry diagnosis
+on:
+  push:
+    branches: [probe/stall-attempts-20261113]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  stall:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Repeated flow-control stall
+        run: go test -race -tags nogui -count=100 -timeout 5m ./internal/gateway -run '^TestBodyStalledByFlowControlIsGivenUp$' -v

@@ -24,6 +24,7 @@ func starvingVendor(t *testing.T, hits *atomic.Int32) *httptest.Server {
 	t.Helper()
 	release := make(chan struct{})
 	vendor := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Logf("starving request method=%s path=%s marker=%q remote=%s", r.Method, r.URL.Path, r.Header.Get("X-Stall-Test"), r.RemoteAddr)
 		hits.Add(1)
 		select {
 		case <-release:
@@ -59,6 +60,7 @@ func TestBodyStalledByFlowControlIsGivenUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	req.Header.Set("X-Stall-Test", t.Name())
 	res, err := s.client.Do(req)
 	if err == nil {
 		res.Body.Close()
