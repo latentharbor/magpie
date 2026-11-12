@@ -79,6 +79,9 @@ type Login struct {
 }
 
 type savedLogin struct {
+	// TeamOff prevents an intentionally parked Team account from being
+	// resurrected as the agent's own/stand-in while the seat is reassigned.
+	TeamOff bool `json:"teamOff,omitempty"`
 	// ID is the account's stable id (#905): set once it is written, and
 	// kept as it is when the account is renamed or its plan changes — a
 	// gateway key held to accounts names it by this, not by a name that
@@ -402,6 +405,7 @@ func upsertLogin(ls []savedLogin, l savedLogin) []savedLogin {
 			}
 			l.On = l.On || ls[i].On
 			l.Paused = l.Paused || ls[i].Paused
+			l.TeamOff = ls[i].TeamOff
 			l.Order = ls[i].Order
 			ls[i] = l
 			return ls
@@ -441,6 +445,7 @@ func dedupeLogins(ls []savedLogin) []savedLogin {
 		}
 		keep.On = previous.On || l.On
 		keep.Paused = previous.Paused || l.Paused
+		keep.TeamOff = previous.TeamOff || l.TeamOff
 		keep.First = previous.First || l.First
 		keep.Order = previous.Order
 		if keep.Order == 0 {
@@ -1208,7 +1213,7 @@ func loginsNow(agent string) []Login {
 		}
 		using := strings.EqualFold(active[l.Agent], l.User)
 		first := l.Agent == "claude" && strings.EqualFold(standIn, l.User)
-		lg := Login{Agent: l.Agent, User: l.User, Plan: l.Plan, Seen: l.Seen, Active: using, On: using || first || l.On,
+		lg := Login{Agent: l.Agent, User: l.User, Plan: l.Plan, Seen: l.Seen, Active: using, On: (using || first || l.On) && !l.TeamOff,
 			Paused: (using || first) && pausedOwn(ls, l.Agent, l.User), first: first}
 		if !using && l.Agent == "codex" {
 			lg.home = l.Home

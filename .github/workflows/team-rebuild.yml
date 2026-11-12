@@ -1,0 +1,35 @@
+name: Team module rebuild
+on:
+  push:
+    branches: ['rebuild/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: team-rebuild-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Resolve dependency graph
+        run: go mod tidy
+      - name: Retain resolved modules
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebuild-modules
+          path: |
+            go.mod
+            go.sum
+      - name: Compile every package and its tests
+        run: go test -tags nogui -run '^$' ./...
+      - name: Team and retained transports
+        run: go test -tags nogui -timeout 20m ./internal/provider ./internal/gateway ./internal/agent ./internal/claudelogin ./internal/claudeanchor ./internal/update -run 'TestClaudeTeam|TestClaudeHTTP|TestClaudeThread|TestDesktopLogin|TestDistribution|TestKeepClaude|TestClaudeLogin'

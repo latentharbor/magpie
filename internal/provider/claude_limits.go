@@ -16,9 +16,9 @@ import (
 // seven_day_overage_included), the share used,
 // 0–1, and when it renews, in Unix seconds (0 when not said).
 type ClaudeLimit struct {
-	Kind     string
-	Used     float64
-	ResetsAt int64
+	Kind     string  `json:"kind"`
+	Used     float64 `json:"used"`
+	ResetsAt int64   `json:"resetsAt"`
 }
 
 // claudeKinds are the windows Claude Code names, as the usage endpoint's
@@ -73,6 +73,15 @@ const claudeHeard = time.Hour
 // read, after a restart as kept on disk (quotas.json), so the week isn't
 // lost to an answer that didn't name it (ifccod7391564 on X).
 func NoteClaudeLimits(user string, ls []ClaudeLimit) {
+	t := claudeTeamForUser(user)
+	t.observation.Lock()
+	defer t.observation.Unlock()
+	noteClaudeLimits(user, ls)
+}
+
+// The caller serializes publication with this account's Team controller.
+// A quota collector uses this helper while already holding observation.
+func noteClaudeLimits(user string, ls []ClaudeLimit) {
 	var heard []QuotaWindow
 	for _, l := range ls {
 		i := slices.IndexFunc(claudeKinds, func(k struct {
@@ -120,6 +129,7 @@ func NoteClaudeLimits(user string, ls []ClaudeLimit) {
 	e.err = nil                           // a new observation supersedes the failed reading
 	c.m[key] = e
 	c.Unlock()
+	claudeTeamForUser(user).note(user, ls)
 	StaleAllowance("claude", user)
 }
 

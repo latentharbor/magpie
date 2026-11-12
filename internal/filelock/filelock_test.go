@@ -2,12 +2,40 @@ package filelock
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestLockContextCancellationAndErrors(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new", "controller.lock")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if unlock, err := LockContext(ctx, path); !errors.Is(err, context.Canceled) || unlock != nil {
+		t.Fatalf("cancelled acquisition: %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
+		t.Fatal("cancelled acquisition touched the filesystem")
+	}
+	unlock, err := LockContext(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if release, err := LockContext(ctx, path); !errors.Is(err, context.DeadlineExceeded) || release != nil {
+		t.Fatalf("contended acquisition: %v", err)
+	}
+	unlock()
+	// An I/O error is reported rather than treated as contention forever.
+	if release, err := LockContext(context.Background(), filepath.Dir(path)); err == nil || release != nil {
+		t.Fatal("directory accepted as a lock file")
+	}
+}
 
 // TestLockHolder is the other magpie of TestLockAcrossProcesses: it takes
 // the lock, says so, and holds it until it is killed.

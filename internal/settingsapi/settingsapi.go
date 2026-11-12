@@ -45,7 +45,7 @@ var Keys = []string{
 	"codexWarmup", "claudeWarmup", "codexWarmAt", "claudeWarmAt", "codexWarmAts", "claudeWarmAts",
 	"workbuddyCheckin", "traeCheckin", "minimaxCheckin", "qoderCheckin", "checkinAt",
 	// models: replies, vision, images, search
-	"replyModel", "noLoopGuard", "claudeLeanPrompt", "claudePrintMode", "refusalRetries", "retryAfterCap",
+	"replyModel", "noLoopGuard", "claudeLeanPrompt", "claudePrintMode", "claudeTransport", "refusalRetries", "retryAfterCap",
 	"vision", "visionEffort", "imageGen", "videoGen", "imageTimeout", "classifyTimeout",
 	// what every routing group does that says nothing of its own
 	"groupSink", "groupFirstToken", "groupPatience",
@@ -72,6 +72,7 @@ var Choices = map[string][]string{
 	"updateEvery":    ints(settings.UpdateEveries),
 	"searchFirst":    {settings.SearchFirstModel, settings.SearchFirstAPI},
 	"replyModel":     settings.ReplyModels,
+	"claudeTransport": {"cli", "http"},
 }
 
 func ints(v []int) []string {
@@ -266,6 +267,17 @@ func Merge(body []byte, cur settings.Settings, web bool) (settings.Settings, err
 	// nor whether a value masked for the first time is told (Must2333)
 	if _, sent := fields["maskAlert"]; !sent {
 		in.MaskAlert = cur.MaskAlert
+	}
+	// A save from an older page must not switch the subscription transport
+	// or its CLI mode behind an active conversation.
+	if _, sent := fields["claudeTransport"]; !sent {
+		in.ClaudeTransport = cur.ClaudeTransport
+	}
+	if _, sent := fields["claudePrintMode"]; !sent {
+		in.ClaudePrintMode = cur.ClaudePrintMode
+	}
+	if _, sent := fields["signInLinkOnly"]; !sent {
+		in.SignInLinkOnly = cur.SignInLinkOnly
 	}
 	in.AgentOrder, in.AgentsHidden, in.AgentsShown, in.AgentsHere = cur.AgentOrder, cur.AgentsHidden, cur.AgentsShown, cur.AgentsHere
 	in.Window, in.WindowMaximised, in.WindowAt = cur.Window, cur.WindowMaximised, cur.WindowAt // the window's own, as it was last resized and moved

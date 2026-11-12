@@ -234,11 +234,16 @@ func modelListed(who access.Identity, p provider.Provider, model string) bool {
 	if allows(who, p.ID+"/"+model) {
 		return true
 	}
-	if own := p.OwnModelID(model); own != model {
-		return allows(who, p.ID+"/"+own)
+	if own := p.OwnModelID(model); own != model && allows(who, p.ID+"/"+own) {
+		return true
 	}
-	if local := p.ListedModelID(model); local != model {
-		return allows(who, p.ID+"/"+local)
+	if local := p.ListedModelID(model); local != model && allows(who, p.ID+"/"+local) {
+		return true
+	}
+	// Only the migrated original organization owns the old Claude namespace;
+	// adding another organization must not inherit these model grants.
+	if provider.ClaudeTeamOf(p) != "" && slices.Contains(p.Was, "claude") {
+		return allows(who, "claude/"+model)
 	}
 	return false
 }
@@ -608,7 +613,11 @@ func accountAllowed(who access.Identity, c candidate) bool {
 	if len(who.Accounts) == 0 {
 		return true
 	}
-	return who.AllowsAccount(c.p.ID, c.p.AccountID())
+	ref := c.p.AccountID()
+	if provider.ClaudeTeamOf(c.p) != "" && slices.Contains(c.p.Was, "claude") && !who.AllowsAccount("claude", ref) {
+		return false // renaming the provider must not drop its old account scope
+	}
+	return who.AllowsAccount(c.p.ID, ref)
 }
 
 // heldByGroup is r with its caller held to the routing group g's own

@@ -1,12 +1,15 @@
 // Package update keeps magpie current. Builds are published as GitHub
-// releases of yetone/magpie-releases; usemagpie.ai/api/latest describes the
+// releases of latentharbor/magpie; latest.json describes the
 // newest one: its version, notes, and every file with its SHA-256.
 //
 // The macOS app replaces its own bundle: the new zip is downloaded, checked
 // against its hash, unpacked, and accepted only if it is signed by the same
-// team as the app already installed. A bare binary (the terminal build,
+// team as the app already installed, or an explicitly opted-in distribution
+// authenticates valid ad-hoc code signatures with its build-pinned release
+// key. A bare binary (the terminal build,
 // and the desktop app on Windows and Linux) replaces itself the same way,
-// minus the signature.
+// minus the Apple signature; opted-in distribution binaries still require
+// the authenticated manifest.
 package update
 
 import (
@@ -40,8 +43,12 @@ import (
 	"github.com/yetone/magpie/internal/source"
 )
 
-// Site is magpie's home; its /api/latest is the update feed.
+// Site is magpie's home. Release downloads belong to this distribution,
+// independently of the public site's upstream downloads.
 const Site = "https://usemagpie.ai"
+
+const ReleaseRepository = "latentharbor/magpie"
+const releaseHome = "https://github.com/" + ReleaseRepository + "/releases"
 
 // Feed is where the newest release is described. MAGPIE_UPDATE_FEED points
 // it elsewhere, for testing an update against a local server.
@@ -49,11 +56,14 @@ func Feed() string {
 	if f := os.Getenv("MAGPIE_UPDATE_FEED"); f != "" {
 		return f
 	}
-	return siteFeed
+	return releaseHome + "/latest/download/latest.json"
 }
 
 // Release is one published version.
 type Release struct {
+	Schema int `json:"schema,omitempty"`
+	Repository string `json:"repository,omitempty"`
+	proof *distributionProof
 	Version string           `json:"version"` // "0.2.0", no v
 	Notes   string           `json:"notes"`   // markdown
 	URL     string           `json:"url"`     // the release page
@@ -64,6 +74,8 @@ type Release struct {
 
 // Asset is one downloadable file of a release.
 type Asset struct {
+	Platform string `json:"platform,omitempty"`
+	signed bool
 	URL    string `json:"url"`
 	Size   int64  `json:"size"`
 	SHA256 string `json:"sha256"`
@@ -131,12 +143,18 @@ func Latest(ctx context.Context) (*Release, error) { return LatestIn(ctx, "") }
 // InLang): the app's language, which What's new follows. On Settings'
 // Stable channel it is Stable's release (see Stable).
 func LatestIn(ctx context.Context, lang string) (*Release, error) {
+	if distributionTrust != "" || Feed() == releaseHome+"/latest/download/latest.json" {
+		return latestDistribution(ctx, lang)
+	}
 	return latestAt(ctx, withChannel(withLang(Feed(), lang)), lang)
 }
 
 // LatestEvery is LatestIn on every version, whatever Settings' channel:
 // what Stable's "up to date" leaves out, the newest release out.
 func LatestEvery(ctx context.Context, lang string) (*Release, error) {
+	if distributionTrust != "" || Feed() == releaseHome+"/latest/download/latest.json" {
+		return latestDistribution(ctx, lang)
+	}
 	return latestAt(ctx, withLang(Feed(), lang), lang)
 }
 
@@ -369,10 +387,14 @@ func Writable(dir string) bool {
 // bundle, ready for Install. It returns the unpacked app, a bundle whose
 // folder is named stagedName.
 func Stage(ctx context.Context, rel *Release, bundle string) (string, error) {
+	if err := mayStageDistribution(rel); err != nil {
+		return "", err
+	}
 	a, ok := rel.Assets[AppAsset()]
 	if !ok {
 		return "", fmt.Errorf("release %s has no %s", rel.Version, AppAsset())
 	}
+	a.signed = trustedDistribution(rel)
 	dir := stageDir(filepath.Dir(bundle))
 	os.RemoveAll(dir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -385,28 +407,36 @@ func Stage(ctx context.Context, rel *Release, bundle string) (string, error) {
 	}
 	out := filepath.Join(dir, "unzip")
 	step(ctx, StepUnpack)
-	if b, err := proc.CommandContext(ctx, "ditto", "-x", "-k", zip, out).CombinedOutput(); err != nil {
+	if a.signed {
+		if err := unpackDistribution(zip, out); err != nil {
+			os.RemoveAll(dir)
+			return "", fmt.Errorf("distribution unzip: %w", err)
+		}
+	} else if b, err := proc.CommandContext(ctx, "ditto", "-x", "-k", zip, out).CombinedOutput(); err != nil {
 		os.RemoveAll(dir)
 		return "", fmt.Errorf("unzip: %v: %s", err, b)
 	}
 	os.Remove(zip)
-	// the zip holds magpie.app, which leaves that name at once: a folder
-	// ending in .app beside the installed one is taken by LaunchServices
-	// for a second magpie, and Spotlight lists it after it is gone (#3965)
-	unzipped := filepath.Join(out, "magpie.app")
-	app := filepath.Join(dir, stagedName)
-	if err := os.Rename(unzipped, app); err != nil {
+	app := filepath.Join(out, "magpie.app")
+	if a.signed {
+		if err := distributionBundle(ctx, app, rel.Version); err != nil {
+			os.RemoveAll(dir)
+			return "", err
+		}
+	}
+	if err := stagedSigner(ctx, bundle, app, rel); err != nil {
 		os.RemoveAll(dir)
 		return "", err
 	}
-	os.Remove(out)
-	unregister(unzipped) // in case it looked in that moment
 	step(ctx, StepSignature)
-	if err := sameSigner(ctx, bundle, app); err != nil {
+	staged := filepath.Join(dir, stagedName)
+	if err := os.Rename(app, staged); err != nil {
 		os.RemoveAll(dir)
 		return "", err
 	}
-	return app, nil
+	os.RemoveAll(out)
+	unregister(app) // LaunchServices may have seen it during extraction.
+	return staged, nil
 }
 
 // sameSigner accepts app only if its signature is intact and made by the
@@ -416,6 +446,9 @@ func sameSigner(ctx context.Context, bundle, app string) error {
 		return fmt.Errorf("the downloaded app's signature is broken: %s", strings.TrimSpace(string(b)))
 	}
 	want, got := team(ctx, bundle), team(ctx, app)
+	if want == "" || got == "" {
+		return errors.New("automatic app updates require a Developer ID signature on both the installed and downloaded app; install a signed release manually first")
+	}
 	if want != got {
 		return fmt.Errorf("the downloaded app is signed by %q, not %q", got, want)
 	}
@@ -657,10 +690,14 @@ func ReplaceBinary(ctx context.Context, rel *Release) error {
 // StageBinary downloads the release's build for this binary out of sight
 // (binaryStage), ready for InstallBinary.
 func StageBinary(ctx context.Context, rel *Release) (string, error) {
+	if err := mayStageDistribution(rel); err != nil {
+		return "", err
+	}
 	a, ok := rel.Assets[BinaryAsset()]
 	if !ok {
 		return "", fmt.Errorf("release %s has no %s", rel.Version, BinaryAsset())
 	}
+	a.signed = trustedDistribution(rel)
 	exe, err := Executable()
 	if err != nil {
 		return "", err
@@ -1279,6 +1316,78 @@ func download(ctx context.Context, a Asset, path string) error {
 		// (biubiu8802 on X: "unexpected EOF" on each try)
 		ctx = netproxy.OverHTTP1(ctx)
 	}
+	return err
+}
+
+func fetchSigned(ctx context.Context, a Asset, path string) error {
+	// through a mirror when one is given (mirror.go): the hash checked
+	// below is still the feed's
+	u := mirrored(mirrorOf(ctx), a.URL)
+	if a.signed {
+		// Authenticated distribution downloads use their repository directly.
+		// A configured transport proxy still applies; arbitrary mirrors do not.
+		u = a.URL
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return err
+	}
+	if a.signed && !distributionURL(req.URL, false) {
+		return errors.New("distribution asset does not belong to its pinned repository")
+	}
+	var res *http.Response
+	if a.signed {
+		res, err = distributionClient().Do(req)
+	} else {
+		res, err = source.Do(client, req)
+	}
+	if err != nil {
+		if u != a.URL {
+			return &MirrorError{Mirror: strings.TrimSuffix(u, a.URL), Err: err}
+		}
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		if u != a.URL {
+			return &MirrorError{Mirror: strings.TrimSuffix(u, a.URL), Err: fmt.Errorf("download %s through the mirror %s: %s", filepath.Base(path), strings.TrimSuffix(u, a.URL), res.Status)}
+		}
+		return fmt.Errorf("download %s: %s", filepath.Base(path), res.Status)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	h := sha256.New()
+	var body io.Reader = res.Body
+	if report, ok := ctx.Value(progressKey{}).(func(done, total int64)); ok {
+		total := res.ContentLength
+		if total <= 0 {
+			total = a.Size
+		}
+		body = &counter{r: res.Body, total: max(total, 0), report: report}
+		report(0, max(total, 0))
+	}
+	var written int64
+	if a.signed {
+		body = io.LimitReader(body, a.Size+1)
+	}
+	written, err = io.Copy(io.MultiWriter(f, h), body)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil && a.signed && written != a.Size {
+		err = errors.New("the download does not match its signed size")
+	}
+	if err == nil && !strings.EqualFold(hex.EncodeToString(h.Sum(nil)), a.SHA256) {
+		err = fmt.Errorf("%s does not match its checksum", filepath.Base(path))
+		if u != a.URL {
+			err = fmt.Errorf("%s from the mirror %s does not match its checksum from %s; not installed", filepath.Base(path), strings.TrimSuffix(u, a.URL), Feed())
+		}
+	}
+	if err != nil && u != a.URL && !errors.As(err, new(*MirrorError)) {
+		err = &MirrorError{Mirror: strings.TrimSuffix(u, a.URL), Err: err}
+	}
 	if err != nil {
 		if len(before) > 0 {
 			last := "from " + hostOf(on.URL)
@@ -1373,6 +1482,9 @@ func Network(err error) bool { return errors.As(err, new(*NetError)) }
 // the beginning. A try the network breaks off keeps what came, for the next
 // one; any other failure removes it.
 func fetch(ctx context.Context, a Asset, path string) error {
+	if a.signed {
+		return fetchSigned(ctx, a, path)
+	}
 	// through a mirror when one is given (mirror.go): the hash checked
 	// below is still the feed's
 	u := a.URL

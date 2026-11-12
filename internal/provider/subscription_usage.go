@@ -33,6 +33,8 @@ type QuotaWindow struct {
 	ResetsAt  *time.Time `json:"resetsAt,omitempty"`
 	ResetSecs int64      `json:"resetSecs,omitempty"`
 	Display   string     `json:"display,omitempty"`
+	// Estimated marks a local reset projection, not a fresh vendor reading.
+	Estimated bool `json:"estimated,omitempty"`
 	// Text is set on a window that is its Display alone, with no share
 	// to tell: a plugin's row of what an account holds or has done
 	// (AutoClaw's 积分余额 and 每日签到, Cursor's on-demand spend, ZCode's
@@ -90,9 +92,10 @@ type QuotaWindow struct {
 	// ("opus"), when it doesn't count them all; and Aside when using it up
 	// doesn't stop the account — on-demand spending past the allowance,
 	// or Copilot's code completions, which no request here makes.
-	Span  time.Duration `json:"-"`
-	Model string        `json:"-"`
-	Aside bool          `json:"-"`
+	Span       time.Duration `json:"-"`
+	fixedReset bool
+	Model      string `json:"-"`
+	Aside      bool   `json:"-"`
 	// Credits is set on each window of a ChatGPT account that holds
 	// credits (has_credits with a balance left, or unlimited): using the
 	// window up doesn't stop it, the vendor spends the credits instead
@@ -534,13 +537,33 @@ func fetchSubscriptionUsage(ctx context.Context) []SubscriptionQuota {
 		if p, ok := claudeAccount(); ok {
 			// signed out, Claude Code's own allowance is none: the account
 			// in its place is a saved one, read as the others are
-			if ls := accountsOf("claude"); len(ls) > 1 || p.Account.standIn {
+			ls := slices.DeleteFunc(accountsOf("claude"), func(l Login) bool { return claudeLoginInTeam(l.User) })
+			if len(ls) > 1 || p.Account.standIn || claudeLoginInTeam(p.Account.User) {
 				fetches = append(fetches, perLogin(via("claude"), ls, accountCard("claude"))...)
 			} else {
 				fetches = append(fetches, withUser(ctx, p.Account.User, func() SubscriptionQuota {
 					return claudeSubscriptionUsage(viaLogin("claude", p.Account.User), p.Account.User)
 				}))
 			}
+		}
+	}
+	for _, v := range ClaudeTeamSubscriptions() {
+		pid := claudeTeamPrefix + v.Config.OrganizationID
+		if hidden[pid] || !v.Config.Enabled {
+			continue
+		}
+		for _, l := range accountsOf("claude") {
+			if !claudeTeamLoginBelongs(v.Config.OrganizationID, l.User) || !wantsCard(ctx, pid, l.User) {
+				continue
+			}
+			fetches = append(fetches, func() SubscriptionQuota {
+				q := loginReading(viaLogin(pid, l.User), l).read
+				q.Provider, q.Name, q.Icon, q.User = pid, v.Config.Name, "claude-color", l.User
+				if q.Name == "" {
+					q.Name = "Claude Team"
+				}
+				return q
+			})
 		}
 	}
 	// each retired built-in is served by its plugin, whose cards stand
@@ -703,6 +726,9 @@ func claudeReadAt(user string) *time.Time {
 	e, ok := claudeUsage.m[strings.ToLower(user)]
 	claudeUsage.Unlock()
 	if !ok || e.at.IsZero() {
+		if ClaudeTeamManaged(user) {
+			return claudeTeamObservedAt(user)
+		}
 		return nil
 	}
 	at := e.at
@@ -889,6 +915,14 @@ func AskUsage() {
 // Any other time it is what was kept.
 // magpie itself never asks Anthropic.
 func claudeWindows(ctx context.Context, user string, active bool) ([]QuotaWindow, error) {
+	cached, haveTeam := claudeTeamQuota(user)
+	if ls, parked := claudeTeamParked(user); parked {
+		ws := claudeTeamWindowsAt(ls, time.Now())
+		if len(ws) > 0 {
+			return ws, nil
+		}
+		return ws, errors.New("Claude Team account is unassigned; no usage has been observed yet")
+	}
 	key := strings.ToLower(user)
 	c := &claudeUsage
 	now := time.Now()
@@ -939,6 +973,9 @@ func claudeWindows(ctx context.Context, user string, active bool) ([]QuotaWindow
 	c.Unlock()
 	heard := e.ws != nil && now.Sub(e.heard) < claudeHeard
 	if !read {
+		if haveTeam {
+			return cached, nil
+		}
 		switch {
 		case ok && e.err != nil && !(heard && !claudeDenied(e.err.Error())):
 			return []QuotaWindow{}, e.err
@@ -997,16 +1034,35 @@ func claudeWindows(ctx context.Context, user string, active bool) ([]QuotaWindow
 		if e.ws != nil && time.Since(e.heard) < claudeHeard && !claudeDenied(err.Error()) {
 			return e.windows(time.Now()), nil // a fresh header stands unless the account was refused
 		}
+		if haveTeam && !claudeUsageDenied.MatchString(err.Error()) {
+			return cached, nil
+		}
 		return ws, err
 	}
 	// a whole reading: a window it leaves out hasn't started
 	ws = claudeWithUnstarted(ws)
+	t := claudeTeamForUser(user)
+	t.observation.Lock()
+	defer t.observation.Unlock()
 	c.Lock()
 	if c.m == nil {
 		c.m = map[string]claudeUsageEntry{}
 	}
+	if newer := c.m[key]; newer.heardSeq > e.heardSeq {
+		c.Unlock()
+		if projected, ok := claudeTeamQuota(user); ok {
+			return projected, nil
+		}
+		return newer.windows(time.Now()), nil
+	}
 	c.m[key] = claudeUsageEntry{at: now, ws: ws, heard: e.heard, tried: now, asked: asked, wait: e.wait, whole: true}
 	c.Unlock()
+	if ClaudeTeamManaged(user) {
+		noteClaudeLimits(user, claudeTeamWindowLimits(ws))
+		if projected, ok := claudeTeamQuota(user); ok {
+			return projected, nil
+		}
+	}
 	// as of now, as a kept reading is: /usage gives a reset to the minute
 	// and can lag it, so a window it still counts full may have started
 	// again already
@@ -1026,7 +1082,14 @@ var (
 // would start Claude Code once per account.
 func savedRefresh(ctx context.Context, user string) bool {
 	r, ok := refreshing(ctx)
-	return ok && wasAsked(ctx) && r.wants("claude", user)
+	if !ok || !wasAsked(ctx) {
+		return false
+	}
+	if r.wants("claude", user) {
+		return true
+	}
+	org := ClaudeTeamOf(Provider{ID: r.provider})
+	return org != "" && (r.user == "" || strings.EqualFold(r.user, user)) && claudeTeamLoginBelongs(org, user)
 }
 
 type spareReadKey struct{}

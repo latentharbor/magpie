@@ -105,21 +105,23 @@ type modelJSON struct {
 }
 
 type providerJSON struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Icon      string            `json:"icon"`
-	IconFrom  string            `json:"iconFrom,omitempty"` // the address Icon was fetched from (provider.IconFrom)
-	Preset    string            `json:"preset"`
-	Host      string            `json:"host"`
-	Chat      string            `json:"chat"`
-	Responses string            `json:"responses"`
-	Anthropic string            `json:"anthropic"`
-	Gemini    string            `json:"gemini,omitempty"` // a Gemini API's base (#1346)
-	Decide    string            `json:"decide,omitempty"` // a decision API: it only routes groups
-	Catalog   string            `json:"catalog"`
-	Website   string            `json:"website"`
-	KeysURL   string            `json:"keysUrl"`
-	Headers   map[string]string `json:"headers,omitempty"`
+	Team             *provider.ClaudeTeamView `json:"team,omitempty"`
+	TeamOrganization string                   `json:"teamOrganization,omitempty"`
+	ID               string                   `json:"id"`
+	Name             string                   `json:"name"`
+	Icon             string                   `json:"icon"`
+	IconFrom         string                   `json:"iconFrom,omitempty"`
+	Preset           string                   `json:"preset"`
+	Host             string                   `json:"host"`
+	Chat             string                   `json:"chat"`
+	Responses        string                   `json:"responses"`
+	Anthropic        string                   `json:"anthropic"`
+	Gemini           string                   `json:"gemini,omitempty"` // a Gemini API's base (#1346)
+	Decide           string                   `json:"decide,omitempty"` // a decision API: it only routes groups
+	Catalog          string                   `json:"catalog"`
+	Website          string                   `json:"website"`
+	KeysURL          string                   `json:"keysUrl"`
+	Headers          map[string]string        `json:"headers,omitempty"`
 	// JSON fields added to each request's body (provider.ExtraBody, #1604)
 	ExtraBody provider.ExtraBody `json:"extraBody,omitempty"`
 	// headers of the vendor's reply passed on (provider.ReplyHeaders, #4145)
@@ -1040,6 +1042,24 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 		out.Account = &accountJSON{Account: *a, Agent: a.Agent}
 		out.Account.Name, out.Account.Icon = accountLabel(p)
 		out.Account.Logins = provider.Logins(a.Agent)
+		out.TeamOrganization = provider.ClaudeTeamOf(p)
+		if out.TeamOrganization != "" {
+			v, err := provider.ClaudeTeamOrganization(out.TeamOrganization)
+			if err == nil {
+				out.Team = &v
+				out.Account.Logins = slices.DeleteFunc(out.Account.Logins, func(l provider.Login) bool {
+					return !slices.ContainsFunc(v.Members, func(m provider.ClaudeTeamMember) bool { return m.Selected && strings.EqualFold(m.User, l.User) })
+				})
+			}
+			for i := range out.Account.Logins {
+				out.Account.Logins[i].Active = false
+			}
+			out.Account.Name, out.Account.Icon = p.Name, "claude-color"
+		} else if a.Agent == "claude" {
+			out.Account.Logins = slices.DeleteFunc(out.Account.Logins, func(l provider.Login) bool {
+				return provider.ClaudeTeamLoginOwned(l.User)
+			})
+		}
 		if a.Agent == "claude" {
 			out.Account.WSL = provider.ClaudeInWSL()
 		}
@@ -1511,6 +1531,7 @@ func moveContext(r *http.Request) (context.Context, context.CancelFunc) {
 var appLink = agent.OpenAppLink
 
 func providerRoutes(mux *http.ServeMux, w Windows) {
+	claudeTeamRoutes(mux)
 	importAppsRoutes(mux)
 	pluginRoutes(mux, w)
 	traceRoutes(mux)
@@ -3241,7 +3262,8 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 	// browser and the window follows it until the account is in.
 	mux.HandleFunc("POST /api/signin", func(rw http.ResponseWriter, r *http.Request) {
 		var in struct {
-			Agent, Site string // Site: ZCode's "zai" or "bigmodel"
+			Agent, Site    string // Site: ZCode's "zai" or "bigmodel"
+			OrganizationID string `json:"organizationId"`
 			// Proxy is the one picked to sign in through, kept as the
 			// account's (#1663); none picked, the one its requests go through
 			Proxy *string
@@ -3251,7 +3273,7 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			fail(rw, err)
 			return
 		}
-		st, err := provider.StartSignInWith(in.Agent, provider.SignInOptions{Site: in.Site, Proxy: in.Proxy, User: in.User})
+		st, err := provider.StartSignInWith(in.Agent, provider.SignInOptions{Site: in.Site, Proxy: in.Proxy, User: in.User, OrganizationID: in.OrganizationID})
 		if err != nil {
 			fail(rw, err)
 			return

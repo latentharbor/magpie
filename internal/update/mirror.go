@@ -18,10 +18,12 @@ import (
 // --mirror, or Settings' UpdateMirror, which magpie update mirror sets).
 //
 // A mirror is a host magpie doesn't trust: the update feed, with each
-// file's SHA-256, is still asked at usemagpie.ai and never through the
+// file's SHA-256, is still asked at the distribution's release feed and never through the
 // mirror, the file is checked against that hash, and the macOS app must
 // still be signed by the team that signed the one installed. A mirror
-// that changes a byte gets its download refused.
+// that changes a byte gets its download refused. Authenticated distribution
+// downloads use their repository directly instead, with strict redirect
+// checks; transport proxies still apply.
 
 type mirrorKey struct{}
 

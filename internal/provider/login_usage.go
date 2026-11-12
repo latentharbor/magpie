@@ -162,7 +162,8 @@ func someLoginUsage(ctx context.Context, agent string, users ...string) map[stri
 // is in only, or over every account when only is nil.
 func loginUsageOf(ctx context.Context, agent string, only map[string]bool) (map[string]SubscriptionQuota, time.Time, map[string]readState) {
 	// nor of a provider switched off or removed (leftAlone)
-	if settings.AccountDiscoveryOff() || leftAlone(agent) {
+	alone := leftAlone(agent)
+	if settings.AccountDiscoveryOff() || alone && !(agent == "claude" && claudeTeamRoutingOn("")) {
 		return nil, time.Time{}, nil
 	}
 	asked := time.Now()
@@ -192,6 +193,9 @@ func loginUsageOf(ctx context.Context, agent string, only map[string]bool) (map[
 	oldest := asked
 	for _, l := range logins {
 		if only != nil && !only[strings.ToLower(l.User)] {
+			continue
+		}
+		if agent == "claude" && (claudeLoginInTeam(l.User) && !claudeTeamRoutingOn(l.User) || alone && !claudeTeamRoutingOn(l.User)) {
 			continue
 		}
 		wg.Add(1)
@@ -263,6 +267,22 @@ func loginReading(ctx context.Context, l Login) loginUsageEntry {
 
 // cachedLoginReading is loginReading as read or kept.
 func cachedLoginReading(ctx context.Context, l Login) loginUsageEntry {
+	// A persisted Team observation must be available even before the generic
+	// usage cache is populated, including the default read-only/held mode.
+	if l.Agent == "claude" {
+		if ws, ok := claudeTeamQuota(l.User); ok {
+			_, parked := claudeTeamParked(l.User)
+			if parked || !savedRefresh(ctx, l.User) {
+				at := claudeTeamObservedAt(l.User)
+				q := SubscriptionQuota{Provider: "claude", Plan: l.Plan, Windows: ws, ReadAt: at, AsOf: at, ReadDeferred: true}
+				observed := time.Time{}
+				if at != nil {
+					observed = *at
+				}
+				return loginUsageEntry{at: time.Now(), q: q, read: q, readAt: observed}
+			}
+		}
+	}
 	key := l.Agent + "/" + strings.ToLower(l.User)
 	c := &loginUsageCache
 	// with allowances read only when asked, one nobody asked for is what
@@ -440,6 +460,14 @@ func loginQuota(ctx context.Context, l Login) SubscriptionQuota {
 		return SubscriptionQuota{Provider: l.Agent, Plan: l.Plan, Windows: []QuotaWindow{}, Error: "not signed in"}
 	}
 	q := SubscriptionQuota{Provider: l.Agent, Plan: l.Plan, Windows: []QuotaWindow{}}
+	if ws, known := claudeTeamQuota(l.User); l.Agent == "claude" && known {
+		q.Windows, q.ReadAt, q.AsOf, q.ReadDeferred = ws, claudeTeamObservedAt(l.User), claudeTeamObservedAt(l.User), true
+		// Standby accounts cannot ask /usage. Premium accounts can refresh
+		// through Claude Code normally, but a UI read alone is not a probe.
+		if _, parked := claudeTeamParked(l.User); parked || !savedRefresh(ctx, l.User) {
+			return q
+		}
+	}
 	if l.Agent == "claude" && !l.Active {
 		// a saved account: what Claude Code told of it, or, when its card
 		// is refreshed, its /usage run in the account's own directory

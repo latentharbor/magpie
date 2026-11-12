@@ -4,6 +4,7 @@ go 1.26.8
 
 require (
 	github.com/MoeForge/moejs v0.1.0
+	github.com/andybalholm/brotli v1.0.6
 	github.com/charmbracelet/bubbles v0.21.1
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
@@ -18,8 +19,11 @@ require (
 	github.com/klauspost/compress v1.18.3
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	github.com/pierrec/xxHash v0.1.5
+	github.com/refraction-networking/utls v1.8.2
 	github.com/tidwall/gjson v1.19.0
 	github.com/tidwall/jsonc v0.3.3
+	github.com/tidwall/sjson v1.2.5
 	github.com/wailsapp/wails/v3 v3.0.0-beta.24
 	golang.org/x/image v0.43.0
 	golang.org/x/net v0.56.0

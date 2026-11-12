@@ -1992,7 +1992,10 @@ func elsewhereWeighed(left []candidate, w []Weighed, c candidate) ([]candidate, 
 // that failed this way: the vendor was busy, out of quota or failing, or
 // this key or provider can't serve it — not the request itself at fault.
 func retryable(status int, body []byte) bool {
-	raw := body
+	if claudeThreadErrorCode(status, body) != "" {
+		return false // the caller must replay full history, not another account
+	}
+	rawBody := body
 	// the words are matched decoded, too (#1669)
 	body = wordsOf(body)
 	switch {
@@ -2009,7 +2012,7 @@ func retryable(status int, body []byte) bool {
 		// the vendor's firewall blocked this address (Alibaba Cloud's 405
 		// in front of zcode.z.ai): another provider goes another way
 		return true
-	case status >= 400 && status < 500 && failure(status, raw) == failCredit:
+	case status >= 400 && status < 500 && failure(status, rawBody) == failCredit:
 		// out of credit, as failure reads it, whatever the status: another
 		// account may have a balance. SuperMagic's 400 "您的可用积分已不足…
 		// 通过「充值」通道补充积分" read as credit, but no word of
@@ -3248,6 +3251,9 @@ type keptAlive struct {
 	// Only opted-in Claude cache reporting can defer initial keepalives.
 	// Selection releases it before process startup; expiry keeps the stream alive.
 	cacheReportUntil time.Time
+	// Thread recovery needs the upstream HTTP 400/404, not a stream error
+	// behind a synthetic 200. Once upstream accepts, normal keepalives resume.
+	thread bool
 }
 
 // agentQuietMost is the longest a streaming Responses agent goes with no
@@ -3621,7 +3627,13 @@ func (h *holdWriter) release() {
 			streamError(h.w, h.alive.proto, h.alive.model, h.failure, who+" "+h.failMsg)
 		case h.status >= 400:
 			// an error status, once the agent has a stream: told as its error
-			streamError(h.w, h.alive.proto, h.alive.model, h.status, provider.APIError(h.held.Bytes(), http.StatusText(h.status)))
+			if code := claudeThreadErrorCode(h.status, h.held.Bytes()); h.alive.proto == provider.Anthropic && code != "" {
+				sw := newSSEWriter(h.w)
+				sw.begun = true
+				sw.event("error", claudeThreadErrorBody(h.status, provider.APIError(h.held.Bytes(), http.StatusText(h.status)), code))
+			} else {
+				streamError(h.w, h.alive.proto, h.alive.model, h.status, provider.APIError(h.held.Bytes(), http.StatusText(h.status)))
+			}
 		default:
 			// a reply given whole by a vendor that ignored stream:true,
 			// after the agent was kept alive: sent as the stream it asked

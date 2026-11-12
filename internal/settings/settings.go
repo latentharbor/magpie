@@ -466,16 +466,13 @@ type Settings struct {
 	// real Claude Code, its billing line and identity line kept; off, as by
 	// default, the run is the shape every Claude Code run has.
 	ClaudeLeanPrompt bool `json:"claudeLeanPrompt,omitempty"`
-	// ClaudePrintMode runs a Claude subscription's Claude Code as `claude
-	// -p` always. Off, as by default, a model request runs in Claude
-	// Code's interactive mode, as a person runs it, and never as -p: the
-	// plan counts a -p request at about twice an interactive one, and a -p
-	// run starts without the interactive mode's cache. A request it can't
-	// take (safeguards, a JSON schema, …), or one it doesn't start for,
-	// fails saying why. Reading the plan's allowance (/usage, no model
-	// request) is -p either way. (An "Interactive only" claudeTUIOnly,
-	// v0.1.2448, is what Off is now, and is no longer read.)
+	// ClaudePrintMode makes the CLI transport use claude -p instead of
+	// interactive Claude Code. It does not change the direct HTTP transport.
 	ClaudePrintMode bool `json:"claudePrintMode,omitempty"`
+	// ClaudeTransport chooses how a Claude subscription answers a new
+	// request: cli (the default) runs Claude Code; http uses the experimental
+	// direct HTTP transport. A request keeps the choice it started with.
+	ClaudeTransport string `json:"claudeTransport,omitempty"`
 	// ClaudeRunsMost is how many Claude Code processes a Claude
 	// subscription may have running at once: conversations' runs, those
 	// waiting for a next turn or on tool results, and one-off tests and
@@ -2414,6 +2411,9 @@ func saveOwn(s Settings, recording, reads bool) error {
 	if !slices.Contains(Warmups, s.ClaudeWarmup) {
 		return fmt.Errorf("claude warm-up must be off, week or all, not %q", s.ClaudeWarmup)
 	}
+	if s.ClaudeTransport != "cli" && s.ClaudeTransport != "http" {
+		return fmt.Errorf("Claude transport must be cli or http, not %q", s.ClaudeTransport)
+	}
 	for _, at := range slices.Concat(s.CodexWarmAts, s.ClaudeWarmAts) {
 		if _, _, ok := Clock(at); !ok {
 			return fmt.Errorf("a warm-up's time of day must look like 06:00, not %q", at)
@@ -2720,6 +2720,9 @@ func saveOwn(s Settings, recording, reads bool) error {
 }
 
 func (s Settings) normal() Settings {
+	if s.ClaudeTransport == "" {
+		s.ClaudeTransport = "cli"
+	}
 	if s.Theme == "" {
 		s.Theme = "system"
 	}

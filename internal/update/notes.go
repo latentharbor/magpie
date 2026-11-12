@@ -25,19 +25,20 @@ type Note struct {
 	Pending bool `json:"pending,omitempty"`
 }
 
-// NotesFeed is where the notes of past releases are listed: beside the
-// update feed, on magpie's site. MAGPIE_NOTES_FEED points it elsewhere.
+// NotesFeed lists generic historical notes beside the distribution feed.
+// Opted-in builds display authenticated manifest notes instead.
+// MAGPIE_NOTES_FEED points the legacy/fixture reader elsewhere.
 func NotesFeed() string {
 	if f := os.Getenv("MAGPIE_NOTES_FEED"); f != "" {
 		return f
 	}
-	return Site + "/api/notes"
+	return releaseHome + "/latest/download/notes.json"
 }
 
 // ReleasePage is version's page on GitHub, where its notes are when the
 // site can't give them (#661).
 func ReleasePage(version string) string {
-	return "https://github.com/yetone/magpie-releases/releases/tag/v" + strings.TrimPrefix(strings.TrimSpace(version), "v")
+	return releaseHome + "/tag/v" + strings.TrimPrefix(strings.TrimSpace(version), "v")
 }
 
 // NotesBetween asks the site for the notes of every release after after
@@ -52,6 +53,12 @@ func NotesBetween(ctx context.Context, after, upto, lang string) ([]Note, error)
 // all before MostNotes keeps the newest, so a list cut short can say so
 // (sujingshen on X: 156 releases behind read "40 releases").
 func NotesBetweenTotal(ctx context.Context, after, upto, lang string) ([]Note, int, error) {
+	if distributionTrust != "" {
+		r, err := LatestIn(ctx, lang)
+		if err != nil { return nil, 0, err }
+		notes := Between([]Note{{Version: r.Version, Notes: r.Notes, URL: r.URL}}, after, upto)
+		return notes, len(notes), nil
+	}
 	q := url.Values{"upto": {upto}}
 	if after != "" {
 		q.Set("after", after)

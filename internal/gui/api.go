@@ -200,7 +200,8 @@ type agentJSON struct {
 	// Drift: its config no longer does what magpie set, and how to set it again
 	Drift *agent.Drift `json:"drift,omitempty"`
 	// Wired: magpie is in its config, which its menu's Disconnect takes out
-	Wired bool `json:"wired,omitempty"`
+	Wired      bool `json:"wired,omitempty"`
+	LoginProxy bool `json:"loginProxy,omitempty"`
 	// Import: an app that takes magpie by its own link (Cindy), and
 	// whether it has magpie already; omitted when the app has no status reader
 	Import string `json:"import,omitempty"`
@@ -1581,6 +1582,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	whatsNewRoutes(mux)
 	cliBehindRoutes(mux)
 	configRepairRoutes(mux, !isWeb(w))
+	claudeLoginRoutes(mux)
 	gatewayFixRoutes(mux)
 	gatewayPauseRoutes(mux)
 	gatewayModeRoutes(mux)
@@ -3151,7 +3153,10 @@ func state() stateJSON {
 		vals := a.Values()
 		now[a.ID] = vals
 		aj := agentJSON{ID: a.ID, Name: a.Name, Icon: a.Icon, Path: tilde(a.Path), Fields: agentFields(a, vals)}
-		aj.Models = agentModelCount(a, aj.Fields)
+		aj.LoginProxy = a.ID == "claude-desktop" && a.Beside != nil && a.Beside()
+		if !aj.LoginProxy {
+			aj.Models = agentModelCount(a, aj.Fields)
+		}
 		aj.Menu = a.ListsModels
 		aj.NoNames = a.NoNames
 		aj.Drift = a.Drift()

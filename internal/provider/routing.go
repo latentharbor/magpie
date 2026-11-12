@@ -350,10 +350,11 @@ type Allowance []Limit
 
 // Limit is one window of an allowance.
 type Limit struct {
-	Used   float64       // share used, 0–100
-	Resets time.Time     // zero when not known
-	Span   time.Duration // how long the window runs; zero when not known
-	Model  string        // the only models it counts, by a word in their ids
+	Used       float64       // share used, 0–100
+	Resets     time.Time     // zero when not known
+	Span       time.Duration // how long the window runs; zero when not known
+	fixedReset bool          // reset repeats from its observed anchor, not first use
+	Model      string        // the only models it counts, by a word in their ids
 	// Amount of Of in Unit: the window's own count, used, when the vendor
 	// counts it so (QuotaWindow.Amount)
 	Amount, Of float64
@@ -561,7 +562,8 @@ func (a Allowance) Count(model string, now time.Time) (amount, of float64, unit 
 // Renewal is For's renews as routing ranks them: a window not started,
 // or whose reset has passed, that says how long it runs is taken to
 // renew that long from now — a five hours not started renews within five
-// hours, the soonest of an account that has nothing longer (#576). One
+// hours, the soonest of an account that has nothing longer (#576). A
+// known fixed cadence advances from its observed reset instead. One
 // whose credits left run out before it renews (Limit.RunsOut) renews
 // then, as what is left is lost then all the same: WorkBuddy's accounts,
 // whose credits have no reset, go by the package that ends first
@@ -586,10 +588,13 @@ func (a Allowance) renewing(model string, now time.Time) []Limit {
 			continue
 		}
 		if !l.Resets.After(now) {
-			l.Used, l.Amount = 0, 0 // its reset has passed: empty again
-			l.Resets = time.Time{}
-			if l.Span > 0 {
+			l.Used, l.Amount = 0, 0
+			if l.fixedReset && !l.Resets.IsZero() && l.Span > 0 {
+				l.Resets = nextFixedReset(l.Resets, l.Span, now)
+			} else if l.Span > 0 {
 				l.Resets = now.Add(l.Span)
+			} else {
+				l.Resets = time.Time{}
 			}
 		}
 		if l.RunsOut.After(now) && (l.Resets.IsZero() || l.RunsOut.Before(l.Resets)) {
@@ -641,10 +646,16 @@ func (a Allowance) Unreached(model string, now time.Time) int {
 	return n
 }
 
-// Left is how much a wallet that counts model has left, in unit
-// (Limit.Balance): the least of its windows that tell a balance. ok is
-// false when none does. Only balances in the same unit of one provider are
-// compared (routes.Seat.Left).
+// nextFixedReset advances a known cadence, including multiple missed periods.
+// A reset at now has begun its next period.
+func nextFixedReset(at time.Time, span time.Duration, now time.Time) time.Time {
+	if at.After(now) || at.IsZero() || span <= 0 {
+		return at
+	}
+	return at.Add((now.Sub(at)/span + 1) * span)
+}
+
+// Left is the smallest known wallet balance for this model.
 func (a Allowance) Left(model string) (left float64, unit string, ok bool) {
 	model = strings.ToLower(model)
 	for _, l := range a {
@@ -658,13 +669,7 @@ func (a Allowance) Left(model string) (left float64, unit string, ok bool) {
 	return left, unit, ok
 }
 
-// Lapse is the soonest moment credits left in a window that counts model
-// are lost (Limit.RunsOut), zero when none is told or all have passed.
-// Smart goes by it when the renewals tie: two WorkBuddy free accounts
-// renew together, at the end of the month every one shares, but the
-// credits one was given lapse before the other's, and spent first they
-// aren't lost (zhaocai_83020 on Discord). Renewal already takes it when it
-// comes before the window renews; this tells apart those that come after.
+// Lapse is the earliest future expiry of credits for this model.
 func (a Allowance) Lapse(model string, now time.Time) time.Time {
 	model = strings.ToLower(model)
 	var t time.Time
@@ -827,6 +832,9 @@ func (a Allowance) Pace(model string, now time.Time) (pace float64, due time.Tim
 		u := min(100, max(0, l.Used))
 		if !l.Resets.IsZero() && !l.Resets.After(now) {
 			u = 0 // its reset has passed: empty again
+			if l.fixedReset {
+				l.Resets = nextFixedReset(l.Resets, l.Span, now)
+			}
 		}
 		if l.Span != 0 && l.Span < budgetSpan {
 			used = max(used, u)
@@ -1269,7 +1277,7 @@ func allowanceOf(ws []QuotaWindow, now time.Time) Allowance {
 		if w.Aside || w.Text {
 			continue
 		}
-		l := Limit{Used: w.Used, Span: w.Span, Model: w.Model, Amount: w.Amount, Of: w.Limit, Unit: w.Unit, matches: w.matches, partial: w.partial, Name: w.Name, Credits: w.Credits, Resets: resets(w)}
+		l := Limit{Used: w.Used, Span: w.Span, fixedReset: w.fixedReset, Model: w.Model, Amount: w.Amount, Of: w.Limit, Unit: w.Unit, matches: w.matches, partial: w.partial, Name: w.Name, Credits: w.Credits, Resets: resets(w)}
 		if ids := families[w.Model]; ids != nil && w.Family != "" && w.matches == nil {
 			l.Model = ""
 			l.matches = func(model string) bool { return ids[model] }

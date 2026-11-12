@@ -144,6 +144,7 @@ func claudeDesktop(home string) *Agent {
 	return &Agent{
 		ID: "claude-desktop", Name: "Claude Desktop", Icon: "claude-color", Aliases: []string{"claude-app"},
 		Dir: p.dir, Path: p.config,
+		Beside: func() bool { return slices.ContainsFunc(ps, desktopLoginApplied) },
 		detect: func() bool {
 			// on Windows Desktop's uninstall leaves %APPDATA%\Claude
 			// behind, its claude_desktop_config.json in it (alien_jambob on
@@ -165,6 +166,9 @@ func claudeDesktop(home string) *Agent {
 			return iso && isDir(ps[0].dir3p)
 		},
 		Notice: func() string {
+			if slices.ContainsFunc(ps, desktopLoginApplied) {
+				return noticeClaudedesktopLogin.String()
+			}
 			if iso {
 				if desktopWiredAny(ps) {
 					return noticeClaudedesktopIsolated.String()
@@ -177,6 +181,11 @@ func claudeDesktop(home string) *Agent {
 			return noticeClaudedesktop2.String() + " " + noticeClaudedesktop4.String()
 		},
 		Check: func() string {
+			for _, p := range ps {
+				if desktopLoginApplied(p) {
+					return desktopLoginCheck(p)
+				}
+			}
 			if !desktopWiredAny(ps) {
 				return ""
 			}
@@ -194,13 +203,21 @@ func claudeDesktop(home string) *Agent {
 		Fields: append([]Field{{
 			Key: "provider", Label: "provider",
 			Get: func() string {
-				if desktopWiredAny(ps) {
+				if desktopWiredAny(ps) || slices.ContainsFunc(ps, desktopLoginApplied) {
 					return magpieID
 				}
 				return ""
 			},
-			Set: func(v string) error { return desktopApply(home, ps, v) },
+			Set: func(v string) error {
+				if DesktopLoginWired() {
+					return fmt.Errorf("disable Keep Claude signed in in Settings before changing Desktop's provider")
+				}
+				return desktopApply(home, ps, v)
+			},
 			Options: func(map[string]string) []Option {
+				if slices.ContainsFunc(ps, desktopLoginApplied) {
+					return []Option{{Value: magpieID, Label: "magpie", Icon: "magpie", Note: "Official Claude login with selected models through magpie’s local HTTPS proxy"}}
+				}
 				return []Option{{Value: magpieID, Label: "magpie", Icon: "magpie",
 					Note: "Desktop's third-party gateway: Code and Cowork on magpie's models, no Anthropic sign-in (restart Desktop)"}}
 			},
@@ -552,6 +569,9 @@ func desktopSubagentEffortField(ps []desktopPaths) Field {
 
 // desktopWired: _meta.json lists magpie's profile.
 func desktopWired(p desktopPaths) bool {
+	if desktopLoginApplied(p) {
+		return false // the saved 3p profile is inactive; don't publish its capabilities
+	}
 	entries, _, err := desktopEntries(p.meta)
 	return err == nil && slices.ContainsFunc(entries, desktopOurs)
 }
@@ -1174,13 +1194,11 @@ func desktopEmpty(b []byte) bool {
 
 // what claudedesktop says after a change (notice.go)
 var (
-	noticeClaudedesktop1 = newNotice("Claude Desktop reads this at start-up — quit and reopen it to run on magpie (Code and Cowork, no Anthropic sign-in).")
-	noticeClaudedesktop2 = newNotice("Claude Desktop reads this at start-up — quit and reopen it to sign in with Anthropic again.")
-	// Desktop's 3p mode runs in a userData of its own (Claude-3p, chosen in
-	// its main process before the window opens), so the chats, projects and
-	// Code sessions of the Anthropic sign-in in Claude/ aren't shown there.
-	// magpie never touches Claude/'s data; off brings them back
-	// (xgddm88 on X: 之前的工程和会话记录全没了).
+	noticeClaudedesktopLogin = newNotice("Claude Desktop keeps its official login; selected inference models use magpie through its local HTTPS proxy. Restart Desktop after changing proxy settings.")
+	noticeClaudedesktop1     = newNotice("Claude Desktop reads this at start-up — quit and reopen it to run on magpie (Code and Cowork, no Anthropic sign-in).")
+	noticeClaudedesktop2     = newNotice("Claude Desktop reads this at start-up — quit and reopen it to sign in with Anthropic again.")
+	// Third-party mode uses Claude-3p, separate from the official login's
+	// Claude profile. Wiring changes visibility, not the saved conversations.
 	noticeClaudedesktop3 = newNotice("Chats and projects from your Anthropic sign-in stay in Desktop's own profile, not shown on magpie; nothing is deleted, and turning this off brings them back.")
 	noticeClaudedesktop4 = newNotice("Your chats and projects from before are back there.")
 	// and how to go on with them on magpie (Jacky_yyyyyyyy on X): Desktop's

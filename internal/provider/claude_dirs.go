@@ -4,8 +4,8 @@ package provider
 // runs Claude Code in a config directory of its own (CLAUDE_CONFIG_DIR): its
 // sign-in is put there once, from logins.json, and from then on Claude Code
 // keeps it, refreshing it as it does its own. magpie never refreshes a
-// Claude sign-in nor asks Anthropic anything with one; it only reads back
-// what Claude Code left, so logins.json follows.
+// Claude sign-in; it reads back what Claude Code left, so logins.json follows.
+// The opt-in HTTP inference transport also reads that authoritative store.
 
 import (
 	"bytes"
@@ -206,6 +206,12 @@ func inSavedClaudeDir(user string, f func(dir string) error) error {
 // syncSavedClaude brings the saved Claude account user in logins.json up
 // to what Claude Code keeps in its config directory, making nothing there.
 func syncSavedClaude(user string) {
+	refused := false
+	defer func() {
+		if refused {
+			noteClaudeTeamSignInFailure(user)
+		}
+	}()
 	savedTokenMu.Lock()
 	defer savedTokenMu.Unlock()
 	loginsMu.Lock()
@@ -213,12 +219,11 @@ func syncSavedClaude(user string) {
 	ls := readLogins()
 	for i := range ls {
 		if ls[i].Agent == "claude" && strings.EqualFold(ls[i].User, user) {
-			if claudeSetupToken(ls[i].Auth) != "" {
-				return // Claude Code keeps no sign-in of its own there
+			_, changed, err := syncClaudeDir(&ls[i])
+			if err != nil || changed && writeLogins(ls) != nil {
+				return
 			}
-			if _, changed, err := syncClaudeDir(&ls[i]); err == nil && changed {
-				_ = writeLogins(ls)
-			}
+			refused = claudeSignedOut(ls[i]) != ""
 			return
 		}
 	}
@@ -247,6 +252,12 @@ func readSavedClaudeUsage(ctx context.Context, user string) ([]QuotaWindow, erro
 // is none yet, and what Claude Code has made of it since is read back. An
 // account that can't be used (claudeSignedOut) gets none.
 func claudeSavedDir(user string) (string, error) {
+	refused := false
+	defer func() {
+		if refused {
+			noteClaudeTeamSignInFailure(user)
+		}
+	}()
 	savedTokenMu.Lock()
 	defer savedTokenMu.Unlock()
 	loginsMu.Lock()
@@ -280,6 +291,7 @@ func claudeSavedDir(user string) (string, error) {
 		}
 	}
 	if why := claudeSignedOut(ls[i]); why != "" {
+		refused = true
 		return "", errors.New(why)
 	}
 	if has {

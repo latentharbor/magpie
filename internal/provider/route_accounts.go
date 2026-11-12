@@ -30,7 +30,7 @@ type AccountOn struct {
 func (p Provider) AccountsOn() []AccountOn {
 	also := p.AlsoOn()
 	var all []AccountOn
-	if len(also) == 0 || !p.OwnPaused() {
+	if (len(also) == 0 || !p.OwnPaused()) && p.TeamRouteOn() {
 		all = append(all, AccountOn{Provider: p, Own: true})
 	}
 	for i, q := range also {

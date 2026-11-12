@@ -30,6 +30,8 @@ import (
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/awake"
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/claudeanchor"
+	"github.com/yetone/magpie/internal/claudelogin"
 	"github.com/yetone/magpie/internal/codexrelay"
 	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/gwbudget"
@@ -552,6 +554,7 @@ type Server struct {
 	// held is the most prompt tokens each provider's model answered
 	// (heldOf), by provider id and model
 	held sync.Map
+	claudeAnchors claudeanchor.Store[claudeThreadOwner]
 	// codexLeads is the model each Codex conversation's own turns last
 	// went on, for its side calls to follow (codexFollowTo)
 	codexLeads codexLeads
@@ -866,20 +869,26 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	// loops' next look (#3185)
 	go filememo.Watch(freshCtx, pluginrt.Path(), settings.Path(), provider.Path(), plugin.ListPath(), plugin.ToolsPath(), access.Path())
 	go pluginrt.KeepFresh(freshCtx, filememo.OthersEvery, settings.Path(), provider.Path(), plugin.ListPath(), plugin.ToolsPath(), access.Path())
-	// and the MCP hub's servers that the Library no longer gives are ended
 	go keepHubPruned(freshCtx)
-	srv := &http.Server{Handler: s.closesWhenHandedOff(s.Front()), ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 5 * time.Minute, ConnState: s.unread.note}
+	srv := &http.Server{Handler: s.closesWhenHandedOff(s.Front()), ConnState: s.unread.note, ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 5 * time.Minute}
 	// the magpie serving the gateway, and only it, keeps the saved accounts
 	// signed in, so two never refresh one sign-in at once
 	go provider.KeepLoginsAlive(ctx)
 	// and tells the request hooks of an account to sign in again
 	go keepHooksToldOfSignIns(ctx)
+	// Optional explicit HTTPS proxy: Desktop keeps its official sign-in.
+	// Disabled installations create neither a listener nor a certificate.
+	loginCtx, stopLogin := context.WithCancel(ctx)
+	loginDone := make(chan struct{})
+	go func() { defer close(loginDone); claudelogin.Keep(loginCtx, URL(), http.DefaultTransport) }()
+	defer func() { stopLogin(); <-loginDone }()
 	// and signs Codex and Claude Code in to their next account when the
 	// one they are on is spent
 	go provider.KeepOnAnAccountWithRoom(ctx)
-	// and has the Codex app read its provider again as magpie becomes it
-	// for a used-up ChatGPT account, and after (its Send greys otherwise)
-	go provider.KeepCodexAppOnItsProvider(ctx, s.CodexBusy)
+	teamCtx, stopTeam := context.WithCancel(ctx)
+	teamDone := make(chan struct{})
+	go func() { defer close(teamDone); provider.KeepClaudeTeam(teamCtx) }()
+	defer func() { stopTeam(); <-teamDone }()
 	// and, when settings say to, starts its accounts' next windows as the last reset
 	go provider.KeepCodexWindowsWarm(ctx)
 	go provider.KeepClaudeWindowsWarm(ctx, warmClaude)
@@ -941,10 +950,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		c, cancel := context.WithTimeout(context.Background(), s.drainFor())
 		defer cancel()
 		if s.handingOver() {
-			// another magpie takes every connection from here: this one
-			// stops taking them, and each one it took, new or kept alive,
-			// has its next request read before Shutdown, which closes one
-			// it reads after it began unanswered (#3568, #3451)
+			// A connection already accepted by this server may have a final
+			// request in flight when the successor takes the listening socket.
 			s.stopAccepting()
 			s.unread.wait(c)
 		}
@@ -973,13 +980,12 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	}()
 	for {
 		err := srv.Serve(ln)
-		// or stopAccepting closed it: what this one took finishes once ctx ends
 		if err == nil || errors.Is(err, http.ErrServerClosed) || s.notAccepting.Load() {
 			s.unread.stop()
 			<-drained
 			return nil
 		}
-		// Relisten closed it to move the gateway: serve the one it opened
+		// Relisten closed it to move the gateway: serve the one it opened.
 		s.lnMu.Lock()
 		next := s.ln
 		s.lnMu.Unlock()
@@ -1092,6 +1098,7 @@ func (s *Server) routes() *routeMux {
 	mux.HandleFunc("GET /responses", s.responsesOverHTTP)
 	mux.HandleFunc("POST /v1/messages", keepsSignIn(s.handle(provider.Anthropic)))
 	mux.HandleFunc("POST /messages", keepsSignIn(s.handle(provider.Anthropic)))
+	mux.HandleFunc("POST /v1/messages/cache_touch", s.claudeCacheTouch)
 	mux.HandleFunc("POST /v1/systemone", s.serveSystemOne)
 	// Codex's web.run tool (anton on Discord)
 	mux.HandleFunc("POST /v1"+AlphaSearchPath, s.alphaSearch)
@@ -2166,7 +2173,7 @@ func (s *Server) handle(from provider.Protocol) http.HandlerFunc {
 		r = qoderSession(r, from, body)
 		// a Claude Code Message Thread magpie keeps no history for: sent
 		// again whole, without it (message_threads.go, #2480)
-		if from == provider.Anthropic && namesThread(body) {
+		if from == provider.Anthropic && namesThread(body) && !nativeTeamThread(model) {
 			refuseThread(w)
 			return
 		}
@@ -2361,6 +2368,7 @@ func estimate(req *Request) int {
 // serve routes one parsed-enough request to its provider.
 func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Protocol, body []byte) {
 	start := time.Now()
+	r = withClaudeTransport(r)
 	// a client's "off" is magpie's none, for every route and check below
 	// that reads the body's effort (plugins#334)
 	body = offAsNone(from, body)
@@ -2981,6 +2989,36 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	var cands []candidate
 	var pl planned
 	var group *GroupRef
+	// An empty Team route can be between seats. Keep only these waiting
+	// streams alive; normal routing never contacts or waits for the admin.
+	kept := &keptAlive{proto: from, model: askedFor, told: start, streams: streamOf(body), whole: wantsWhole(r.Context()), clientEnd: clientEnd(r.Header, start), thread: from == provider.Anthropic && gjson.GetBytes(body, "thread.type").Exists()}
+	if k := handedOnOf(r); k != nil && !kept.whole {
+		kept = k
+	}
+	var teamWait *holdWriter
+	waitTeam := func(user string) {
+		h := newHoldWriter(w, true)
+		h.ctx, h.streams, h.alive = r.Context(), kept.streams, kept
+		stop := h.keepQueued()
+		if user == "" {
+			awaitClaudeTeam(r.Context())
+		} else {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+			provider.AwaitClaudeTeamUser(ctx, user)
+			cancel()
+		}
+		stop()
+		if kept.sent {
+			// Until tries begin, early errors must end the SSE response,
+			// not write JSON behind headers already sent as a stream.
+			teamWait, w = h, h
+		}
+	}
+	defer func() {
+		if teamWait != nil {
+			teamWait.release()
+		}
+	}()
 	// a conversation's affinity is to one model: another's cache is its
 	// own, and an agent's side requests (a title, a summary) to a smaller
 	// model leave the conversation where it is
@@ -2990,6 +3028,20 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	if isGroup {
 		// a routing group: every member's keys or accounts weighed together
 		cands, pl = s.planGroup(g, ms, from)
+		if len(cands) == 0 && slices.ContainsFunc(ms, func(m provider.Member) bool {
+			return m.Provider.Account != nil && m.Provider.Account.Agent == "claude" && provider.ClaudeTeamManaged(m.Provider.Account.User)
+		}) {
+			waitTeam("")
+			ms = slices.Clone(ms)
+			for i, m := range ms {
+				if m.Provider.Account != nil && m.Provider.Account.Agent == "claude" {
+					if fresh, _, ok := provider.Resolve(m.Provider.ID + "/" + m.Model); ok {
+						ms[i].Provider = fresh
+					}
+				}
+			}
+			cands, pl = s.planGroup(g, ms, from)
+		}
 		group = groupRef(g, ms)
 		group.Paused = paused
 		scope, mode, rotate = provider.GroupPrefix+g.ID, g.Affinity, routingOf(g.Routing) == provider.Rotate
@@ -3012,6 +3064,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			return kept
 		}
 		cands, pl = s.planPaused(p, model, from, pausedIn)
+		if len(cands) == 0 && p.Account != nil && p.Account.Agent == "claude" && provider.ClaudeTeamManaged(p.Account.User) {
+			waitTeam(p.Account.User)
+			if fresh, m, ready := provider.Resolve(asked); ready {
+				p, model = fresh, m
+				cands, pl = s.planPaused(p, model, from, pausedIn)
+			}
+		}
 		if len(cands) == 0 && len(pl.capped) > 0 && !p.CapStop && !namedProvider(r, call.Model) || handedOnOf(r) != nil {
 			// every account held at the usage cap the user set, or Codex's
 			// own sign-in handed on (codexFallBack), and no fallback left:
@@ -3200,6 +3259,19 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		return
 	}
 	if len(cands) == 0 {
+		if p.Account != nil && p.Account.Agent == "claude" && provider.ClaudeTeamManaged(p.Account.User) {
+			if at, ok := provider.ClaudeTeamUserReset(p.Account.User); ok {
+				call.Status, call.Error = 429, teamResetError(w, from, at)
+				turnedAway()
+				return
+			}
+		}
+		if message := provider.ClaudeTeamRouteError(p); message != "" {
+			call.Status, call.Error = http.StatusServiceUnavailable, message
+			writeError(w, from, http.StatusServiceUnavailable, message)
+			turnedAway()
+			return
+		}
 		call.Status, call.Error = 404, "no member ready"
 		writeError(w, from, 404, fmt.Sprintf("none of %s's models is ready", call.Model))
 		turnedAway()
@@ -3449,10 +3521,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		unlisted, unlistedW = nil, nil
 	}
 	// what the tries' held streams sent the agent ahead of a reply (#751)
-	kept := &keptAlive{proto: from, model: askedFor, told: start, whole: wantsWhole(r.Context()), clientEnd: clientEnd(r.Header, start)}
-	if k := handedOnOf(r); k != nil && !kept.whole {
-		// Codex's own sign-in waited for first, with Codex kept alive
-		kept = k
+	if teamWait != nil {
+		w, teamWait = teamWait.w, nil
 	}
 	var sentMs int64 // ms from the request to its answering try going to the vendor
 	// of it, magpie's own, the tries that failed first and the wait for a
@@ -3696,7 +3766,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// asked again, of it or of the next candidate. Only a stream the
 		// agent has the headers of already is held, to be told in it
 		pass := c.p.PassesErrors()
-		hw := newHoldWriter(w, kept.sent || !pass && (!last || again < max(lastRetries, rateRetries) || other != nil || autoPicks(c) && repicked < 2 ||
+		teamAccount := c.p.Account != nil && c.p.Account.Agent == "claude" && provider.ClaudeTeamManaged(c.p.Account.User)
+		hw := newHoldWriter(w, kept.sent || !pass && (teamAccount || !last || again < max(lastRetries, rateRetries) || other != nil || autoPicks(c) && repicked < 2 ||
 			patience > 0 && rounds < replanRounds && (waitFrom.IsZero() || time.Since(waitFrom) < patience) || wantWhole))
 		// a compaction's summary is held to its end, for a cut or an
 		// error halfway to go to the next candidate (#2274)
@@ -4626,7 +4697,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			if call.To != "" {
 				rec := usage.Record{RouteID: tr.ID, Time: began, Agent: call.Agent, Via: call.Via, Provider: call.Provider, Host: where, Model: c.model,
 					ProviderKeyID: providerKeyID, ProviderKeyName: providerKeyName, ProviderAccount: providerAccount,
-					Requested: call.Model, Served: call.Usage.Served, Upstream: call.Usage.Upstream,
+					Requested: call.Model, Served: call.Usage.Served, Upstream: call.Usage.Upstream, ClaudeHTTP: call.Usage.claudeHTTP,
 					Input: call.Usage.billed().Input, Output: call.Usage.billed().Output, CacheRead: call.Usage.billed().CacheRead,
 					CacheWrite: call.Usage.billed().CacheWrite, CacheWrite1h: call.Usage.billed().CacheWrite1h, CacheUnknown: call.Usage.billed().cacheNotCounted(), Reasoning: call.Usage.billed().Reasoning, Credits: call.Usage.Credits, Effort: wentAt, Millis: try.Millis, Status: call.Status,
 					TierAsked: tierAsked, TierSent: wentTier, TierServed: call.Usage.Tier,
@@ -4671,7 +4742,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			if call.To != "" {
 				rec := usage.Record{RouteID: tr.ID, Time: began, Agent: call.Agent, Via: call.Via, Provider: call.Provider, Host: where, Model: c.model,
 					ProviderKeyID: providerKeyID, ProviderKeyName: providerKeyName, ProviderAccount: providerAccount,
-					Requested: call.Model, Served: call.Usage.Served,
+					Requested: call.Model, Served: call.Usage.Served, ClaudeHTTP: call.Usage.claudeHTTP,
 					Input: call.Usage.billed().Input, Output: call.Usage.billed().Output, CacheRead: call.Usage.billed().CacheRead,
 					CacheWrite: call.Usage.billed().CacheWrite, CacheWrite1h: call.Usage.billed().CacheWrite1h, CacheUnknown: call.Usage.billed().cacheNotCounted(), Reasoning: call.Usage.billed().Reasoning, Credits: call.Usage.Credits, Effort: wentAt, Millis: try.Millis, Status: call.Status,
 					TierAsked: tierAsked, TierSent: wentTier, TierServed: call.Usage.Tier,
@@ -5018,6 +5089,29 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 				continue
 			}
 		}
+		teamRetry := teamAccount && hw.failed() && !hw.passing && pin == "" && aff.Why != "strict" && checkpoint == nil && !sealedTask
+		if teamRetry && hw.code() == 429 && failure(hw.code(), hw.errBody()) == failRate {
+			stopAlive := hw.keepQueued()
+			provider.RecheckClaudeTeamQuota(r.Context(), c.p.Account.User)
+			stopAlive()
+		}
+		if teamRetry &&
+			(failure(hw.code(), hw.errBody()) == failQuota || hw.code() == 429 && provider.ClaudeTeamExhausted(c.p.Account.User) ||
+				provider.ClaudeSignInRequired(call.Error) || strings.Contains(call.Error, "Claude Team seat rotation in progress")) {
+			stopAlive := hw.keepQueued()
+			fresh := s.teamSuccessors(r, from, c, cands)
+			stopAlive()
+			if len(fresh) > 0 {
+				cands = append(cands, fresh...)
+				last = false
+			} else if last {
+				if at, known := provider.ClaudeTeamUserReset(c.p.Account.User); known {
+					hw.held.Reset()
+					hw.status, hw.failure, hw.stream, hw.whole = 0, 0, false, false
+					call.Status, call.Error = 429, teamResetError(hw, from, at)
+				}
+			}
+		}
 		if hw.failed() && !hw.passing && !hw.turnedAway && !hw.refused && !creditsAsked[c.rest] && creditsAgain(c, hw.code(), hw.errBody()) {
 			// a Codex account that holds credits, refused as out of its
 			// allowance: ChatGPT may turn away the turn that uses the
@@ -5213,7 +5307,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 				break
 			}
 		}
-		if wait, ok := passing(hw.code(), hw.header, hw.errBody(), again); ok && !protected && !sameRefusal && !hw.turnedAway && hw.failed() && waitFrom.IsZero() && !kept.tooQuiet(wait) && !kept.outlives(wait) {
+		retryHeader := hw.header
+		if teamRetry && hw.code() == 429 && !provider.ClaudeTeamExhausted(c.p.Account.User) {
+			retryHeader = claudeTeamRateHeaders(retryHeader)
+		}
+		if wait, ok := passing(hw.code(), retryHeader, hw.errBody(), again); ok && !protected && !sameRefusal && !hw.turnedAway && hw.failed() && (waitFrom.IsZero() || teamRetry) && !kept.tooQuiet(wait) && !kept.outlives(wait) {
 			// nobody else is left: the same one again, after a moment (not
 			// what Antigravity turned away: it turns it away again; nor
 			// once the group's patience is spent)
@@ -5550,7 +5648,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	if call.To != "" {
 		rec := usage.Record{RouteID: tr.ID, Time: start, Agent: call.Agent, Via: call.Via, Provider: call.Provider, Host: where, Model: model,
 			ProviderKeyID: providerKeyID, ProviderKeyName: providerKeyName, ProviderAccount: providerAccount,
-			Requested: call.Model, Served: call.Usage.Served, Upstream: call.Usage.Upstream,
+			Requested: call.Model, Served: call.Usage.Served, Upstream: call.Usage.Upstream, ClaudeHTTP: call.Usage.claudeHTTP,
 			Input: call.Usage.billed().Input, Output: call.Usage.billed().Output, CacheRead: call.Usage.billed().CacheRead,
 			CacheWrite: call.Usage.billed().CacheWrite, CacheWrite1h: call.Usage.billed().CacheWrite1h, CacheUnknown: call.Usage.billed().cacheNotCounted(), Reasoning: call.Usage.billed().Reasoning, Credits: call.Usage.Credits, Effort: wentAt, Millis: call.Millis, Status: call.Status,
 			TierAsked: tierAsked, TierSent: wentTier, TierServed: call.Usage.Tier,
@@ -5624,9 +5722,8 @@ func (s *Server) attempt(w http.ResponseWriter, r *http.Request, from provider.P
 	r = r.WithContext(p.Via(r.Context()))
 	// the reply says who answered it (#822)
 	noteMember(w, r, p, model)
-	// A Claude Code subscription must run through the genuine binary. Direct
-	// OAuth HTTP requests are content-classified as third-party traffic when
-	// they carry another agent's harness (Pi, OpenCode, and others).
+	// CLI remains the default. The subscription entry snapshots an explicitly
+	// selected HTTP mode behind the same Team admission/draining guard.
 	if p.Account != nil && p.Account.Agent == "claude" {
 		call.To = provider.Anthropic
 		return s.serveClaudeSubscription(w, r, from, p, model, body, &call.Usage)
@@ -6095,9 +6192,19 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 		path, body = at, b
 	}
 	base := p.Base(to)
+	if c, ok := claudeHTTPOf(ctx, p); ok && to == provider.Anthropic {
+		var err error
+		body, err = claudeHTTPBody(body, c)
+		if err != nil {
+			return nil, err
+		}
+		if path == "/v1/messages" {
+			path += "?beta=true"
+		}
+	}
 	zenFree := p.IsOpenCode() && p.OpenCodeFree(gjson.GetBytes(body, "model").String())
 	if zenFree {
-		// Zen's free tier answers at OpenCode 2's paths alone (zenfree.go)
+		// Zen's free tier answers at OpenCode's inference API paths.
 		base = provider.OpenCodeFreeURL(base, to)
 	}
 	if mantleRoutes(p, to) {
@@ -6262,13 +6369,25 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 		passOnUA(req, ua)
 		markSearching(ctx, req)
 	}
-	if err := p.Sign(ctx, req, to, body); err != nil {
-		return nil, err
+	if _, direct := claudeHTTPOf(ctx, p); !direct {
+		if err := p.Sign(ctx, req, to, body); err != nil {
+			return nil, err
+		}
 	}
 	// a sign-in its vendor revoked isn't sent again: the next member is
 	// asked, and the agent told to sign in again (#1793)
 	if why, ok := provider.RevokedSignIn(p.Account, req); ok {
 		return revokedReply(req, why), nil
+	}
+	if c, ok := claudeHTTPOf(ctx, p); ok && to == provider.Anthropic {
+		claudeHTTPHeaders(req, body, c)
+		// The compatibility profile must not re-add a beta rejected by the
+		// upstream on the preceding attempt, even without custom headers.
+		if kept := s.betas(p, req.Header.Values("anthropic-beta")); len(kept) > 0 {
+			req.Header.Set("anthropic-beta", strings.Join(kept, ","))
+		} else {
+			req.Header.Del("anthropic-beta")
+		}
 	}
 	if to == provider.Anthropic {
 		s.fitUserBetas(p, req.Header)
@@ -6278,6 +6397,14 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 		// a turn goes zstd-compressed, as Codex's own client sends it;
 		// sent plain, ChatGPT answered a 1.1 MB one 503 (ylorn on X)
 		sent = provider.CodexCompressed(req, body)
+	}
+	client := s.client
+	if _, ok := claudeHTTPOf(ctx, p); ok {
+		// This account's bearer token is for the fixed Anthropic origin only.
+		// Do not follow even a same-host downgrade redirect with it.
+		copy := *client
+		copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &copy
 	}
 	// the bytes go on the wire whether the vendor answers or not, counted
 	// for the request's ledger row (#4456)
@@ -6290,10 +6417,10 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 			n = int(r.ContentLength)
 		}
 		sentUp(ctx, n, len(body))
-		res, err := p.Do(s.client, r)
+		res, err := p.Do(client, r)
 		return gotDown(ctx, res), err
 	}
-	res, err := p.Do(s.client, req)
+	res, err := p.Do(client, req)
 	// what comes back is counted as it is read, as what went is (#4456)
 	res = gotDown(ctx, res)
 	if err == nil && res.StatusCode >= 400 && provider.OpenCodeURL(req.URL.String()) {
@@ -6337,6 +6464,9 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 	}
 	// what a Codex account's reply says it has used, for its cap (#1295)
 	heardCodexLimits(p, res)
+	if _, ok := claudeHTTPOf(ctx, p); ok {
+		heardClaudeHTTPLimits(p, res)
+	}
 	noteSignIn(ctx, p.Account, req, res)
 	return res, nil
 }
@@ -7198,6 +7328,14 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 	}
 	defer res.Body.Close()
 	u.RequestID = requestID(res.Header)
+	if c, ok := claudeHTTPOf(r.Context(), p); ok && proto == provider.Anthropic && res.StatusCode >= 200 && res.StatusCode < 300 {
+		s.claudeAnchors.Put(claudeAnchorKey(r, "request", u.RequestID), c.owner, time.Now())
+		// Native Code arms touches only when upstream confirms activation.
+		// Preserve that confirmation; never manufacture it from the beta.
+		if v := res.Header.Get("Anthropic-Cache-Keepalive"); v != "" {
+			w.Header().Set("Anthropic-Cache-Keepalive", v)
+		}
+	}
 	if res.StatusCode >= 400 {
 		b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 		msg := explained(p, model, res, b)
@@ -10843,6 +10981,12 @@ func writeError(w http.ResponseWriter, proto provider.Protocol, status int, msg 
 // ChatGPT backend's invalid_access_program on access_programs.cyber
 // (magpie-releases#18) reaches the agent as the backend said it.
 func writeVendorError(w http.ResponseWriter, proto provider.Protocol, status int, msg string, body []byte) int {
+	if proto == provider.Anthropic {
+		if code := claudeThreadErrorCode(status, body); code != "" {
+			writeJSON(w, status, claudeThreadErrorBody(status, msg, code))
+			return status
+		}
+	}
 	var code, param any
 	if e := gjson.GetBytes(body, "error"); e.IsObject() {
 		if c := e.Get("code"); c.Type == gjson.String && c.String() != "" {

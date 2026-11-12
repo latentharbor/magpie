@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -36,12 +37,17 @@ var upstreamTLS *tls.Config
 // it goes through a transport of its own that waits as long as Settings'
 // Image generation timeout gives it (drawWithin), up to 60 minutes.
 func upstreamTransport() http.RoundTripper {
-	return drawsApart{
+	next := drawsApart{
 		any:     codexSocket{replayable{freshAfterRegion(stallGuard{netproxy.Dispatch(vendorTransport(upstreamHeaderWait))})}},
 		draws:   replayable{freshAfterRegion(stallGuard{netproxy.Dispatch(vendorTransport(0))})},
 		uploads: codexSocket{replayable{freshAfterRegion(stallGuard{netproxy.Dispatch(uploadTransport(upstreamHeaderWait))})}},
 		slow:    new(atomic.Int64),
 	}
+	var roots *x509.CertPool
+	if upstreamTLS != nil {
+		roots = upstreamTLS.RootCAs
+	}
+	return &claudeHTTPWire{next: next, pools: map[string]*http.Transport{}, roots: roots}
 }
 
 // upstreamHeaderWait is how long a vendor is given to begin answering a
