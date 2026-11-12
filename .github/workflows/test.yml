@@ -23,7 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    # ARM hosted jobs can be cancelled before acquiring a runner. Keep the
+    # complete macOS backend checks on the available Intel pool; release builds
+    # separately verify both native executable architectures.
+    runs-on: ${{ matrix.os == 'macos-latest' && 'macos-26-intel' || matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
@@ -41,7 +44,9 @@ jobs:
         with:
           path: ${{ steps.compiler-cache.outputs.path }}
           key: compile-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
-          restore-keys: compile-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}-
+          restore-keys: |
+            compile-tested-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}-
+            compile-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}-
 
       # The GUI links GTK 3 and WebKitGTK 4.1 through cgo on Linux (see the
       # Makefile), so vet and test need their headers and the gtk3 tag.
@@ -89,8 +94,17 @@ jobs:
       # default 10m timed it out in 3 of 8 finished main runs (#2108).
       - name: Test
         if: runner.os != 'Windows'
-        timeout-minutes: 60
+        timeout-minutes: 90
         run: go test -timeout 30m -tags "${{ steps.tags.outputs.tags }}" ./...
+
+      # Keep test compilation as well as vet's objects. Otherwise every repair
+      # and main's final run relinks the large native suites from the earlier
+      # vet-only cache. Go still validates its own input hashes and test results.
+      - uses: actions/cache/save@v4
+        if: runner.os != 'Windows' && success()
+        with:
+          path: ${{ steps.compiler-cache.outputs.path }}
+          key: compile-tested-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
 
       # Windows skips the Test step above, so the two plugin stderr tests run
       # here. The end-to-end one needs bun on PATH; without it it skips.
