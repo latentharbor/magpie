@@ -33,6 +33,13 @@ type fakeService struct {
 	host string
 	path string
 	more chan struct{}
+	trace []string
+}
+
+func (f *fakeService) record(format string, args ...any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.trace = append(f.trace, fmt.Sprintf(format, args...))
 }
 
 func newFakeService(t *testing.T) *fakeService {
@@ -54,14 +61,17 @@ func newFakeService(t *testing.T) *fakeService {
 			rw.WriteHeader(200)
 			// big enough that a compressor would hold nothing back for
 			// size, small enough to sit in its buffer
-			fmt.Fprint(rw, "data: first\n\n")
+			n, err := fmt.Fprint(rw, "data: first\n\n")
+			f.record("first: %d %v", n, err)
 			rw.(http.Flusher).Flush()
 			select {
 			case <-f.more:
 			case <-r.Context().Done():
+				f.record("cancelled before second: %v", r.Context().Err())
 				return
 			}
-			fmt.Fprint(rw, "data: second\n\n")
+			n, err = fmt.Fprint(rw, "data: second\n\n")
+			f.record("second: %d %v; context: %v", n, err, r.Context().Err())
 		case "/go":
 			http.Redirect(rw, r, "http://127.0.0.1:"+strconv.Itoa(f.port)+"/api/x?a=1", http.StatusFound)
 		case "/away":
@@ -308,11 +318,13 @@ func TestPluginPageServiceProxied(t *testing.T) {
 		t.Errorf("X-Accel-Buffering %q, want no (nginx would hold the stream)", sres.Header.Get("X-Accel-Buffering"))
 	}
 	lines := make(chan string, 8)
+	scanErr := make(chan error, 1)
 	go func() {
 		sc := bufio.NewScanner(sres.Body)
 		for sc.Scan() {
 			lines <- sc.Text()
 		}
+		scanErr <- sc.Err()
 		close(lines)
 	}()
 	select {
@@ -328,8 +340,12 @@ func TestPluginPageServiceProxied(t *testing.T) {
 	for l := range lines {
 		got += l + "\n"
 	}
+	err = <-scanErr
 	if !strings.Contains(got, "data: second") {
-		t.Errorf("the rest of the stream: %q", got)
+		f.mu.Lock()
+		trace := append([]string(nil), f.trace...)
+		f.mu.Unlock()
+		t.Errorf("the rest of the stream: %q; scan error: %v; status: %d; headers: %v; service: %v", got, err, sres.StatusCode, sres.Header, trace)
 	}
 }
 

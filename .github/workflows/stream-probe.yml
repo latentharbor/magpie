@@ -1,0 +1,22 @@
+name: Stream fixture diagnosis
+on:
+  push:
+    branches: [probe/page-stream-20261113]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: gofmt -w internal/gui/pageservice_test.go
+      - name: Repeated stream fixture
+        run: go test -race -tags nogui -count=200 -timeout 10m ./internal/gui -run '^TestPluginPageServiceProxied$' -v
