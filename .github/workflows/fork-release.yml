@@ -73,11 +73,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # GitHub could not acquire macos-15 or macos-26 ARM runners.
-          # Xcode on Intel can target arm64; verify the resulting slice.
-          - runner: macos-15-intel
+          # Use the current Intel image also used by the platform checks.
+          # Xcode cross-builds arm64; every resulting slice is verified below.
+          - runner: macos-26-intel
             arch: arm64
-          - runner: macos-15-intel
+          - runner: macos-26-intel
             arch: amd64
     runs-on: ${{ matrix.runner }}
     steps:
