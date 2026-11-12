@@ -75,6 +75,7 @@ jobs:
           go test -tags nogui -timeout 20m ./internal/provider ./internal/gateway ./internal/agent ./internal/claudelogin ./internal/claudeanchor ./internal/update -run 'TestClaudeTeam|TestClaudeHTTP|TestClaudeThread|TestDesktopLogin|TestDistribution|TestKeepClaude|TestClaudeLogin'
       - name: Repeated coordination races
         run: |
+          go test -race -tags nogui -count=100 -timeout 10m ./internal/gui -run '^TestPluginPageService(EarlyResponse|Proxied)$'
           go test -race -tags nogui -count=20 -timeout 20m ./internal/provider -run '^(TestClaudeTeamRefusalDuringReconcileKeepsHandoffPending|TestClaudeTeamControllerWaitsForPreviousOwner|TestClaudeTeamDrainMultipleSeatsAndLostResponses)$'
           go test -race -tags nogui -count=20 -timeout 20m ./internal/gateway -run '^(TestClaudeTeam|TestUnroutedTimerKeepsItsOwnCaller|TestGatewayWaitsForHubPruner|TestInfoSaysMCPHub|TestHandedOverGatewayFinishesItsStream)'
       - name: Snapshot regression fails without the fix
@@ -113,3 +114,22 @@ jobs:
             exit 1
           fi
           grep -F "gateway returned while its hub pruner was still running" "$RUNNER_TEMP/pruner-regression.log"
+      - name: Stream regression fails without concurrent forwarding
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/gui/pageservice.go "$RUNNER_TEMP/pageservice.go"
+          trap 'cp "$RUNNER_TEMP/pageservice.go" internal/gui/pageservice.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/gui/pageservice.go')
+          text = p.read_text()
+          line = '\t_ = http.NewResponseController(rw).EnableFullDuplex()\n'
+          assert text.count(line) == 1
+          p.write_text(text.replace(line, ''))
+          PY
+          if go test -tags nogui ./internal/gui -run '^TestPluginPageServiceEarlyResponse$' > "$RUNNER_TEMP/stream-regression.log" 2>&1; then
+            cat "$RUNNER_TEMP/stream-regression.log"
+            exit 1
+          fi
+          grep -F "second event missing" "$RUNNER_TEMP/stream-regression.log"

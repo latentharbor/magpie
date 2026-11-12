@@ -640,6 +640,16 @@ security model, the bridge and the reads are in
 [`plugin-page.test.cjs`](../../internal/gui/tests/plugin-page.test.cjs)
 covers it in both engines, every language and a narrow window.
 
+A plugin service may start streaming before the transport has completed its
+last request-body read. `servePageService` enables concurrent request and
+response forwarding through `http.ResponseController`: otherwise HTTP/1's
+automatic drain on the first flush can close the body being forwarded and
+truncate the stream. `TestPluginPageServiceEarlyResponse` forces that ordering
+through the complete web handler, including compression, and checks that both
+events arrive. Removing the opt-in makes the second event disappear. The
+existing page token, opaque Origin, cookie stripping and sandbox checks still
+apply; this changes transport lifetime only.
+
 ### Shared UI rules
 
 - Windows desktop windows and tray panels keep the modal's dimming veil without backdrop blur or saturation: full-window filtering can stall WebView2 while a provider test or sign-in dialog is open. The existing `win` marker from [`layout.js`](../../internal/gui/assets/layout.js) scopes the rule in [`app.css`](../../internal/gui/assets/app.css) to the desktop app; browser pages and other platforms keep their existing effect. `modal-backdrop.test.cjs` checks the computed filter and veil in both engines and modes.
