@@ -77,8 +77,7 @@ type claudeTeamController struct {
 	disk                         claudeTeamDisk
 	seats                        map[string]string
 	legacyRoutes                 map[string]bool // last controller-owned switches, not verified cloud seats
-	active                       map[string]int
-	closed                       map[string]bool
+	admissions *claudeteam.Admissions
 	users                        map[string]string
 	wake                         chan struct{}
 	changed                      chan struct{}
@@ -97,7 +96,7 @@ type claudeTeamController struct {
 
 func newClaudeTeamController() *claudeTeamController {
 	return &claudeTeamController{wake: make(chan struct{}, 1), changed: make(chan struct{}),
-		active: map[string]int{}, closed: map[string]bool{}, users: map[string]string{}, seats: map[string]string{}, quotaDue: map[string]bool{}, quotaAttempted: map[string]bool{},
+		admissions: claudeteam.NewAdmissions(), users: map[string]string{}, seats: map[string]string{}, quotaDue: map[string]bool{}, quotaAttempted: map[string]bool{},
 		disk: claudeTeamDisk{Limits: map[string][]ClaudeLimit{}, Original: map[string]claudeTeamFlags{}}}
 }
 
@@ -284,7 +283,8 @@ func (t *claudeTeamController) selectPath() error {
 	}
 	t.cfg = ClaudeTeamConfig{}
 	t.disk = claudeTeamDisk{Limits: map[string][]ClaudeLimit{}, Original: map[string]claudeTeamFlags{}}
-	t.seats, t.users, t.closed = map[string]string{}, map[string]string{}, map[string]bool{}
+	t.seats, t.users = map[string]string{}, map[string]string{}
+	t.admissions.ResetClosed()
 	t.quotaDue, t.quotaAttempted, t.quotaBusy = map[string]bool{}, map[string]bool{}, ""
 	t.quotaChecks = nil
 	t.refreshRequested, t.refreshing = false, false
@@ -301,7 +301,7 @@ func (t *claudeTeamController) identities(c ClaudeTeamConfig) (map[string]savedL
 	t.mu.Lock()
 	users := map[string]string{}
 	for user, id := range t.users {
-		if t.active[id] > 0 {
+		if t.admissions.Active(id) > 0 {
 			users[user] = id
 		}
 	}
@@ -517,7 +517,7 @@ func (t *claudeTeamController) restoreRemoved(c ClaudeTeamConfig) error {
 	t.mu.Lock()
 	for id := range original {
 		delete(t.disk.Original, id)
-		delete(t.closed, id)
+		t.admissions.Forget(id)
 	}
 	t.signalLocked()
 	t.mu.Unlock()
@@ -529,7 +529,7 @@ func (t *claudeTeamController) route(c ClaudeTeamConfig, states map[string]bool)
 	// between the login write and the source's drain counter being observed.
 	t.mu.Lock()
 	for id, on := range states {
-		t.closed[id] = !on
+		t.admissions.SetClosed(id,!on)
 	}
 	t.signalLocked()
 	t.mu.Unlock()
@@ -599,14 +599,9 @@ func (t *claudeTeamController) track(user string) (func(), bool) {
 		t.mu.Unlock()
 		return func() {}, true
 	}
-	if t.closed[id] {
-		t.mu.Unlock()
-		return func() {}, false
-	}
-	t.active[id]++
-	t.mu.Unlock()
-	var once sync.Once
-	return func() { once.Do(func() { t.mu.Lock(); t.active[id]--; t.signalLocked(); t.mu.Unlock() }) }, true
+ release,admitted:=t.admissions.Enter(id)
+ t.mu.Unlock()
+ return release,admitted
 }
 
 func (t *claudeTeamController) note(user string, ls []ClaudeLimit) {
@@ -660,9 +655,10 @@ func noteClaudeTeamSignInFailure(user string) {
 	t.mu.Lock()
 	id := t.users[strings.ToLower(user)]
 	wake := t.cfg.Enabled && slices.Contains(t.cfg.Members, id) &&
-		t.seats[id] == "team_tier_1" && !t.closed[id]
+		t.seats[id] == "team_tier_1" && !t.admissions.Closed(id)
 	if wake {
-		t.closed[id], t.requested = true, true
+		t.admissions.SetClosed(id,true)
+		t.requested=true
 		t.signalLocked()
 	}
 	t.mu.Unlock()
@@ -687,21 +683,7 @@ func teamBack(ws []ClaudeLimit, threshold float64, now time.Time) (time.Time, bo
 	return at, !at.IsZero()
 }
 
-func (t *claudeTeamController) waitDrained(ctx context.Context, id string) error {
-	for {
-		t.mu.Lock()
-		n, ch := t.active[id], t.changed
-		t.mu.Unlock()
-		if n == 0 {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return errors.New("Claude Team drain timed out; no assignment was changed")
-		case <-ch:
-		}
-	}
-}
+func(t *claudeTeamController) waitDrained(ctx context.Context,id string)error{return t.admissions.Drain(ctx,id)}
 
 // AwaitClaudeTeamRotation is used only for an uncommitted failed request or
 // an empty route during a handoff. It never waits for an allowance reset.
@@ -810,7 +792,7 @@ func claudeTeamParked(user string) ([]ClaudeLimit, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	id := t.users[strings.ToLower(user)]
-	parked := t.cfg.Enabled && slices.Contains(t.cfg.Members, id) && t.closed[id]
+	parked := t.cfg.Enabled && slices.Contains(t.cfg.Members, id) && t.admissions.Closed(id)
 	return slices.Clone(t.disk.Limits[id]), parked
 }
 
@@ -1112,7 +1094,7 @@ func (t *claudeTeamController) openController() error {
 		t.mu.Lock()
 		for id, l := range identities {
 			t.users[strings.ToLower(l.User)] = id
-			t.closed[id] = l.TeamOff
+			t.admissions.SetClosed(id,l.TeamOff)
 		}
 		t.mu.Unlock()
 	}
@@ -1190,7 +1172,7 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 	for id, at := range t.disk.Observed {
 		observed[id] = at
 	}
-	for id, n := range t.active {
+	for id, n := range t.admissions.Counts() {
 		active[id] = n
 	}
 	quotaErrors := make(map[string]string, len(t.disk.QuotaErrors))

@@ -5,9 +5,10 @@ an independent coordination module and a host adapter, not an inference
 provider implementation:
 
 - `internal/claudeteam` owns the management protocol, bounded error
-  classification, standby selection, transfer/recovery state machine, process
+  classification, standby selection, in-flight admission/draining,
+  transfer/recovery state machine, process
   lease and five-minute background schedule. It imports neither `provider`,
-  `gateway`, `gui`, `claudelogin` nor the HTTP subscription transport. It accepts
+  `gateway`, `routes`, `gui`, `claudelogin` nor the HTTP subscription transport. It accepts
   observations and explicit local admission/journal callbacks from its host.
 - `internal/provider/claude_team*.go` adapts native saved accounts, quota
   observations, catalog entries and private journals to that module. The host

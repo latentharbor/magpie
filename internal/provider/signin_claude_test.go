@@ -17,7 +17,7 @@ import (
 
 // fakeClaudeAccount is who a fake `claude auth login` signs in to.
 type fakeClaudeAccount struct {
-	email, org, orgUUID, plan, refresh, name string
+	email, org, orgUUID, plan, refresh, name, account string
 }
 
 // fakeClaudeLogin points claudeExecutable at a `claude` whose `auth login`
@@ -78,11 +78,11 @@ cat > "$CLAUDE_CONFIG_DIR/.credentials.json" <<EOF
 {"claudeAiOauth":{"accessToken":"sk-ant-oat01-x","refreshToken":"%s","expiresAt":%d,"scopes":["user:inference","user:profile"],"subscriptionType":"%s"}}
 EOF
 cat > "$CLAUDE_CONFIG_DIR/.claude.json" <<EOF
-{"oauthAccount":{"emailAddress":"%s","organizationUuid":"%s","organizationName":"%s","displayName":"%s"}}
+{"oauthAccount":{"emailAddress":"%s","organizationUuid":"%s","organizationName":"%s","displayName":"%s","accountUuid":"%s"}}
 EOF
 echo '{"loggedIn":true,"email":"%[8]s","subscriptionType":"%[7]s"}' > "$CLAUDE_CONFIG_DIR/status.json"
 echo "Login successful."
-`, own, opened, printed, goFile, a.refresh, time.Now().Add(time.Hour).UnixMilli(), a.plan, a.email, a.orgUUID, a.org, a.name)
+`, own, opened, printed, goFile, a.refresh, time.Now().Add(time.Hour).UnixMilli(), a.plan, a.email, a.orgUUID, a.org, a.name, a.account)
 	testenv.Program(t, exe, script)
 	browser := filepath.Join(dir, "browser")
 	body := "#!/bin/sh\nexit 1\n"

@@ -167,7 +167,7 @@ func TestClaudeTeamSmartExpiryTransferDrainsBeforeAdminWrite(t *testing.T) {
 	go func() { tm.op.Lock(); defer tm.op.Unlock(); done <- tm.reconcile(ctx, "") }()
 	for {
 		tm.mu.Lock()
-		closed, ch := tm.closed[teamID(4)], tm.changed
+		closed, ch := tm.admissions.Closed(teamID(4)), tm.changed
 		tm.mu.Unlock()
 		if closed {
 			break

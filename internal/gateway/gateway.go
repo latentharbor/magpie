@@ -885,6 +885,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	// and signs Codex and Claude Code in to their next account when the
 	// one they are on is spent
 	go provider.KeepOnAnAccountWithRoom(ctx)
+	// Preserve upstream's Codex Desktop provider handoff independently of Team.
+	go provider.KeepCodexAppOnItsProvider(ctx, s.CodexBusy)
 	teamCtx, stopTeam := context.WithCancel(ctx)
 	teamDone := make(chan struct{})
 	go func() { defer close(teamDone); provider.KeepClaudeTeam(teamCtx) }()

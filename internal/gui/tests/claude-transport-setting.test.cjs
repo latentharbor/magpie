@@ -106,6 +106,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // pending save can replace and move its anchor while the menu opens.
       await page.waitForFunction(() => prefsQueued === 0 && document.querySelector("#loopGuardRow .segs button")?.getAttribute("aria-pressed") === "true");
       assert.equal(saved.at(-1).claudeTransport, "http");
+      await openProvPrefs(page, "claude");
       await reveal(page, row, width);
       await page.locator("#claudeTransportPick").click();
       await choose("Claude Code");

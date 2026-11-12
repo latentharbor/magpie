@@ -393,7 +393,7 @@ func (p Provider) TeamRouteOn() bool {
 	t := claudeTeamForUser(p.Account.User)
 	t.mu.Lock()
 	id := t.users[strings.ToLower(p.Account.User)]
-	assigned := t.cfg.Enabled && slices.Contains(t.cfg.Members, id) && (t.seats[id] == "team_tier_1" || t.legacyRoutes[id]) && !t.closed[id]
+	assigned := t.cfg.Enabled && slices.Contains(t.cfg.Members, id) && (t.seats[id] == "team_tier_1" || t.legacyRoutes[id]) && !t.admissions.Closed(id)
 	t.mu.Unlock()
 	if !assigned {
 		return false

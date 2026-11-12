@@ -208,7 +208,7 @@ func TestClaudeTeamDrainMultipleSeatsAndLostResponses(t *testing.T) {
 	// Wait on the actual closed/draining state, not elapsed time.
 	for {
 		tm.mu.Lock()
-		closed, ch := tm.closed[teamID(2)], tm.changed
+		closed, ch := tm.admissions.Closed(teamID(2)), tm.changed
 		tm.mu.Unlock()
 		if closed {
 			break

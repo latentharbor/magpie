@@ -10,7 +10,8 @@ import (
 type Weight struct {
 	Key string
 	Account, Known, Learns bool
-	Used, Pace, Weight float64
+	Used, Pace float64
+	Weight int
 	Soon []time.Time
 }
 
