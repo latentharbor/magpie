@@ -25,3 +25,18 @@ jobs:
         run: go test -count=20 -timeout 10m ./internal/update -run '^Test(RosettaStagesAppleSiliconsApp|StageUnpacksNoApp|StagingFixtureStillChecksRealSeal|ForkAppUpdateRequiresRealSameSigner)$'
       - name: Repeat window restoration
         run: go test -count=20 -timeout 15m ./internal/gui -run '^TestCoveredWindowStaysUp$' -v
+      - name: Covered-window regression still rejects occlusion as closed
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/gui/space_darwin.go')
+          text=p.read_text()
+          before='func windowUp(w *application.WebviewWindow) bool {\n\tp := w.NativeWindow()\n\treturn p != nil && C.windowUp(p) != 0\n}'
+          assert text.count(before)==1
+          p.write_text(text.replace(before,'func windowUp(w *application.WebviewWindow) bool { return w.IsVisible() }'))
+          PY
+          if go test -timeout 2m ./internal/gui -run '^TestCoveredWindowStaysUp$' > /tmp/window-regression.log 2>&1; then
+            cat /tmp/window-regression.log
+            exit 1
+          fi
+          grep -F 'covered: the window counts as up=false, want true' /tmp/window-regression.log

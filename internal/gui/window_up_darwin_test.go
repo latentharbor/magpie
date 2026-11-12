@@ -113,7 +113,9 @@ func init() {
 			application.InvokeSync(func() { h.main.Minimise() })
 			waitFor("the window is minimised", func() bool { return h.main.IsMinimised() })
 			expect("minimised", true)
-			application.InvokeSync(func() { h.main.UnMinimise() })
+			// Restore through the same entry point as the Dock/menu. A bare
+			// toolkit deminiaturize call doesn't order or activate the window.
+			application.InvokeSync(h.reopenMain)
 			waitFor("the window is back", func() bool { return windowOpen(h.main) })
 
 			// closed by magpie
