@@ -19,4 +19,22 @@ jobs:
           bun-version: 1.4.2
       - run: gofmt -w internal/gui/pageservice_test.go
       - name: Repeated stream fixture
-        run: go test -race -tags nogui -count=200 -timeout 10m ./internal/gui -run '^TestPluginPageServiceProxied$' -v
+        id: baseline
+        continue-on-error: true
+        run: go test -race -tags nogui -count=1 -timeout 2m ./internal/gui -run '^TestPluginPageServiceEarlyResponse$' -v
+      - name: Enable concurrent request and response forwarding
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/gui/pageservice.go')
+          s=p.read_text()
+          needle='func servePageService(rw http.ResponseWriter, r *http.Request, p *pluginPage, tok string) {\n'
+          assert s.count(needle)==1
+          p.write_text(s.replace(needle, needle+'\t_ = http.NewResponseController(rw).EnableFullDuplex()\n'))
+          PY
+          gofmt -w internal/gui/pageservice.go
+      - name: Stream survives the same scheduling
+        run: go test -race -tags nogui -count=100 -timeout 5m ./internal/gui -run '^TestPluginPageService(EarlyResponse|Proxied)$' -v
+      - name: Confirm baseline was exercised
+        if: always()
+        run: test '${{ steps.baseline.outcome }}' = failure
