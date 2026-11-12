@@ -16,7 +16,7 @@ function claudeRepliesRows(s, keep) {
   row.id = "claudeTransportRow";
   const who = el("div", "who");
   who.append(el("div", "name", t("Claude subscription transport")),
-    el("div", "sub wraps", t("HTTP is experimental and impersonates Claude Code. It may put your account at risk of restriction or suspension. Equivalent subscription quota usage is not guaranteed. Changes apply to new requests; requests already running keep their transport")));
+    el("div", "sub wraps say", t("HTTP is experimental and impersonates Claude Code. It may put your account at risk of restriction or suspension. Equivalent subscription quota usage is not guaranteed. Changes apply to new requests; requests already running keep their transport")));
   const choices = [{ v: "cli", name: "Claude Code" }, { v: "http", name: "Claude Code HTTP (experimental)" }];
   const chosen = s.claudeTransport || "cli";
   const pick = el("button", "proto pick");

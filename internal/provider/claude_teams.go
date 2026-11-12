@@ -147,6 +147,11 @@ func claudeTeamForUser(user string) *claudeTeamController {
 }
 
 func startClaudeTeam(t *claudeTeamController) {
+	// No configured organization means no background controller, lock file
+	// or empty journal. Saving a first organization starts it explicitly.
+	if c, err := t.readConfig(); err == nil && c.OrganizationID == "" {
+		return
+	}
 	claudeTeams.Lock()
 	defer claudeTeams.Unlock()
 	if claudeTeams.ctx == nil || claudeTeams.ctx.Err() != nil || claudeTeams.started[t] {

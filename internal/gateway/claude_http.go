@@ -32,6 +32,7 @@ type claudeTransportKey struct{}
 type claudeHTTPKey struct{}
 type claudeHTTPProbeKey struct{}
 type claudeHTTPCall struct {
+ unsignedDropped int
 	auth        provider.ClaudeHTTPCredentials
 	session     string
 	prompt      string
@@ -105,6 +106,11 @@ func (s *Server) serveClaudeHTTP(w http.ResponseWriter, r *http.Request, from pr
 			c.prompt = id
 		}
 	}
+ if from == provider.Anthropic {
+  var cleanErr error
+  body,c.unsignedDropped,cleanErr=claudeHTTPUnsignedHistory(body)
+  if cleanErr!=nil{return writeError(w,from,400,cleanErr.Error()),cleanErr.Error()}
+ }
 	ctx := context.WithValue(r.Context(), claudeHTTPKey{}, c)
 	r = r.WithContext(ctx)
 	if from == provider.Anthropic {
@@ -137,7 +143,7 @@ func claudeHTTPBody(body []byte, c claudeHTTPCall) ([]byte, error) {
 	}
 	body, err = claudeHTTPPreparedBody(body, c)
 	if err == nil && c.diagnostic != nil {
-		*c.diagnostic = claudeHTTPDiagnostic(body, c, callerCache, dropped)
+		*c.diagnostic = claudeHTTPDiagnostic(body, c, callerCache, dropped+c.unsignedDropped)
 	}
 	return body, err
 }

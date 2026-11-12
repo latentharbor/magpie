@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yetone/magpie/internal/claudeteam"
 	"github.com/yetone/magpie/internal/provider"
-"github.com/yetone/magpie/internal/claudeteam"
-"github.com/yetone/magpie/internal/routes"
+	"github.com/yetone/magpie/internal/routes"
 )
 
 // Allowance deadlines are not short-term rate-limit backoff. Keep explicit
@@ -76,16 +76,22 @@ func (s *Server) teamSuccessors(r *http.Request, from provider.Protocol, c candi
 }
 
 func init() {
- claudeteam.RouteWith(func(policy,pool string,weights []claudeteam.Weight) []int {
-  strategy,ok:=routes.Find(policy)
-  if !ok{return nil}
-  seats:=make([]routes.Seat,len(weights))
-  for i,w:=range weights{seats[i]=routes.Seat{Key:w.Key,Account:w.Account,Known:w.Known,Learns:w.Learns,Used:w.Used,Pace:w.Pace,Soon:w.Soon,Weight:w.Weight}}
-  return routes.Apply(strategy,pool,seats)
- })
+	claudeteam.RouteWith(func(policy, pool string, weights []claudeteam.Weight) []int {
+		strategy, ok := routes.Find(policy)
+		if !ok {
+			return nil
+		}
+		seats := make([]routes.Seat, len(weights))
+		for i, w := range weights {
+			seats[i] = routes.Seat{Key: w.Key, Account: w.Account, Known: w.Known, Learns: w.Learns, Used: w.Used, Pace: w.Pace, Soon: w.Soon, Weight: w.Weight}
+		}
+		return routes.Apply(strategy, pool, seats)
+	})
 }
 func claudeTeamSmart(seats []routes.Seat) []int {
- weights:=make([]claudeteam.Weight,len(seats))
- for i,s:=range seats{weights[i]=claudeteam.Weight{Known:s.Known,Used:s.Used,Soon:s.Soon}}
- return claudeteam.Order(weights)
+	weights := make([]claudeteam.Weight, len(seats))
+	for i, s := range seats {
+		weights[i] = claudeteam.Weight{Known: s.Known, Used: s.Used, Soon: s.Soon}
+	}
+	return claudeteam.Order(weights)
 }

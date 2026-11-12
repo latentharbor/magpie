@@ -5,7 +5,7 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
-    paths: [Dockerfile, .dockerignore, .github/workflows/docker.yml]
+    paths: [Dockerfile, .dockerignore, .github/workflows/docker.yml, 'deploy/docker/**']
   workflow_dispatch:
 
 env:
@@ -67,6 +67,23 @@ jobs:
           OUT=$(docker run --rm -v smoke-ci:/config magpie-smoke provider add ci-smoke key=sk-ci url=https://example.com)
           echo "$OUT"
           echo "$OUT" | grep -q 'added ci-smoke'
+
+          # Exercise the published multi-device Compose entrypoint using this build.
+          export MAGPIE_IMAGE=magpie-smoke
+          export MAGPIE_WEB_KEY=ci-smoke-key-0123456789abcdef
+          export MAGPIE_PUBLIC_URL=http://127.0.0.1:3425
+          docker compose -f deploy/docker/compose.yaml -p magpie-compose-ci config --quiet
+          docker compose -f deploy/docker/compose.yaml -p magpie-compose-ci up -d
+          READY=0
+          for _ in $(seq 1 30); do
+            if docker compose -f deploy/docker/compose.yaml -p magpie-compose-ci exec -T magpie magpie healthcheck; then READY=1; break; fi
+            sleep 1
+          done
+          test "$READY" = 1
+          docker compose -f deploy/docker/compose.yaml -p magpie-compose-ci exec -T magpie /bin/sh -c 'echo persisted > /config/compose-smoke'
+          docker compose -f deploy/docker/compose.yaml -p magpie-compose-ci restart
+          docker compose -f deploy/docker/compose.yaml -p magpie-compose-ci exec -T magpie /bin/sh -c 'test "$(cat /config/compose-smoke)" = persisted'
+          docker compose -f deploy/docker/compose.yaml -p magpie-compose-ci down
 
       - name: Build and push by digest
         id: build

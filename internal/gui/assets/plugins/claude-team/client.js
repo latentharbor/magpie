@@ -140,6 +140,11 @@ function drawTeamAccounts(list, p) {
     const q = { windows: m.windows || (m.limits || []).map((w) => ({ name: w.kind === "five_hour" ? "5 hours" : w.kind === "seven_day" ? "7 days" : w.kind,
       used: w.used * 100, resetsAt: w.resetsAt ? new Date(w.resetsAt * 1000).toISOString() : null })) };
     const quota = accountQuota({ [m.user]: q }, m.user);
+	if (q.windows.some(w => w.estimated)) {
+	  quota.append(el("span", "aq-asof", t("Reset-based estimate; not refreshed from Claude")));
+	  if (q.windows.some(w => w.name === "5 hours" && w.used === 0 && !w.resetsAt))
+	    quota.append(el("span", "aq-asof", t("Window not started")));
+	}
     if (m.observedAt) quota.prepend(el("span", "aq-asof", t("Last observed: {time}", {time:new Date(m.observedAt).toLocaleString(intlLang())})));
     if (m.lapsed) quota.prepend(el("span", "aq-asof", t("Sign in again to use this account")), claudeTeamReauth(m, p.teamOrganization));
     if (m.quotaError || m.quotaPending) quota.append(el("span", "aq-asof", t(m.quotaPending ? "Collecting usage…" : m.quotaError)));

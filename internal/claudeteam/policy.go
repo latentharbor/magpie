@@ -4,8 +4,6 @@ import (
 	"math"
 	"slices"
 	"time"
-
-
 )
 
 // Order spends the usable allowance that expires first, even if

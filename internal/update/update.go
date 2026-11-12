@@ -1318,7 +1318,9 @@ func download(ctx context.Context, a Asset, path string) error {
 	}
 	if err != nil && len(before) > 0 {
 		last := "from " + hostOf(on.URL)
-		if viaAPI { last = "through api.github.com" }
+		if viaAPI {
+			last = "through api.github.com"
+		}
 		err = fmt.Errorf("%s, and %s: %w", strings.Join(before, ", "), last, err)
 	}
 	return err

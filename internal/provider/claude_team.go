@@ -12,9 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yetone/magpie/internal/claudeteam"
 	"github.com/yetone/magpie/internal/filelock"
-"github.com/yetone/magpie/internal/claudeteam"
-
 )
 
 // ClaudeTeamConfig owns one organization's subscription and seat controller.
@@ -77,7 +76,7 @@ type claudeTeamController struct {
 	disk                         claudeTeamDisk
 	seats                        map[string]string
 	legacyRoutes                 map[string]bool // last controller-owned switches, not verified cloud seats
-	admissions *claudeteam.Admissions
+	admissions                   *claudeteam.Admissions
 	users                        map[string]string
 	wake                         chan struct{}
 	changed                      chan struct{}
@@ -529,7 +528,7 @@ func (t *claudeTeamController) route(c ClaudeTeamConfig, states map[string]bool)
 	// between the login write and the source's drain counter being observed.
 	t.mu.Lock()
 	for id, on := range states {
-		t.admissions.SetClosed(id,!on)
+		t.admissions.SetClosed(id, !on)
 	}
 	t.signalLocked()
 	t.mu.Unlock()
@@ -599,9 +598,9 @@ func (t *claudeTeamController) track(user string) (func(), bool) {
 		t.mu.Unlock()
 		return func() {}, true
 	}
- release,admitted:=t.admissions.Enter(id)
- t.mu.Unlock()
- return release,admitted
+	release, admitted := t.admissions.Enter(id)
+	t.mu.Unlock()
+	return release, admitted
 }
 
 func (t *claudeTeamController) note(user string, ls []ClaudeLimit) {
@@ -645,7 +644,9 @@ func (t *claudeTeamController) note(user string, ls []ClaudeLimit) {
 	}
 }
 
-func teamSpent(ws []ClaudeLimit,threshold float64,now time.Time)bool { return claudeteam.Spent(ws,threshold,now) }
+func teamSpent(ws []ClaudeLimit, threshold float64, now time.Time) bool {
+	return claudeteam.Spent(ws, threshold, now)
+}
 
 // A confirmed sign-out closes stale admissions immediately and wakes the
 // existing background transfer. Call only after releasing credential locks;
@@ -657,8 +658,8 @@ func noteClaudeTeamSignInFailure(user string) {
 	wake := t.cfg.Enabled && slices.Contains(t.cfg.Members, id) &&
 		t.seats[id] == "team_tier_1" && !t.admissions.Closed(id)
 	if wake {
-		t.admissions.SetClosed(id,true)
-		t.requested=true
+		t.admissions.SetClosed(id, true)
+		t.requested = true
 		t.signalLocked()
 	}
 	t.mu.Unlock()
@@ -683,7 +684,9 @@ func teamBack(ws []ClaudeLimit, threshold float64, now time.Time) (time.Time, bo
 	return at, !at.IsZero()
 }
 
-func(t *claudeTeamController) waitDrained(ctx context.Context,id string)error{return t.admissions.Drain(ctx,id)}
+func (t *claudeTeamController) waitDrained(ctx context.Context, id string) error {
+	return t.admissions.Drain(ctx, id)
+}
 
 // AwaitClaudeTeamRotation is used only for an uncommitted failed request or
 // an empty route during a handoff. It never waits for an allowance reset.
@@ -797,8 +800,12 @@ func claudeTeamParked(user string) ([]ClaudeLimit, bool) {
 }
 
 func premiumSet(seats []claudeTeamSeat) []string { return claudeteam.PremiumSet(seats) }
-func teamExpected(seats []claudeTeamSeat, from, to, phase string, baseline []string) bool { return claudeteam.Expected(seats, from, to, phase, baseline) }
-func teamVerify(ctx context.Context, client claudeTeamAdmin, p claudeTeamPending, phase string) ([]claudeTeamSeat, error) { return claudeteam.Verify(ctx, client, p, phase) }
+func teamExpected(seats []claudeTeamSeat, from, to, phase string, baseline []string) bool {
+	return claudeteam.Expected(seats, from, to, phase, baseline)
+}
+func teamVerify(ctx context.Context, client claudeTeamAdmin, p claudeTeamPending, phase string) ([]claudeTeamSeat, error) {
+	return claudeteam.Verify(ctx, client, p, phase)
+}
 
 func (t *claudeTeamController) finish(c ClaudeTeamConfig, seats []claudeTeamSeat, p claudeTeamPending, result string) error {
 	if err := t.synchronize(c, seats); err != nil {
@@ -836,29 +843,45 @@ func (t *claudeTeamController) userOf(id string) string {
 // proves success, no change, or a still-free seat safe to restore. Any other
 // state, including a change outside the pool, requires operator attention.
 func (t *claudeTeamController) transaction(c ClaudeTeamConfig, client claudeTeamAdmin) claudeteam.Transaction {
- return claudeteam.Transaction{Config:c, Admin:client,
-  Ready:func(id string) error {
-   identities, err := teamIdentities(c)
-   if err != nil { return err }
-   target, ok := identities[id]
-   if !ok { return errors.New("replacement identity unavailable; no assignment was changed") }
-   if err := claudeTeamStandbyReady(target.User); err != nil { t.notify(); return errors.New("replacement sign-in unavailable; no assignment was changed") }
-   return nil
-  },
-  Close:func(from,to string) error { return t.route(c,map[string]bool{from:false,to:false}) },
-  Drain:t.waitDrained,
-  Restore:func(seats []claudeTeamSeat) error { return t.synchronize(c,seats) },
-  Record:func(p claudeTeamPending) error { t.mu.Lock(); t.disk.Pending=&p; t.mu.Unlock(); return t.persist() },
-  Complete:func(seats []claudeTeamSeat,p claudeTeamPending,result string) error { return t.finish(c,seats,p,result) },
- }
+	return claudeteam.Transaction{Config: c, Admin: client,
+		Ready: func(id string) error {
+			identities, err := teamIdentities(c)
+			if err != nil {
+				return err
+			}
+			target, ok := identities[id]
+			if !ok {
+				return errors.New("replacement identity unavailable; no assignment was changed")
+			}
+			if err := claudeTeamStandbyReady(target.User); err != nil {
+				t.notify()
+				return errors.New("replacement sign-in unavailable; no assignment was changed")
+			}
+			return nil
+		},
+		Close:   func(from, to string) error { return t.route(c, map[string]bool{from: false, to: false}) },
+		Drain:   t.waitDrained,
+		Restore: func(seats []claudeTeamSeat) error { return t.synchronize(c, seats) },
+		Record:  func(p claudeTeamPending) error { t.mu.Lock(); t.disk.Pending = &p; t.mu.Unlock(); return t.persist() },
+		Complete: func(seats []claudeTeamSeat, p claudeTeamPending, result string) error {
+			return t.finish(c, seats, p, result)
+		},
+	}
 }
-func (t *claudeTeamController) recover(ctx context.Context, c ClaudeTeamConfig, client claudeTeamAdmin, p claudeTeamPending) error { return t.transaction(c,client).Recover(ctx,p) }
-func (t *claudeTeamController) transfer(ctx context.Context, c ClaudeTeamConfig, client claudeTeamAdmin, seats []claudeTeamSeat, from,to string,trigger ...string) error {
- reason:="manual"
- if len(trigger)>0 {reason=trigger[0]}
- p:=claudeTeamPending{OrganizationID:c.OrganizationID,From:from,To:to,Baseline:premiumSet(seats),Reason:reason}
- t.mu.Lock();p.FromLimits=slices.Clone(t.disk.Limits[from]);p.ToLimits=slices.Clone(t.disk.Limits[to]);t.mu.Unlock()
- return t.transaction(c,client).Transfer(ctx,seats,p)
+func (t *claudeTeamController) recover(ctx context.Context, c ClaudeTeamConfig, client claudeTeamAdmin, p claudeTeamPending) error {
+	return t.transaction(c, client).Recover(ctx, p)
+}
+func (t *claudeTeamController) transfer(ctx context.Context, c ClaudeTeamConfig, client claudeTeamAdmin, seats []claudeTeamSeat, from, to string, trigger ...string) error {
+	reason := "manual"
+	if len(trigger) > 0 {
+		reason = trigger[0]
+	}
+	p := claudeTeamPending{OrganizationID: c.OrganizationID, From: from, To: to, Baseline: premiumSet(seats), Reason: reason}
+	t.mu.Lock()
+	p.FromLimits = slices.Clone(t.disk.Limits[from])
+	p.ToLimits = slices.Clone(t.disk.Limits[to])
+	t.mu.Unlock()
+	return t.transaction(c, client).Transfer(ctx, seats, p)
 }
 
 // Do not let the native store's legacy missing-file fallback overwrite a
@@ -906,27 +929,34 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 			}
 		}
 	}
- t.mu.Lock()
- defer t.mu.Unlock()
- now:=time.Now()
- var members []claudeteam.Candidate
- for _,seat:=range seats {
-  if !slices.Contains(c.Members,seat.AccountID) {continue}
-  ls:=t.disk.Limits[seat.AccountID]
-  ws:=claudeLimitWindows(ls)
-  a:=allowanceOf(ws,now)
-  used,_:=a.For("",now);pace,_:=a.Pace("",now)
-  known:=len(ws)>0
-  if !known {pace=FreshPace}
-  if c.Routing=="" {known=claudeteam.QuotaKnown(ls)}
-  members=append(members,claudeteam.Candidate{
-   ID:seat.AccountID,Tier:seat.SeatTier,Limits:ls,Lapsed:identities[seat.AccountID].Lapsed!="",
-   Unavailable:unavailable[seat.AccountID],
-   Reliable:t.disk.QuotaErrors[seat.AccountID]=="" && !t.disk.Observed[seat.AccountID].IsZero() && now.Sub(t.disk.Observed[seat.AccountID])<=24*time.Hour,
-   Weight:claudeteam.Weight{Key:seat.AccountID,Account:true,Known:known,Learns:!known,Used:used,Pace:pace,Soon:a.Renewal("",now),Weight:1},
-  })
- }
- return claudeteam.Choose(c,members,manual,t.disk.History,now)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := time.Now()
+	var members []claudeteam.Candidate
+	for _, seat := range seats {
+		if !slices.Contains(c.Members, seat.AccountID) {
+			continue
+		}
+		ls := t.disk.Limits[seat.AccountID]
+		ws := claudeLimitWindows(ls)
+		a := allowanceOf(ws, now)
+		used, _ := a.For("", now)
+		pace, _ := a.Pace("", now)
+		known := len(ws) > 0
+		if !known {
+			pace = FreshPace
+		}
+		if c.Routing == "" {
+			known = claudeteam.QuotaKnown(ls)
+		}
+		members = append(members, claudeteam.Candidate{
+			ID: seat.AccountID, Tier: seat.SeatTier, Limits: ls, Lapsed: identities[seat.AccountID].Lapsed != "",
+			Unavailable: unavailable[seat.AccountID],
+			Reliable:    t.disk.QuotaErrors[seat.AccountID] == "" && !t.disk.Observed[seat.AccountID].IsZero() && now.Sub(t.disk.Observed[seat.AccountID]) <= 24*time.Hour,
+			Weight:      claudeteam.Weight{Key: seat.AccountID, Account: true, Known: known, Learns: !known, Used: used, Pace: pace, Soon: a.Renewal("", now), Weight: 1},
+		})
+	}
+	return claudeteam.Choose(c, members, manual, t.disk.History, now)
 }
 
 func (t *claudeTeamController) reconcile(ctx context.Context, manual string) error {
@@ -1043,15 +1073,29 @@ func (t *claudeTeamController) rotate(from string) error {
 // KeepClaudeTeam is owned by the gateway process. Neither GUI polls nor a
 // normal inference request call Members or change a seat.
 func (t *claudeTeamController) keep(ctx context.Context) {
- runtime:=claudeteam.Runtime{
-  LockPath:t.configPath()+".controller.lock",Wake:t.wake,
-  Waiting:func(){t.mu.Lock();t.err="waiting for the previous Claude Team controller to release this configuration";t.signalLocked();t.mu.Unlock()},
-  Open:t.openController,
-  Step:t.controllerStep,
-  Stopped:func(){t.mu.Lock();t.running=false;t.signalLocked();t.mu.Unlock()},
-  Failed:func(err error){t.mu.Lock();if ctx.Err()==nil {t.err=err.Error()} else {t.err=""};t.signalLocked();t.mu.Unlock()},
- }
- runtime.Run(ctx)
+	runtime := claudeteam.Runtime{
+		LockPath: t.configPath() + ".controller.lock", Wake: t.wake,
+		Waiting: func() {
+			t.mu.Lock()
+			t.err = "waiting for the previous Claude Team controller to release this configuration"
+			t.signalLocked()
+			t.mu.Unlock()
+		},
+		Open:    t.openController,
+		Step:    t.controllerStep,
+		Stopped: func() { t.mu.Lock(); t.running = false; t.signalLocked(); t.mu.Unlock() },
+		Failed: func(err error) {
+			t.mu.Lock()
+			if ctx.Err() == nil {
+				t.err = err.Error()
+			} else {
+				t.err = ""
+			}
+			t.signalLocked()
+			t.mu.Unlock()
+		},
+	}
+	runtime.Run(ctx)
 }
 
 func (t *claudeTeamController) openController() error {
@@ -1094,7 +1138,7 @@ func (t *claudeTeamController) openController() error {
 		t.mu.Lock()
 		for id, l := range identities {
 			t.users[strings.ToLower(l.User)] = id
-			t.admissions.SetClosed(id,l.TeamOff)
+			t.admissions.SetClosed(id, l.TeamOff)
 		}
 		t.mu.Unlock()
 	}

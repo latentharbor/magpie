@@ -229,7 +229,7 @@ func newCycle(a, b QuotaPoint) bool {
 // no share to draw, and neither has one set aside whose Used is 0 for
 // want of a share said (noShare, #4825).
 func pointOf(w QuotaWindow, at, now time.Time) (QuotaPoint, bool) {
-	if w.Unlimited || w.Text || w.noShare || w.Family != "" || w.Name == "" || math.IsNaN(w.Used) {
+	if w.Estimated || w.Unlimited || w.Text || w.noShare || w.Family != "" || w.Name == "" || math.IsNaN(w.Used) {
 		return QuotaPoint{}, false
 	}
 	p := QuotaPoint{At: at.UTC().Truncate(time.Second), Left: math.Round(max(0, min(100, 100-w.Used))*100) / 100}
@@ -313,7 +313,7 @@ func noteQuotaHistory(qs []SubscriptionQuota, now time.Time) {
 	// not be read and parsed for that batch again (#1358).
 	skip := true
 	for _, q := range qs {
-		if q.Error != "" || q.AsOf != nil || q.Provider == "" {
+		if q.Error != "" || q.AsOf != nil || q.Provider == "" || !slices.ContainsFunc(q.Windows, func(w QuotaWindow) bool { return !w.Estimated }) {
 			continue // a reading kept from before isn't a new one
 		}
 		at := now

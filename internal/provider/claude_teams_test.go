@@ -112,7 +112,13 @@ func TestClaudeTeamStandbyUsesRoutingAndBothResetTimes(t *testing.T) {
 	if tm.disk.Limits[teamID(4)][1].Used != 1 {
 		t.Fatal("invented usage after reset")
 	}
-	remove := claudeteam.RouteWith(func(policy,pool string, seats []claudeteam.Weight) []int {order:=make([]int,len(seats));for i:=range order{order[i]=i};return order})
+	remove := claudeteam.RouteWith(func(policy, pool string, seats []claudeteam.Weight) []int {
+		order := make([]int, len(seats))
+		for i := range order {
+			order[i] = i
+		}
+		return order
+	})
 	defer remove()
 	tm.disk.Limits[teamID(3)][0].Used = .2
 	c.Routing = Ordered

@@ -7362,6 +7362,9 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 		if codexOutRefusal(p, proto, res.StatusCode, b) {
 			return writeCodexOut(w, res.Header, res.StatusCode, msg, b), msg, true
 		}
+		if _, direct := claudeHTTPOf(r.Context(), p); direct && proto == provider.Anthropic && claudeThreadErrorCode(res.StatusCode, b) != "" {
+			return writeVendorError(w, proto, res.StatusCode, msg, b), msg, true
+		}
 		return writeVendorErrorFrom(w, proto, proto, p, res, msg, b), msg, true
 	}
 	if remote != nil && res.Header.Get(KeptTurnHeader) != "" {
