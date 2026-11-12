@@ -61,6 +61,7 @@ func TestRosettaStagesAppleSiliconsApp(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("ditto and codesign")
 	}
+	fakeAppSignerTeam(t)
 	stubUnregister(t)
 	onSystem(t, "darwin", "amd64", true)
 	root := t.TempDir()
