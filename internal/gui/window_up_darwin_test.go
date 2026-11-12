@@ -50,7 +50,15 @@ func init() {
 	waitFor := func(what string, ok func() bool) {
 		for deadline := time.Now().Add(5 * time.Second); !onMain(ok); time.Sleep(20 * time.Millisecond) {
 			if time.Now().After(deadline) {
-				fail("timed out waiting until %s", what)
+				var state string
+				application.InvokeSync(func() {
+					if h.main == nil {
+						state = "main=nil"
+						return
+					}
+					state = fmt.Sprintf("minimised=%v open=%v up=%v visible=%v native=%v", h.main.IsMinimised(), windowOpen(h.main), windowUp(h.main), h.main.IsVisible(), h.main.NativeWindow() != nil)
+				})
+				fail("timed out waiting until %s (%s)", what, state)
 			}
 		}
 	}
@@ -108,7 +116,9 @@ func init() {
 			application.InvokeSync(func() { h.main.Minimise() })
 			waitFor("the window is minimised", func() bool { return h.main.IsMinimised() })
 			expect("minimised", true)
-			application.InvokeSync(func() { h.main.UnMinimise() })
+			// Restore through the same entry point as the Dock/menu. A bare
+			// toolkit deminiaturize call doesn't order or activate the window.
+			application.InvokeSync(h.reopenMain)
 			waitFor("the window is back", func() bool { return windowOpen(h.main) })
 
 			// closed by magpie
