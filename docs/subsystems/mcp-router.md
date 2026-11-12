@@ -28,6 +28,11 @@ The gateway can't import the library (the library imports the gateway), so the g
 
 ## Runtime path
 
+The serving gateway joins its configuration watchers and hub-pruning loop when
+it exits. Cancellation alone is not completion: an in-progress prune must end
+before a replacement server or another owner can reuse shared hub state.
+`TestGatewayWaitsForHubPruner` holds a prune behind a channel during shutdown.
+
 1. The user turns the switch on. `SetMCPHub(true)` saves `mcpHub` and syncs: each agent that can take it gets the one `magpie` entry, and the servers behind it are taken out of that agent's file. Nothing is started yet.
 2. The agent starts and posts `initialize`, then `tools/list`, to `/mcp/magpie/hub/<agent>`. `hubMCP` passes the guard. `Tools` reads library.json for the servers ticked for that agent, and lists each in parallel, by `hubListWait` (40s): a server not reached by then is left out of that list, not an error.
    Another app does the same at `/mcp/magpie/hub`, under the same guard: from another computer it needs a gateway key, as every LAN request does.

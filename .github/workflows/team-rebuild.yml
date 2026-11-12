@@ -76,7 +76,7 @@ jobs:
       - name: Repeated coordination races
         run: |
           go test -race -tags nogui -count=20 -timeout 20m ./internal/provider -run '^(TestClaudeTeamRefusalDuringReconcileKeepsHandoffPending|TestClaudeTeamControllerWaitsForPreviousOwner|TestClaudeTeamDrainMultipleSeatsAndLostResponses)$'
-          go test -race -tags nogui -count=20 -timeout 20m ./internal/gateway -run '^(TestClaudeTeam|TestUnroutedTimerKeepsItsOwnCaller)'
+          go test -race -tags nogui -count=20 -timeout 20m ./internal/gateway -run '^(TestClaudeTeam|TestUnroutedTimerKeepsItsOwnCaller|TestGatewayWaitsForHubPruner|TestInfoSaysMCPHub|TestHandedOverGatewayFinishesItsStream)'
       - name: Snapshot regression fails without the fix
         shell: bash
         run: |
@@ -95,3 +95,21 @@ jobs:
             exit 1
           fi
           grep -F "handler mutations reached the timer's caller snapshot" "$RUNNER_TEMP/snapshot-regression.log"
+      - name: Pruner shutdown regression fails without joining
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/gateway/gateway.go "$RUNNER_TEMP/gateway.go"
+          trap 'cp "$RUNNER_TEMP/gateway.go" internal/gateway/gateway.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/gateway/gateway.go')
+          text = p.read_text()
+          assert text.count('stopFresh(); freshWorkers.Wait()') == 1
+          p.write_text(text.replace('stopFresh(); freshWorkers.Wait()', 'stopFresh()'))
+          PY
+          if go test -tags nogui ./internal/gateway -run '^TestGatewayWaitsForHubPruner$' > "$RUNNER_TEMP/pruner-regression.log" 2>&1; then
+            cat "$RUNNER_TEMP/pruner-regression.log"
+            exit 1
+          fi
+          grep -F "gateway returned while its hub pruner was still running" "$RUNNER_TEMP/pruner-regression.log"

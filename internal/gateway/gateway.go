@@ -864,12 +864,17 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	})
 	defer stopLimits()
 	freshCtx, stopFresh := context.WithCancel(ctx)
-	defer stopFresh()
+	var freshWorkers sync.WaitGroup
+	defer func() { stopFresh(); freshWorkers.Wait() }()
 	// what another process writes to them is seen at once, not on the
 	// loops' next look (#3185)
-	go filememo.Watch(freshCtx, pluginrt.Path(), settings.Path(), provider.Path(), plugin.ListPath(), plugin.ToolsPath(), access.Path())
-	go pluginrt.KeepFresh(freshCtx, filememo.OthersEvery, settings.Path(), provider.Path(), plugin.ListPath(), plugin.ToolsPath(), access.Path())
-	go keepHubPruned(freshCtx)
+	freshWorkers.Go(func() {
+		filememo.Watch(freshCtx, pluginrt.Path(), settings.Path(), provider.Path(), plugin.ListPath(), plugin.ToolsPath(), access.Path())
+	})
+	freshWorkers.Go(func() {
+		pluginrt.KeepFresh(freshCtx, filememo.OthersEvery, settings.Path(), provider.Path(), plugin.ListPath(), plugin.ToolsPath(), access.Path())
+	})
+	freshWorkers.Go(func() { keepHubPruned(freshCtx) })
 	srv := &http.Server{Handler: s.closesWhenHandedOff(s.Front()), ConnState: s.unread.note, ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 5 * time.Minute}
 	// the magpie serving the gateway, and only it, keeps the saved accounts
 	// signed in, so two never refresh one sign-in at once
