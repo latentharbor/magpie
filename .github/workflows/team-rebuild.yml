@@ -21,7 +21,19 @@ jobs:
         with:
           bun-version: 1.4.2
       - name: Resolve dependency graph
-        run: go mod tidy
+        timeout-minutes: 15
+        env:
+          GODEBUG: http2client=0
+        run: |
+          for attempt in 1 2 3; do
+            go mod tidy && exit 0
+            sleep 2
+          done
+          exit 1
+      - name: Format migrated source on CI
+        run: |
+          gofmt -w $(git ls-files '*.go')
+          git diff -- '*.go' > "$RUNNER_TEMP/source-format.patch"
       - name: Retain resolved modules
         uses: actions/upload-artifact@v4
         with:
@@ -29,7 +41,10 @@ jobs:
           path: |
             go.mod
             go.sum
+            ${{ runner.temp }}/source-format.patch
       - name: Compile every package and its tests
         run: go test -tags nogui -run '^$' ./...
       - name: Team and retained transports
-        run: go test -tags nogui -timeout 20m ./internal/provider ./internal/gateway ./internal/agent ./internal/claudelogin ./internal/claudeanchor ./internal/update -run 'TestClaudeTeam|TestClaudeHTTP|TestClaudeThread|TestDesktopLogin|TestDistribution|TestKeepClaude|TestClaudeLogin'
+        run: |
+          go test -race -timeout 10m ./internal/claudeteam
+          go test -tags nogui -timeout 20m ./internal/provider ./internal/gateway ./internal/agent ./internal/claudelogin ./internal/claudeanchor ./internal/update -run 'TestClaudeTeam|TestClaudeHTTP|TestClaudeThread|TestDesktopLogin|TestDistribution|TestKeepClaude|TestClaudeLogin'

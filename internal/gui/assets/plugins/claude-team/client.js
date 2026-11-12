@@ -11,6 +11,7 @@ function claudeTeamSummary(p) {
 
 function claudeTeamTile() {
   const b = pickRow("claude-color", "Claude Team");
+  b.dataset.feature = "claude-team";
   b.onclick = () => addClaudeTeam();
   return b;
 }

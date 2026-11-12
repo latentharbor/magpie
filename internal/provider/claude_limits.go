@@ -2,6 +2,7 @@ package provider
 
 import (
 	"slices"
+"github.com/yetone/magpie/internal/claudeteam"
 	"strings"
 	"time"
 )
@@ -15,11 +16,7 @@ import (
 // (five_hour, seven_day, seven_day_opus, seven_day_sonnet,
 // seven_day_overage_included), the share used,
 // 0–1, and when it renews, in Unix seconds (0 when not said).
-type ClaudeLimit struct {
-	Kind     string  `json:"kind"`
-	Used     float64 `json:"used"`
-	ResetsAt int64   `json:"resetsAt"`
-}
+type ClaudeLimit = claudeteam.Limit
 
 // claudeKinds are the windows Claude Code names, as the usage endpoint's
 // are kept, in that order.
