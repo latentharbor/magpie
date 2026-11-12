@@ -50,7 +50,12 @@ func init() {
 	waitFor := func(what string, ok func() bool) {
 		for deadline := time.Now().Add(5 * time.Second); !onMain(ok); time.Sleep(20 * time.Millisecond) {
 			if time.Now().After(deadline) {
-				fail("timed out waiting until %s", what)
+				var state string
+				application.InvokeSync(func() {
+					if h.main == nil { state = "main=nil"; return }
+					state = fmt.Sprintf("minimised=%v open=%v up=%v visible=%v native=%v", h.main.IsMinimised(), windowOpen(h.main), windowUp(h.main), h.main.IsVisible(), h.main.NativeWindow()!=nil)
+				})
+				fail("timed out waiting until %s (%s)", what, state)
 			}
 		}
 	}

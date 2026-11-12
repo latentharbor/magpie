@@ -1,0 +1,27 @@
+name: Native acceptance diagnosis
+on:
+  push:
+    branches: [probe/native-acceptance-20261113]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: macos-26-intel
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Format fixtures
+        run: gofmt -w internal/update/staging_test.go internal/update/rosetta_test.go internal/gui/window_up_darwin_test.go
+      - name: Native update checks
+        run: go test -count=1 -timeout 10m ./internal/update
+      - name: Repeat native staging and signature checks
+        run: go test -count=20 -timeout 10m ./internal/update -run '^Test(RosettaStagesAppleSiliconsApp|StageUnpacksNoApp|StagingFixtureStillChecksRealSeal|ForkAppUpdateRequiresRealSameSigner)$'
+      - name: Repeat window restoration
+        run: go test -count=20 -timeout 15m ./internal/gui -run '^TestCoveredWindowStaysUp$' -v
