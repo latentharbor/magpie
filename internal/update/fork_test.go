@@ -12,6 +12,7 @@ import (
 )
 
 func TestForkOwnsUpdateFeeds(t *testing.T) {
+	distributionFixture(t) // release builds explicitly pin the distribution root
 	t.Setenv("MAGPIE_UPDATE_FEED", "")
 	t.Setenv("MAGPIE_NOTES_FEED", "")
 	home := "https://github.com/latentharbor/magpie/releases"

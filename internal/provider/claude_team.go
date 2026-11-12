@@ -283,7 +283,7 @@ func (t *claudeTeamController) selectPath() error {
 	t.cfg = ClaudeTeamConfig{}
 	t.disk = claudeTeamDisk{Limits: map[string][]ClaudeLimit{}, Original: map[string]claudeTeamFlags{}}
 	t.seats, t.users = map[string]string{}, map[string]string{}
-	t.admissions.ResetClosed()
+	t.admissions = claudeteam.NewAdmissions()
 	t.quotaDue, t.quotaAttempted, t.quotaBusy = map[string]bool{}, map[string]bool{}, ""
 	t.quotaChecks = nil
 	t.refreshRequested, t.refreshing = false, false

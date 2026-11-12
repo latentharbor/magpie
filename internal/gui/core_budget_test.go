@@ -42,6 +42,10 @@ func codeBytes(b []byte) int {
 }
 
 func TestCoreScriptBudget(t *testing.T) {
+	// The retained transport picker and lazy Desktop-login entry, plus the
+	// provider's Team hooks, add 3,801 bytes. Team's page and translations
+	// live in its plugin. Keep a separate, bounded 4 KiB distribution budget.
+	const distributionEntries = 4 << 10
 	page, err := os.ReadFile("assets/index.html")
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +73,7 @@ func TestCoreScriptBudget(t *testing.T) {
 	if n < 5 {
 		t.Fatalf("found only %d core scripts in index.html", n)
 	}
-	if total > coreScriptBudget {
-		t.Errorf("the core's scripts are %d bytes of code, over their budget of %d: put the page's code in its plugin, or raise the budget and say why (comments aren't counted, so cutting them doesn't help)", total, coreScriptBudget)
+	if total > coreScriptBudget+distributionEntries {
+		t.Errorf("the core's scripts are %d bytes of code, over their budget of %d: put the page's code in its plugin, or raise the budget and say why (comments aren't counted, so cutting them doesn't help)", total, coreScriptBudget+distributionEntries)
 	}
 }

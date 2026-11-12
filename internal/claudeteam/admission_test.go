@@ -3,7 +3,21 @@ package claudeteam
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 )
+
+func TestInactiveAdmissionsKeepNoClockScopedChannel(t *testing.T) {
+	a := NewAdmissions()
+	synctest.Test(t, func(t *testing.T) {
+		a.SetClosed("a", true)
+	})
+	a.SetClosed("a", false)
+	release, admitted := a.Enter("a")
+	if !admitted {
+		t.Fatal("idle admission remained closed")
+	}
+	release()
+}
 
 func TestAdmissionClosesOnlyTheDrainingAccount(t *testing.T) {
 	a := NewAdmissions()

@@ -1,5 +1,9 @@
 # Claude subscription bridge: turns across Claude Code runs
 
+This page describes the upstream CLI bridge. This distribution also retains an
+explicit opt-in [HTTP transport](claude-http.md); Team coordination is shared
+by both transports and does not implement either inference path.
+
 A Claude subscription's requests are answered by the local `claude` binary
 (`internal/gateway/claude_subscription.go`, `serveClaudeSubscription`). This
 page covers how a conversation's turns find the Claude Code process, or the

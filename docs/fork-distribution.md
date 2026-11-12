@@ -4,6 +4,12 @@ This distribution retains the application name `magpie`, bundle identifier
 `com.yetone.magpie`, file locations and user settings. Releases and the update
 feed belong to `latentharbor/magpie`, not upstream's release repository.
 
+That update routing is enabled by the release workflow's explicit distribution
+linker flags and pinned signing key. Builds without those flags retain upstream
+update behavior; ordinary source builds use the development version and do not
+auto-update. A pinned distribution never falls back to an unsigned or upstream
+feed when its own verification fails.
+
 ## Trust boundary
 
 The release workflow publishes **ad-hoc signed, unnotarized macOS apps**.

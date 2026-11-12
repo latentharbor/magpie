@@ -65,6 +65,10 @@ jobs:
             ${{ runner.temp }}/source-format.patch
       - name: Compile every package and its tests
         run: go test -tags nogui -run '^$' ./...
+      - name: Upstream integration guards
+        run: |
+          go test -tags nogui -timeout 10m ./ ./internal/gui ./internal/provider ./internal/gateway ./internal/agent ./internal/cli -run '^(TestNoEagerPackageRegexps|TestBuiltinSwitch|TestBootSaysBuiltinsOff|TestBuiltinsTranslated|TestBuiltinClientsLoaded|TestCoreScriptBudget|TestQuotaSpanCarriesEveryWindowField|TestKeySlotEveryRoute|TestReadOnlyKeyEveryRoute|TestEveryNoticeIsTranslated|TestEveryRouteHasACommandOrIsNamed)$'
+          go test -tags nogui -timeout 10m ./internal/update
       - name: Team and retained transports
         run: |
           go test -race -count=20 -timeout 10m ./internal/claudeteam

@@ -10,6 +10,7 @@ These pages describe current responsibilities, runtime paths, state, and contrac
 | Tools that plugins give, offered to every agent as an MCP server | [Plugin tools](plugin-tools.md) |
 | Plugins that await context recall and observe completed replies | [Asynchronous gateway request hooks](gateway-request-hooks.md) |
 | Claude Team coordination module and native-account host adapter | [Team seat coordination](team-seats.md) |
+| Optional distribution HTTP transport, independent of Team coordination | [Claude HTTP transport](claude-http.md) |
 | Optional official Claude Desktop login proxy | [Keep Claude signed in](claude-login.md) |
 | Claude subscription turns across Claude Code runs | [Claude subscription bridge](claude-subscription-bridge.md) |
 | How the gateway picks a provider, key or account, and falls back | [Gateway routing and fallback](gateway-routing.md) |

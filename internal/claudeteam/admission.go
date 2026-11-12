@@ -17,24 +17,36 @@ type Admissions struct {
 }
 
 func NewAdmissions() *Admissions {
-	return &Admissions{closed: map[string]bool{}, active: map[string]int{}, changed: make(chan struct{})}
+	return &Admissions{closed: map[string]bool{}, active: map[string]int{}}
 }
-func (a *Admissions) signal() { close(a.changed); a.changed = make(chan struct{}) }
+func (a *Admissions) signal() {
+	if a.changed != nil {
+		close(a.changed)
+		a.changed = nil
+	}
+}
 func (a *Admissions) SetClosed(id string, closed bool) {
 	a.mu.Lock()
 	a.closed[id] = closed
 	a.signal()
 	a.mu.Unlock()
 }
-func (a *Admissions) Closed(id string) bool { a.mu.Lock(); defer a.mu.Unlock(); return a.closed[id] }
-func (a *Admissions) Forget(id string)      { a.mu.Lock(); delete(a.closed, id); a.signal(); a.mu.Unlock() }
-func (a *Admissions) ResetClosed() {
+func (a *Admissions) Closed(id string) bool {
 	a.mu.Lock()
-	a.closed = map[string]bool{}
+	defer a.mu.Unlock()
+	return a.closed[id]
+}
+func (a *Admissions) Forget(id string) {
+	a.mu.Lock()
+	delete(a.closed, id)
 	a.signal()
 	a.mu.Unlock()
 }
-func (a *Admissions) Active(id string) int { a.mu.Lock(); defer a.mu.Unlock(); return a.active[id] }
+func (a *Admissions) Active(id string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.active[id]
+}
 func (a *Admissions) Counts() map[string]int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -56,11 +68,15 @@ func (a *Admissions) Enter(id string) (func(), bool) {
 func (a *Admissions) Drain(ctx context.Context, id string) error {
 	for {
 		a.mu.Lock()
-		n, ch := a.active[id], a.changed
-		a.mu.Unlock()
-		if n == 0 {
+		if a.active[id] == 0 {
+			a.mu.Unlock()
 			return nil
 		}
+		if a.changed == nil {
+			a.changed = make(chan struct{})
+		}
+		ch := a.changed
+		a.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return errors.New("Claude Team drain timed out; no assignment was changed")

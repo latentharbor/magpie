@@ -56,7 +56,10 @@ func Feed() string {
 	if f := os.Getenv("MAGPIE_UPDATE_FEED"); f != "" {
 		return f
 	}
-	return releaseHome + "/latest/download/latest.json"
+	if distributionTrust != "" {
+		return releaseHome + "/latest/download/latest.json"
+	}
+	return siteFeed
 }
 
 // Release is one published version.

@@ -1,4 +1,4 @@
-// Distribution feature strings; agent notices remain in the core table.
+// Feature content strings; built-in metadata and agent notices stay in core.
 magpie.strings({
   "zh": {
     "Usage threshold reached": "已达到用量阈值",
@@ -78,10 +78,6 @@ magpie.strings({
     "HTTP is experimental and impersonates Claude Code. It may put your account at risk of restriction or suspension. Equivalent subscription quota usage is not guaranteed. Changes apply to new requests; requests already running keep their transport": "HTTP 为实验性功能，会模拟 Claude Code，可能导致账号受限或封禁。不保证订阅额度消耗与 CLI 相同。更改仅用于新请求；正在运行的请求保留原传输方式",
     "Refresh seat assignments and Premium usage": "刷新所有账号的坐席状态及 Premium 额度",
     "Unassigned accounts retain their last usage snapshot": "未分配账号保留上次采集的额度快照",
-    "Claude Team": "Claude Team",
-    "Manage organization seats and standby accounts": "管理组织席位和待命账号",
-    "1 organization": "1 个组织",
-    "{n} organizations": "{n} 个组织",
     "Claude Code": "Claude Code"
   },
   "zh-TW": {
@@ -162,10 +158,6 @@ magpie.strings({
     "HTTP is experimental and impersonates Claude Code. It may put your account at risk of restriction or suspension. Equivalent subscription quota usage is not guaranteed. Changes apply to new requests; requests already running keep their transport": "HTTP 為實驗性功能，會模擬 Claude Code，可能導致帳號受限或停權。不保證訂閱額度消耗與 CLI 相同。變更僅用於新請求；執行中的請求保留原傳輸方式",
     "Refresh seat assignments and Premium usage": "重新整理所有帳號的席位狀態及 Premium 額度",
     "Unassigned accounts retain their last usage snapshot": "未分配帳號保留上次取得的額度快照",
-    "Claude Team": "Claude Team",
-    "Manage organization seats and standby accounts": "管理組織席位與待命帳號",
-    "1 organization": "1 個組織",
-    "{n} organizations": "{n} 個組織",
     "Claude Code": "Claude Code"
   },
   "ja": {
@@ -246,10 +238,6 @@ magpie.strings({
     "HTTP is experimental and impersonates Claude Code. It may put your account at risk of restriction or suspension. Equivalent subscription quota usage is not guaranteed. Changes apply to new requests; requests already running keep their transport": "HTTP は実験的な機能で Claude Code を模倣します。アカウントが制限または停止される恐れがあります。サブスクリプション枠の消費が CLI と同じになる保証はありません。変更は新しいリクエストに適用され、実行中のリクエストは通信方式を維持します",
     "Refresh seat assignments and Premium usage": "全アカウントの席の割り当てと Premium の使用量を更新",
     "Unassigned accounts retain their last usage snapshot": "未割り当てのアカウントには前回取得した使用量を表示します",
-    "Claude Team": "Claude Team",
-    "Manage organization seats and standby accounts": "組織のシートと待機アカウントを管理",
-    "1 organization": "1 組織",
-    "{n} organizations": "{n} 組織",
     "Claude Code": "Claude Code"
   },
   "de": {
@@ -330,10 +318,6 @@ magpie.strings({
     "HTTP is experimental and impersonates Claude Code. It may put your account at risk of restriction or suspension. Equivalent subscription quota usage is not guaranteed. Changes apply to new requests; requests already running keep their transport": "HTTP ist experimentell und ahmt Claude Code nach. Das Konto kann dadurch eingeschränkt oder gesperrt werden. Ein gleicher Verbrauch des Abo-Kontingents wie mit der CLI ist nicht garantiert. Änderungen gelten für neue Anfragen; laufende Anfragen behalten ihre Übertragung",
     "Refresh seat assignments and Premium usage": "Sitzzuweisungen aller Konten und Premium-Nutzung aktualisieren",
     "Unassigned accounts retain their last usage snapshot": "Nicht zugewiesene Konten behalten den zuletzt erfassten Nutzungsstand",
-    "Claude Team": "Claude Team",
-    "Manage organization seats and standby accounts": "Organisationssitze und bereitstehende Konten verwalten",
-    "1 organization": "1 Organisation",
-    "{n} organizations": "{n} Organisationen",
     "Claude Code": "Claude Code"
   }
 });

@@ -23,6 +23,7 @@ import (
 // this nor keySlotRoutes fails TestKeySlotEveryRoute, so a new one is
 // judged.
 var keySlotFree = []string{
+	"POST /v1/messages/cache_touch", // refreshes an existing cache; does not start inference
 	"POST /api/show", "POST /v1/magpie/usage/requests", "POST " + provider.RemoteRefreshPath,
 	"POST " + provider.RemoteCodexResetPath, "POST " + StatuslinePath, "POST " + KeysPath,
 	"DELETE " + KeysPath + "/{id}", "POST " + OIDCKeysPath, "POST " + provider.RemoteProvePath,
