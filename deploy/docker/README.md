@@ -31,6 +31,8 @@ To reach the gateway from another device, set `MAGPIE_BIND_IP` to the server's V
 
 Claude Team and other subscription accounts are configured once in the server's browser UI. A Claude OAuth sign-in may end at a browser `localhost` callback on your laptop; paste that complete callback URL into the server UI's sign-in form. If a subscription needs the official Claude Code binary, install it inside the container with `docker compose exec magpie magpie claude-code install`. The downloaded binary and sign-in files stay in `/config`.
 
+When moving an existing Team organization to the server, disable that organization's local Team controller before enabling its server copy. Each organization needs one controller across all devices: the local process lock cannot coordinate separate computers. Client Magpie installations should use **Remote magpie** for that organization instead of importing a second active Team pool.
+
 **Claude Desktop official-login mode is local to each Desktop.** Its HTTPS proxy, local certificate trust and native profile cannot be provided by the server container alone. Keep a local Magpie on each such Mac and point it at this server as Remote magpie for shared inference; the central container holds the accounts and seat controller. Direct third-party API clients can call the container without a local Magpie.
 
 Update with `docker compose pull && docker compose up -d`. The named volume remains attached. Back up the volume before moving to a new server; never share it or the `.env` file because both hold credentials. Check `docker compose ps` for the image's health status after an update.
