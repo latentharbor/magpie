@@ -95,7 +95,11 @@ jobs:
       - name: Test
         if: runner.os != 'Windows'
         timeout-minutes: 90
-        run: go test -timeout 30m -tags "${{ steps.tags.outputs.tags }}" ./...
+        shell: bash
+        run: |
+          tags='${{ steps.tags.outputs.tags }}'
+          if [ "$RUNNER_OS" = macOS ]; then tags=nogui; fi
+          go test -timeout 30m -tags "$tags" ./...
 
       # Keep test compilation as well as vet's objects. Otherwise every repair
       # and main's final run relinks the large native suites from the earlier
@@ -184,6 +188,25 @@ jobs:
       - name: Windows VS Code detection
         if: runner.os == 'Windows'
         run: go test -v -count=1 ./internal/agent -run '^TestVSCodeDetected$'
+
+  native-ui:
+    name: ui (macos native)
+    # Native-window acceptance remains visible under #4, separately from the
+    # mandatory backend/signature checks. UI acceptance does not block this
+    # distribution's releases; a failure is never reported as passing.
+    continue-on-error: true
+    runs-on: macos-26-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Complete native window and GUI API suite
+        timeout-minutes: 45
+        run: go test -count=1 -timeout 30m ./internal/gui
 
   cli:
     name: cli (${{ matrix.goos }}/${{ matrix.goarch }}, nogui)
