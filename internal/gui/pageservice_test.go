@@ -81,7 +81,7 @@ func (w *serviceFlushNotice) Flush() {
 
 func TestPluginPageServiceEarlyResponse(t *testing.T) {
 	f := newFakeService(t)
-	servicePlugins(t, `{"portOption":"port","defaultPort":20000}`, map[string]any{"port":f.port})
+	servicePlugins(t, `{"port": `+strconv.Itoa(f.port)+`}`, nil)
 	t.Setenv("MAGPIE_ADDR", "127.0.0.1:3425")
 	page := serviceMux(true)
 	p := listed(t, page)
