@@ -1,0 +1,43 @@
+name: Bound native fixture warm-up
+on:
+  push:
+    branches: [probe/warmup-bound-20261113]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  warmup:
+    runs-on: macos-26-intel
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Format fixtures
+        run: gofmt -w internal/testenv/program.go internal/testenv/testenv.go internal/testenv/warmup_test.go
+      - name: Repeated warm-up ownership checks
+        run: go test -race -count=20 -timeout 10m ./internal/testenv
+      - name: Representative native warm-up callers
+        run: |
+          go test -race -count=20 -timeout 15m ./internal/sessions -run '^TestOpenCodeToolsAndSkills$'
+          go test -race -count=20 -timeout 15m ./internal/library -run '^TestAgentMCPFiles$'
+      - name: Deadline regression fails without a timely bound
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/testenv/program.go')
+          text=p.read_text()
+          needle='timer := time.NewTimer(after)'
+          assert text.count(needle)==1
+          p.write_text(text.replace(needle,'timer := time.NewTimer(time.Hour)'))
+          PY
+          if go test -timeout 1m ./internal/testenv -run '^TestWarmupWaitKillsAndReapsStalledChild$' > /tmp/warmup-regression.log 2>&1; then
+            cat /tmp/warmup-regression.log
+            exit 1
+          fi
+          cat /tmp/warmup-regression.log
+          grep -F 'warm-up did not return after its deadline' /tmp/warmup-regression.log

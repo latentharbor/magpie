@@ -2,6 +2,8 @@ package testenv
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Program writes script, a `#!` script, at path as a program a test runs,
@@ -135,10 +138,43 @@ func warmAt(path string) error {
 	if err != nil {
 		return fmt.Errorf("testenv.Program: a first run of %s: %v", path, err)
 	}
-	if st, err := p.Wait(); err != nil || !st.Success() {
+	if st, err := waitWarmup(p, warmupWait); err != nil || !st.Success() {
 		return fmt.Errorf("testenv.Program: a first run of %s: %v %v", path, st, err)
 	}
 	return record(path)
+}
+
+// A first-run check is an optimization, never an unbounded process lifetime.
+// Both StandIns and warmAt used to wait forever here on macOS (#5267), even
+// after m.Run had finished and its test deadline no longer applied.
+const warmupWait = time.Minute
+
+func waitWarmup(p *os.Process, after time.Duration) (*os.ProcessState, error) {
+	type result struct {
+		state *os.ProcessState
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		state, err := p.Wait()
+		done <- result{state, err}
+	}()
+	timer := time.NewTimer(after)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return r.state, r.err
+	case <-timer.C:
+		err := p.Kill()
+		r := <-done // reap before returning: no warm-up outlives its owner
+		if errors.Is(err, os.ErrProcessDone) {
+			return r.state, r.err
+		}
+		if err != nil {
+			return r.state, fmt.Errorf("testenv: stopping a first run: %w", err)
+		}
+		return r.state, fmt.Errorf("testenv: first run exceeded %s: %w", after, context.DeadlineExceeded)
+	}
 }
 
 // record notes path as a file that has run once.
