@@ -72,4 +72,22 @@ jobs:
       - name: Repeated coordination races
         run: |
           go test -race -tags nogui -count=20 -timeout 20m ./internal/provider -run '^(TestClaudeTeamRefusalDuringReconcileKeepsHandoffPending|TestClaudeTeamControllerWaitsForPreviousOwner|TestClaudeTeamDrainMultipleSeatsAndLostResponses)$'
-          go test -race -tags nogui -count=20 -timeout 20m ./internal/gateway -run '^TestClaudeTeam'
+          go test -race -tags nogui -count=20 -timeout 20m ./internal/gateway -run '^(TestClaudeTeam|TestUnroutedTimerKeepsItsOwnCaller)'
+      - name: Snapshot regression fails without the fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/gateway/unrouted.go "$RUNNER_TEMP/unrouted.go"
+          trap 'cp "$RUNNER_TEMP/unrouted.go" internal/gateway/unrouted.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/gateway/unrouted.go')
+          text = p.read_text()
+          assert text.count('u.r = r.Clone(r.Context())') == 1
+          p.write_text(text.replace('u.r = r.Clone(r.Context())', 'u.r = r'))
+          PY
+          if go test -tags nogui ./internal/gateway -run '^TestUnroutedTimerKeepsItsOwnCaller$' > "$RUNNER_TEMP/snapshot-regression.log" 2>&1; then
+            cat "$RUNNER_TEMP/snapshot-regression.log"
+            exit 1
+          fi
+          grep -F "handler mutations reached the timer's caller snapshot" "$RUNNER_TEMP/snapshot-regression.log"

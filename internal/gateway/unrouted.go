@@ -631,7 +631,9 @@ func (s *Server) watchUnrouted(w http.ResponseWriter, r *http.Request, f *inflig
 	if r.Body != nil && r.Body != http.NoBody {
 		r.Body = waitedBody{r.Body, u}
 	}
-	u.r = r
+	// Timers retain a caller snapshot while the handler may decode the body
+	// and replace its headers or URL. WithContext still shares those maps.
+	u.r = r.Clone(r.Context())
 	f.mu.Lock()
 	f.unrouted = u
 	f.mu.Unlock()
