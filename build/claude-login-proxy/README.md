@@ -5,6 +5,25 @@ Desktop's official login, routes selected inference to the NAS, handles local
 Code usage display, and forwards the image MCP tool. It has no GUI, subscription
 accounts, seat controller or local inference engine.
 
+## macOS application
+
+Version 0.2 includes **Claude Login Proxy.app** (macOS 14 or later). Drag it to
+Applications and open it. Existing settings appear automatically. The window
+manages server addresses, device keys, exact model mappings, usage handling,
+image forwarding, service state and certificate status. A blank key field keeps
+the saved key. "Check connection" reads the server's model catalog without making
+an inference request. Configuration saves are backed up and apply to subsequent
+requests; closing the application does not stop the background service.
+
+Use the service page to install or update the background component while idle.
+This updates only the independent component, retaining existing certificates
+and settings. Fresh computers must explicitly trust their public certificates
+in Keychain before installing the service. Python 3 is needed for the installer;
+it is not needed to keep the background proxy running.
+
+The application does not automatically add certificate trust. Local ports remain
+read-only because Desktop and existing MCP clients already reference them.
+
 The NAS remains responsible for real usage, subscriptions, routing and image
 generation. Official subscription permissions and account verification are not
 changed. Each computer should have a separate NAS gateway key.

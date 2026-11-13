@@ -17,6 +17,7 @@ import (
 type Upstream struct {
 	URL     string `json:"url"`
 	KeyFile string `json:"keyFile"`
+	Name    string `json:"name,omitempty"`
 }
 
 type Config struct {
@@ -52,33 +53,37 @@ func Load(path string) (Config, error) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		return c, fmt.Errorf("invalid proxy configuration")
 	}
+	return c, c.validate()
+}
+
+func (c Config) validate() error {
 	if c.Schema != 1 || c.APICertDir == "" {
-		return c, fmt.Errorf("configuration needs schema 1 and an API certificate directory")
+		return fmt.Errorf("configuration needs schema 1 and an API certificate directory")
 	}
 	if err := c.ProxyConfig().Validate(); err != nil {
-		return c, err
+		return err
 	}
 	for _, target := range c.Models {
 		id, model, ok := strings.Cut(target, "/")
 		if !ok || model == "" || c.Upstreams[id].URL == "" {
-			return c, fmt.Errorf("a model mapping has no configured upstream")
+			return fmt.Errorf("a model mapping has no configured upstream")
 		}
 	}
 	for _, up := range c.Upstreams {
 		if _, err := endpoint(up.URL); err != nil || up.KeyFile == "" {
-			return c, fmt.Errorf("upstream needs an HTTP(S) origin and a private key file")
+			return fmt.Errorf("upstream needs an HTTP(S) origin and a private key file")
 		}
 	}
 	if c.ImageUpstream != "" && c.Upstreams[c.ImageUpstream].URL == "" {
-		return c, fmt.Errorf("image upstream is not configured")
+		return fmt.Errorf("image upstream is not configured")
 	}
 	if c.MediaListen != "" {
 		host, port, err := net.SplitHostPort(c.MediaListen)
 		if err != nil || port == "0" || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() || c.MediaListen == c.Listen {
-			return c, fmt.Errorf("media relay needs a separate loopback port")
+			return fmt.Errorf("media relay needs a separate loopback port")
 		}
 	}
-	return c, nil
+	return nil
 }
 
 func endpoint(raw string) (*url.URL, error) {

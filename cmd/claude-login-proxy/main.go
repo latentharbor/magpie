@@ -60,6 +60,22 @@ func run(args []string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(v)
+	case "preferences":
+		v, err := claudeproxy.ReadPreferences(*path)
+		if err != nil { return err }
+		return json.NewEncoder(os.Stdout).Encode(v)
+	case "save-preferences":
+		var p claudeproxy.Preferences
+		if err := decodeInput(&p); err != nil { return err }
+		v, err := claudeproxy.SavePreferences(ctx, *path, p)
+		if err != nil { return err }
+		return json.NewEncoder(os.Stdout).Encode(v)
+	case "probe-server":
+		var p claudeproxy.ServerPreference
+		if err := decodeInput(&p); err != nil { return err }
+		v, err := claudeproxy.ProbeServer(ctx, *path, p)
+		if err != nil { return err }
+		return json.NewEncoder(os.Stdout).Encode(v)
 	case "init":
 		var b []byte
 		var err error
@@ -75,6 +91,14 @@ func run(args []string) error {
 	case "mcp-image":
 		return claudeproxy.ImageMCP(ctx, *path, os.Stdin, os.Stdout)
 	default:
-		return fmt.Errorf("commands: serve, status, version, import-magpie, init, certificates, mcp-image")
+		return fmt.Errorf("commands: serve, status, version, import-magpie, init, certificates, mcp-image, preferences, save-preferences, probe-server")
 	}
+}
+
+func decodeInput(v any) error {
+	b, err := io.ReadAll(io.LimitReader(os.Stdin, (1<<20)+1))
+	if err != nil || len(b) > 1<<20 || json.Unmarshal(b, v) != nil {
+		return fmt.Errorf("invalid settings input")
+	}
+	return nil
 }

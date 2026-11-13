@@ -137,13 +137,14 @@ def install():
     if any(not c.get('Trusted', c.get('trusted',False)) for c in certs.values()):
         raise RuntimeError('Grant SSL trust to the public CA files listed by the certificates command first')
     cfg = json.loads(CONFIG.read_text())
-    image = cfg['upstreams'][cfg['imageUpstream']]
-    keypath = Path(image['keyFile'])
-    if not keypath.is_absolute(): keypath = ROOT/keypath
-    key = keypath.read_text().strip()
-    req = urllib.request.Request(image['url'].rstrip('/')+'/api/hello',headers={'Authorization':'Bearer '+key})
-    with urllib.request.urlopen(req,timeout=10) as r: hello=json.load(r)
-    if hello.get('name') != 'magpie': raise RuntimeError('NAS gateway did not identify itself')
+    if cfg.get('imageUpstream'):
+        image = cfg['upstreams'][cfg['imageUpstream']]
+        keypath = Path(image['keyFile'])
+        if not keypath.is_absolute(): keypath = ROOT/keypath
+        key = keypath.read_text().strip()
+        req = urllib.request.Request(image['url'].rstrip('/')+'/api/hello',headers={'Authorization':'Bearer '+key})
+        with urllib.request.urlopen(req,timeout=10) as r: hello=json.load(r)
+        if hello.get('name') != 'magpie': raise RuntimeError('Image tools require a Magpie gateway')
     if (ROOT/'installation.json').exists():
         raise RuntimeError('Already installed; keep the existing configuration when updating the binary')
     base=HOME/'Library/Application Support'
@@ -206,13 +207,13 @@ def install():
         changes += [(base/'Claude/config.json','deploymentMode','1p'),(base/'Claude-3p/config.json','deploymentMode','1p')]
         for p,k,v in changes:
             change(p,[k],v)
-        mcp_files=[base/'Claude/claude_desktop_config.json',HOME/'.claude.json']
+        mcp_files=[base/'Claude/claude_desktop_config.json',HOME/'.claude.json'] if cfg.get('imageUpstream') else []
         alternate=base/'Claude-3p/claude_desktop_config.json'
-        if alternate.exists():mcp_files.append(alternate)
+        if cfg.get('imageUpstream') and alternate.exists():mcp_files.append(alternate)
         for p in mcp_files:
             change(p,['mcpServers','magpie-image'],{'command':str(BIN),'args':['mcp-image','--config',str(CONFIG)]})
         codex=HOME/'.codex/config.toml'
-        if codex.exists():
+        if cfg.get('imageUpstream') and codex.exists():
             text=codex.read_text();changes=codex_image_changes(text)
             if changes:
                 remember(codex);journal.setdefault('tomlEdits',[]).append({'path':str(codex),'changes':changes})
@@ -235,6 +236,44 @@ def install():
         if stopped:call(['/usr/bin/open','-a',APP],False)
         raise
 
+def upgrade():
+    """Update only the service executable, retaining the original rollback log."""
+    if not (ROOT/'installation.json').exists():
+        return install()
+    status=call([BIN,'status'],False)
+    running=status.returncode==0
+    if running:
+        current=json.loads(status.stdout)
+        if not current.get('running') or current.get('activeRequests')!=0:
+            raise RuntimeError('Wait for active requests before updating the background service')
+    elif call(['/bin/launchctl','print',DOMAIN+'/'+LABEL],False).returncode==0:
+        raise RuntimeError('Service is loaded but its activity is unknown; inspect its logs before updating')
+    backup=ROOT/'backups'/('upgrade-'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
+    backup.mkdir(parents=True,mode=0o700)
+    shutil.copy2(BIN,backup/'claude-login-proxy')
+    if running:call(['/bin/launchctl','bootout',DOMAIN+'/'+LABEL])
+    try:
+        if running:
+            for _ in range(120):
+                if call([BIN,'status'],False).returncode:break
+                time.sleep(0.5)
+            else:raise RuntimeError('Previous service has not finished draining')
+        atomic(BIN,SOURCE.read_bytes(),0o700)
+        call(['/bin/launchctl','bootstrap',DOMAIN,PLIST])
+        for _ in range(40):
+            result=call([BIN,'status'],False)
+            if result.returncode==0 and json.loads(result.stdout).get('running'):
+                atomic(ROOT/'maintenance/install.py',Path(__file__).read_bytes())
+                print(result.stdout.strip());return
+            time.sleep(0.5)
+        raise RuntimeError('Updated service did not become ready')
+    except Exception:
+        call(['/bin/launchctl','bootout',DOMAIN+'/'+LABEL],False)
+        atomic(BIN,(backup/'claude-login-proxy').read_bytes(),0o700)
+        if running:call(['/bin/launchctl','bootstrap',DOMAIN,PLIST],False)
+        raise
+
 if __name__=='__main__':
     if '--restore' in sys.argv:restore()
+    elif '--upgrade' in sys.argv:upgrade()
     else:install()

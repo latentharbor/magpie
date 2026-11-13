@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>io.latentharbor.claude-login-proxy.settings</string>
+<key>CFBundleName</key><string>Claude Login Proxy</string>
+<key>CFBundleDisplayName</key><string>Claude Login Proxy</string>
+<key>CFBundleExecutable</key><string>Claude Login Proxy</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.2.0</string>
+<key>CFBundleVersion</key><string>0.2.0</string>
+<key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSPrincipalClass</key><string>NSApplication</string>
+<key>NSHumanReadableCopyright</key><string>MIT License. Community client; not affiliated with Anthropic.</string>
+</dict></plist>
