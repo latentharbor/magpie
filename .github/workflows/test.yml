@@ -90,16 +90,25 @@ jobs:
         with:
           bun-version: 1.4.2
 
-      # internal/gateway takes 450-600s on macOS runners, and go test's
-      # default 10m timed it out in 3 of 8 finished main runs (#2108).
+      # The complete gateway package now exceeds 30m on the Intel runners.
+      # Execute all of its tests through the same isolated, exhaustive chunks
+      # as Race; keep it out of the first command so no case is run twice.
       - name: Test
         if: runner.os != 'Windows'
         timeout-minutes: 90
         shell: bash
         run: |
+          set -euo pipefail
           tags='${{ steps.tags.outputs.tags }}'
-          if [ "$RUNNER_OS" = macOS ]; then tags=nogui; fi
-          go test -timeout 30m -tags "$tags" ./...
+          if [ "$RUNNER_OS" = macOS ]; then
+            tags=nogui
+            packages=$(go list -tags "$tags" ./... | grep -v '^github.com/yetone/magpie/internal/gateway$')
+            go test -timeout 30m -tags "$tags" $packages
+            go test -c -tags "$tags" -o "$RUNNER_TEMP/gateway.plain" ./internal/gateway/
+            build/race-shards.sh internal/gateway "$RUNNER_TEMP/gateway.plain" "$(getconf _NPROCESSORS_ONLN)" -test.timeout=20m
+          else
+            go test -timeout 30m -tags "$tags" ./...
+          fi
 
       # Keep test compilation as well as vet's objects. Otherwise every repair
       # and main's final run relinks the large native suites from the earlier
