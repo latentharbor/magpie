@@ -121,6 +121,9 @@ func (p *Proxy) usageAuthority(ctx context.Context) (*Authority, error) {
 	a := p.WebAuthority
 	p.mu.Unlock()
 	if a != nil {
+		if p.AuthorityForHost != nil {
+			return p.AuthorityForHost(ctx, UsageHost)
+		}
 		return a, nil
 	}
 	c, err := p.Config()
@@ -133,10 +136,14 @@ func (p *Proxy) usageAuthority(ctx context.Context) (*Authority, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	if !ReadWebCertificate().Trusted {
-		return nil, fmt.Errorf("separate claude.ai CA is not trusted")
+	if p.AuthorityForHost != nil {
+		a, err = p.AuthorityForHost(ctx, UsageHost)
+	} else {
+		if !ReadWebCertificate().Trusted {
+			return nil, fmt.Errorf("separate claude.ai CA is not trusted")
+		}
+		a, err = EnsureWebAuthority(ctx, WebCertDir())
 	}
-	a, err = EnsureWebAuthority(ctx, WebCertDir())
 	if err != nil {
 		return nil, err
 	}

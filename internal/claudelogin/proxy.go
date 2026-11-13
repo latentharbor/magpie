@@ -35,6 +35,8 @@ type Proxy struct {
 	Official     http.RoundTripper
 	Local        http.RoundTripper
 	Remote       RemoteOptions
+	// AuthorityForHost refreshes leaf certificates without replacing the CA.
+	AuthorityForHost func(context.Context, string) (*Authority, error)
 	mu           sync.Mutex
 	conns        map[net.Conn]struct{}
 	closed       bool
@@ -58,7 +60,15 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.EqualFold(host, Host) {
-		p.intercept(w, r, Host, p.Authority, p.inference)
+		a := p.Authority
+		if p.AuthorityForHost != nil {
+			a, err = p.AuthorityForHost(r.Context(), Host)
+			if err != nil {
+				http.Error(w, "inference certificate unavailable", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		p.intercept(w, r, Host, a, p.inference)
 		return
 	}
 	if strings.EqualFold(host, UsageHost) {
@@ -438,6 +448,11 @@ func (p *Proxy) Close() {
 // certificate trust is changed. Cancellation closes CONNECT tunnels too.
 func Serve(ctx context.Context, c Config, p *Proxy) error {
 	return serveReady(ctx, c, p, func() {})
+}
+
+// ServeReady reports readiness only after the listener has been acquired.
+func ServeReady(ctx context.Context, c Config, p *Proxy, ready func()) error {
+	return serveReady(ctx, c, p, ready)
 }
 
 func serveReady(ctx context.Context, c Config, p *Proxy, ready func()) error {

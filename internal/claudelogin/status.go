@@ -25,6 +25,11 @@ type CertificateStatus struct {
 // must be granted by the user separately; merely generating a CA isn't trust.
 func ReadCertificate() CertificateStatus    { return readCertificate(CertDir(), Host) }
 func ReadWebCertificate() CertificateStatus { return readCertificate(WebCertDir(), UsageHost) }
+
+// ReadCertificateAt lets a standalone host own its certificate directory.
+// It performs the same restricted-authority and system-trust checks.
+func ReadCertificateAt(dir, host string) CertificateStatus { return readCertificate(dir, host) }
+
 func readCertificate(dir, host string) CertificateStatus {
 	s := CertificateStatus{Path: filepath.Join(dir, "ca.pem")}
 	b, err := os.ReadFile(s.Path)
