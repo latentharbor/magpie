@@ -33,6 +33,15 @@ It controls the settings application only; the existing proxy LaunchAgent stays
 independent. Changing that toggle never restarts or stops inference. Native CI
 covers denied registration, pending approval, external revocation and reopening.
 
+The Dock toggle is available both in startup settings and in the persistent
+menu-bar menu. It switches the settings app between regular and accessory
+activation policies; it never hides the menu-bar entry or stops the daemon.
+The `showInDock` user preference is written only after a successful policy
+change and restored on launch. The agent-style bundle launch avoids flashing a
+Dock icon before applying a saved hidden preference. Existing users without a
+preference retain regular Dock visibility. Native CI covers persistence and
+failed policy changes without modifying real user defaults.
+
 The source of truth is `~/.config/claude-login-proxy/config.json`, schema 1. Exact
 native model names map to `upstream-id/remote-model`. Each upstream owns an origin
 and a private key file; no subscription credentials live here. `import-magpie`

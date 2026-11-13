@@ -18,6 +18,26 @@ import SwiftUI
 @main struct UIValidation {
     @MainActor static func main() throws {
         _ = NSApplication.shared
+        let suite = "proxy-dock-fixture-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var refusePolicy = false
+        var applied: [Bool] = []
+        let dock = DockVisibility(defaults: defaults, applyPolicy: { value in
+            applied.append(value)
+            return !refusePolicy
+        })
+        dock.setShown(false)
+        precondition(!dock.shown && defaults.object(forKey: DockVisibility.preferenceKey) != nil)
+        let reopenedDock = DockVisibility(defaults: defaults, applyPolicy: { value in applied.append(value); return true })
+        reopenedDock.applyStoredPreference()
+        precondition(!reopenedDock.shown && applied == [false, false], "hidden Dock preference was not restored on launch")
+        refusePolicy = true
+        dock.setShown(true)
+        precondition(!dock.shown && !defaults.bool(forKey: DockVisibility.preferenceKey) && !dock.error.isEmpty, "failed policy change was saved as successful")
+        refusePolicy = false
+        dock.setShown(true)
+        precondition(dock.shown && defaults.bool(forKey: DockVisibility.preferenceKey) && dock.error.isEmpty)
         let service = FakeLoginItemService()
         let loginItems = LoginItems(service: service)
         service.fail = true
@@ -63,7 +83,7 @@ import SwiftUI
         model.removeServer("nas")
         precondition(model.preferences.servers.count == 1, "referenced server removed")
         model.message = ""
-        model.status = ServiceStatus(running: true, activeRequests: 0, version: "0.2.1", listen: p.listen)
+        model.status = ServiceStatus(running: true, activeRequests: 0, version: "0.2.2", listen: p.listen)
         model.statusMessage = "后台代理正在运行"
         model.certificates = ["api": CertificateInfo(path: "/example/ca.pem", exists: true, trusted: true, sha256: String(repeating: "a1", count: 32))]
         let directory = URL(fileURLWithPath: CommandLine.arguments[1])

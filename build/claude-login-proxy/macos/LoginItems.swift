@@ -2,6 +2,33 @@ import AppKit
 import ServiceManagement
 import SwiftUI
 
+@MainActor final class DockVisibility: ObservableObject {
+    static let shared = DockVisibility()
+    static let preferenceKey = "showInDock"
+    @Published private(set) var shown: Bool
+    @Published private(set) var error = ""
+    private let defaults: UserDefaults
+    private let applyPolicy: (Bool) -> Bool
+
+    init(defaults: UserDefaults = .standard, applyPolicy: @escaping (Bool) -> Bool = { NSApplication.shared.setActivationPolicy($0 ? .regular : .accessory) }) {
+        self.defaults = defaults
+        self.applyPolicy = applyPolicy
+        shown = defaults.object(forKey: Self.preferenceKey) == nil ? true : defaults.bool(forKey: Self.preferenceKey)
+    }
+
+    func applyStoredPreference() { setShown(shown) }
+
+    func setShown(_ value: Bool) {
+        guard applyPolicy(value) else {
+            error = "macOS 未能更改 Dock 显示状态，请重新打开设置应用后再试。"
+            return
+        }
+        error = ""
+        shown = value
+        defaults.set(value, forKey: Self.preferenceKey)
+    }
+}
+
 enum LoginItemState: String {
     case disabled, enabled, needsApproval, unavailable
 
@@ -63,6 +90,7 @@ enum LoginItemState: String {
 
 struct LoginSettings: View {
     @StateObject private var items = LoginItems()
+    @ObservedObject private var dock = DockVisibility.shared
     @State private var proxyStatus = "正在读取"
 
     var body: some View {
@@ -76,8 +104,10 @@ struct LoginSettings: View {
             }
             LabeledContent("后台代理自启", value: proxyStatus)
             Button("打开系统登录项设置") { LoginItems.openSystemSettings() }
+            Toggle("在 Dock 中显示", isOn: Binding(get: { dock.shown }, set: { dock.setShown($0) }))
+            if !dock.error.isEmpty { Text(dock.error).foregroundStyle(.orange) }
         } header: { Text("启动与窗口") } footer: {
-            Text("关闭窗口后应用保留在菜单栏，可从菜单栏或 Dock 重新打开。此开关只控制设置应用；代理服务安装后独立自启，退出设置应用不会停止代理。")
+            Text("关闭 Dock 显示后，可从菜单栏重新打开窗口；此设置立即生效并在下次启动时保留。登录自启开关只控制设置应用，退出设置应用不会停止后台代理。")
         }
         .onAppear { refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
@@ -97,6 +127,10 @@ struct LoginSettings: View {
 // independently launched proxy, even on explicit application termination.
 @MainActor final class ProxyAppDelegate: NSObject, NSApplicationDelegate {
     static let settingsID = NSUserInterfaceItemIdentifier("claude-proxy-settings")
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        DockVisibility.shared.applyStoredPreference()
+    }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 

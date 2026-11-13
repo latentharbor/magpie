@@ -4,6 +4,7 @@ import SwiftUI
 @main @MainActor struct ClaudeProxyApp: App {
     @NSApplicationDelegateAdaptor(ProxyAppDelegate.self) private var delegate
     @StateObject private var model = ProxyModel()
+    @ObservedObject private var dock = DockVisibility.shared
 
     init() {
         // Read or change this app's login item without touching the proxy.
@@ -45,6 +46,8 @@ import SwiftUI
             OpenSettingsWindow()
             Text(model.statusMessage)
             Button("刷新状态") { Task { await model.refreshStatus() } }
+            Toggle("在 Dock 中显示", isOn: Binding(get: { dock.shown }, set: { dock.setShown($0) }))
+            if !dock.error.isEmpty { Text(dock.error) }
             Divider()
             Button("退出设置应用") { NSApplication.shared.terminate(nil) }
         }

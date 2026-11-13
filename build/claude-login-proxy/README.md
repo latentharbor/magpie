@@ -23,6 +23,11 @@ its own login startup independently. Closing the settings window keeps the app
 in the menu bar; reopen it from there or the Dock. Use Quit to exit the settings
 app, or Stop service to stop the proxy explicitly.
 
+Version 0.2.2 adds **Show in Dock** in that section and the menu-bar menu. Turn it
+off to keep only the menu-bar entry. The setting applies immediately and is
+remembered after restart; the menu-bar Open configuration command remains
+available. Changing Dock visibility does not restart the background proxy.
+
 Use the service page to install or update the background component while idle.
 This updates only the independent component, retaining existing certificates
 and settings. Fresh computers must explicitly trust their public certificates
