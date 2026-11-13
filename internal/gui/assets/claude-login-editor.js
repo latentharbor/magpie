@@ -15,6 +15,7 @@ async function showClaudeLoginEditor() {
   const [usageRow, usage] = tick(t("Let Magpie manage Code usage"), false);
   fields.append(...field(t("Code usage"), usageRow));
   const [remoteRow, remote] = tick(t("Let Remote magpie manage inference"), false);
+  remote.setAttribute("aria-label", t("Let Remote magpie manage inference"));
   fields.append(...field(t("Remote magpie"), remoteRow));
   const remoteHint = el("p", "hint", t("Mapped Remote magpie models use the remote gateway's routing, limits and request history. Local models keep their local routing."));
   const usageHint = el("p", "hint", t("Shows local Code quota as available. Every Code model needs a Magpie mapping. Real usage and rotation stay in Magpie; an official subscription is still required."));

@@ -11,8 +11,20 @@ concurrency:
 jobs:
   format:
     runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.changed.outputs.go }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Select checks for the changed source
+        id: changed
+        run: |
+          if [ '${{ github.event_name }}' = workflow_dispatch ] || git diff --name-only HEAD^ HEAD -- '*.go' go.mod go.sum | grep -q .; then
+            echo 'go=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'go=false' >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -28,6 +40,7 @@ jobs:
         run: test ! -s "$RUNNER_TEMP/nas-format.patch"
   integration:
     needs: format
+    if: needs.format.outputs.go == 'true'
     strategy:
       fail-fast: false
       matrix:
