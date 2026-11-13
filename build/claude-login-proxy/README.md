@@ -16,6 +16,13 @@ the saved key. "Check connection" reads the server's model catalog without makin
 an inference request. Configuration saves are backed up and apply to subsequent
 requests; closing the application does not stop the background service.
 
+In 0.2.1, **Run status → Startup and window** includes a launch-at-login toggle
+for the settings application. It reflects macOS's actual approval state and
+links to System Settings when approval is required. The background proxy keeps
+its own login startup independently. Closing the settings window keeps the app
+in the menu bar; reopen it from there or the Dock. Use Quit to exit the settings
+app, or Stop service to stop the proxy explicitly.
+
 Use the service page to install or update the background component while idle.
 This updates only the independent component, retaining existing certificates
 and settings. Fresh computers must explicitly trust their public certificates

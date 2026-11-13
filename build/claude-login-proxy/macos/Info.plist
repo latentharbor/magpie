@@ -7,10 +7,11 @@
 <key>CFBundleExecutable</key><string>Claude Login Proxy</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.2.0</string>
-<key>CFBundleVersion</key><string>0.2.0</string>
+<key>CFBundleShortVersionString</key><string>0.2.1</string>
+<key>CFBundleVersion</key><string>0.2.1</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
+<key>NSSupportsAutomaticTermination</key><false/>
 <key>NSHumanReadableCopyright</key><string>MIT License. Community client; not affiliated with Anthropic.</string>
 </dict></plist>
