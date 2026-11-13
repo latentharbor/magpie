@@ -36,8 +36,8 @@ class InstallerTests(unittest.TestCase):
             installer.install()
             meta=home/'Library/Application Support/Claude-3p/configLibrary/_meta.json'
             profile_id=json.loads(meta.read_text())['appliedId']
-            self.assertEqual(str(uuid.UUID(profile_id)),profile_id)
             self.assertRegex(profile_id,r'^[a-f0-9-]{36}$')
+            self.assertEqual(str(uuid.UUID(profile_id)),profile_id)
             profile=meta.parent/(profile_id+'.json')
             self.assertEqual(json.loads(profile.read_text())['egressProxyUrl'],'http://127.0.0.1:3426')
             self.assertEqual(profile.stat().st_mode&0o777,0o600)
