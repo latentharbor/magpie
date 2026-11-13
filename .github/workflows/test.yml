@@ -1,16 +1,22 @@
 name: Test
+run-name: ${{ inputs.integration_only && 'Test (distribution integration)' || 'Test (complete upstream regression)' }}
 
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      integration_only:
+        description: 'Validate the distribution integration and native compatibility; retain full upstream regression as a separate run'
+        type: boolean
+        default: false
 
 # On main a run finishes: a release waits for a green run, and one cancelled
 # by every next push left none to wait for (LESSONS.md). A newer push still
 # replaces a run that hasn't started. A PR's run is cancelled by its next push.
 concurrency:
-  group: test-${{ github.ref }}
+  group: test-${{ github.ref }}-${{ inputs.integration_only && 'integration' || 'full' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
@@ -94,7 +100,7 @@ jobs:
       # Execute all of its tests through the same isolated, exhaustive chunks
       # as Race; keep it out of the first command so no case is run twice.
       - name: Test
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && !inputs.integration_only
         timeout-minutes: 90
         shell: bash
         run: |
@@ -109,13 +115,29 @@ jobs:
           fi
 
       - name: Complete gateway suite (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && !inputs.integration_only
         timeout-minutes: 45
         shell: bash
         run: |
           set -euo pipefail
           go test -c -tags nogui -o "$RUNNER_TEMP/gateway.plain" ./internal/gateway/
           build/race-shards.sh internal/gateway "$RUNNER_TEMP/gateway.plain" "$(getconf _NPROCESSORS_ONLN)" -test.timeout=20m
+
+      # This explicit release lane covers the isolated module and retained
+      # integrations on both Unix platforms. It does not report the complete
+      # upstream suite as passing; that remains the default push/PR lane.
+      - name: Distribution integration and native update compatibility
+        if: runner.os != 'Windows' && inputs.integration_only
+        timeout-minutes: 25
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -tags nogui -timeout 10m ./internal/update
+          go test -race -tags nogui -count=20 -timeout 10m ./internal/claudeteam
+          go test -race -tags nogui -timeout 10m ./internal/claudelogin ./internal/claudeanchor
+          go test -race -tags nogui -timeout 15m ./internal/provider ./internal/gateway ./internal/agent ./internal/cli -run 'TestClaudeTeam|TestClaudeHTTP|TestClaudeThread|TestDesktopLogin|TestDistribution|TestKeepClaude|TestClaudeLogin|TestGatewayWaitsForHubPruner|TestInfoSaysMCPHub|TestUnroutedTimerKeepsItsOwnCaller|TestHandedOverGatewayFinishesItsStream'
+          go test -race -tags nogui -count=100 -timeout 5m ./internal/plugin -run '^TestHost(CompletedHeadAfterEmptyQueueCheck|CompletionWithoutHeadStillFails|HeadKeepsTheAnswerWhenItCameWithTheHead)$'
+          go test -race -tags nogui -count=20 -timeout 5m ./internal/gateway -run '^TestGrokPluginDraws$'
 
       # Keep test compilation even when a behavior check fails. Otherwise a
       # small repair rebuilds every native test again from the vet-only cache.
@@ -150,20 +172,22 @@ jobs:
       # one process per core at a time, each taking the next chunk when done
       # (#923, #5361); each process isolates its own home.
       - name: Race
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && !inputs.integration_only
         shell: bash
         run: |
           go test -race -c -o "$RUNNER_TEMP/gateway.race" -tags "${{ steps.tags.outputs.tags }}" ./internal/gateway/
           build/race-shards.sh internal/gateway "$RUNNER_TEMP/gateway.race" "$(getconf _NPROCESSORS_ONLN)" -test.timeout=20m
           go test -race -tags "${{ steps.tags.outputs.tags }}" ./internal/redact/
 
-      # Account usage mixes cached results with concurrent fetches.
       - name: Repeated stream failure and keepalive contracts
         if: runner.os != 'Windows'
         timeout-minutes: 25
         shell: bash
-        run: go test -race -tags "${{ steps.tags.outputs.tags }}" -count=20 -timeout 20m ./internal/gateway -run '^(TestQuietCodexStreamKeptAliveThroughReplyWriters|TestClaudeSilentTurnFails|TestRelayUnendedReplyFails)$'
+        env:
+          REPEATS: ${{ inputs.integration_only && '3' || '20' }}
+        run: go test -race -tags "${{ steps.tags.outputs.tags }}" -count="$REPEATS" -timeout 20m ./internal/gateway -run '^(TestQuietCodexStreamKeptAliveThroughReplyWriters|TestClaudeSilentTurnFails|TestRelayUnendedReplyFails)$'
 
+      # Account usage mixes cached results with concurrent fetches.
       - name: Race account usage
         if: runner.os != 'Windows'
         run: go test -race -tags "${{ steps.tags.outputs.tags }}" ./internal/provider/ -run '^Test(LoginUsage|SubscriptionUsageEachAccount)'
