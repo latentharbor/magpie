@@ -1,0 +1,40 @@
+name: Verify plugin head completion ordering
+on:
+  push:
+    branches: [probe/plugin-head-order-20261113]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ordering:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Format new boundary test
+        run: gofmt -w internal/plugin/host.go internal/plugin/head_order_test.go
+      - name: Repeat ordering and retained terminal checks
+        run: go test -race -tags nogui -count=100 -timeout 10m ./internal/plugin -run '^TestHost(CompletedHeadAfterEmptyQueueCheck|CompletionWithoutHeadStillFails|HeadKeepsTheAnswerWhenItCameWithTheHead)$'
+      - name: Repeated real host and gateway drawing path
+        run: go test -race -tags nogui -count=200 -timeout 15m ./internal/gateway -run '^TestGrokPluginDraws$'
+      - name: Boundary regression fails without the queue recheck
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/plugin/host.go')
+          text=p.read_text()
+          block='\tif hm, ok := c.pop(); ok {\n\t\treturn hm, answer, nil\n\t}\n'
+          assert text.count(block)==1
+          p.write_text(text.replace(block,''))
+          PY
+          if go test -tags nogui ./internal/plugin -run '^TestHostCompletedHeadAfterEmptyQueueCheck$' > /tmp/head-regression.log 2>&1; then
+            cat /tmp/head-regression.log
+            exit 1
+          fi
+          grep -F 'queued head lost after empty observation' /tmp/head-regression.log

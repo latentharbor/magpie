@@ -2156,22 +2156,13 @@ func (c *call) headRead(ctx context.Context) (head message, answer *message, err
 			return message{}, nil, err
 		}
 		if m := c.result(); m != nil {
-			if m.Error != nil {
-				return message{}, m, errors.New(m.Error.Message)
-			}
-			return message{}, m, errors.New("the plugin answered no response")
+			return c.completedHead(m)
 		}
 		select {
 		case <-c.wake:
 		case m := <-c.done:
 			// the answer came with the head: keep it for the body
-			if hm, ok := c.pop(); ok {
-				return hm, &m, nil
-			}
-			if m.Error != nil {
-				return message{}, &m, errors.New(m.Error.Message)
-			}
-			return message{}, &m, errors.New("the plugin answered no response")
+			return c.completedHead(&m)
 		case <-ctx.Done():
 			return message{}, nil, ctx.Err()
 		case <-c.h.dead:
@@ -2180,6 +2171,19 @@ func (c *call) headRead(ctx context.Context) (head message, answer *message, err
 			continue
 		}
 	}
+}
+
+// A head can arrive between headRead's empty pop and its terminal read. The
+// terminal is published after the head, so check the queue again after seeing
+// it, for the persistent answer just as for the completion notification.
+func (c *call) completedHead(answer *message) (message, *message, error) {
+	if hm, ok := c.pop(); ok {
+		return hm, answer, nil
+	}
+	if answer.Error != nil {
+		return message{}, answer, errors.New(answer.Error.Message)
+	}
+	return message{}, answer, errors.New("the plugin answered no response")
 }
 
 // body is a fetch's reply body. Its reader takes the chunks the call queued,
