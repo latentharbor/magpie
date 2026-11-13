@@ -2,8 +2,28 @@
 
 A small macOS background client for a remote Magpie gateway. It keeps Claude
 Desktop's official login, routes selected inference to the NAS, handles local
-Code usage display, and forwards the image MCP tool. It has no GUI, subscription
-accounts, seat controller or local inference engine.
+Code usage display, and forwards the image MCP tool. A native settings window
+manages the independent background service. Neither component loads subscription
+accounts, a seat controller or a local inference engine.
+
+## macOS application
+
+Version 0.2 includes **Claude Login Proxy.app** (macOS 14 or later). Drag it to
+Applications and open it. Existing settings appear automatically. The window
+manages server addresses, device keys, exact model mappings, usage handling,
+image forwarding, service state and certificate status. A blank key field keeps
+the saved key. "Check connection" reads the server's model catalog without making
+an inference request. Configuration saves are backed up and apply to subsequent
+requests; closing the application does not stop the background service.
+
+Use the service page to install or update the background component while idle.
+This updates only the independent component, retaining existing certificates
+and settings. Fresh computers must explicitly trust their public certificates
+in Keychain before installing the service. Python 3 is needed for the installer;
+it is not needed to keep the background proxy running.
+
+The application does not automatically add certificate trust. Local ports remain
+read-only because Desktop and existing MCP clients already reference them.
 
 The NAS remains responsible for real usage, subscriptions, routing and image
 generation. Official subscription permissions and account verification are not
@@ -11,7 +31,8 @@ changed. Each computer should have a separate NAS gateway key.
 
 ## Existing Magpie setup
 
-Run `Install.command`. It imports only the remote gateway key, exact model
+Use the service page's install button (or `Install.command` in the legacy 0.1
+command-line packages). Installation imports only the remote gateway key, exact model
 mappings and existing restricted certificates into
 `~/.config/claude-login-proxy`. It does not copy subscription credentials or add
 certificate trust. The installer waits for idle, backs up the changed files,
@@ -27,9 +48,16 @@ replacement for a general local inference gateway.
 
 ## Fresh computer
 
-Start Claude Desktop and sign in first. Create a device key on NAS, put it in a
-private file, then prepare the client (choose `--provider` when NAS has several
-Claude providers):
+Start Claude Desktop and sign in first. Create a device key on NAS, then open
+Claude Login Proxy. Add the server address and key, check its model catalog,
+and add exact Desktop-to-server model mappings. Save the configuration, inspect
+the certificates on the local settings page, and explicitly grant SSL trust in
+your login Keychain. Then use the service page's install button and reopen Claude
+Desktop to load the proxy configuration.
+
+For command-line setup, the helper is inside the app's `Contents/Resources`.
+Put the device key in a private file, then run (choose `--provider` when NAS has
+several Claude providers):
 
 ```sh
 ./claude-login-proxy init --gateway http://NAS:3425 --key-file /private/device-key --organization YOUR-DESKTOP-ORGANIZATION-UUID
@@ -40,8 +68,7 @@ The public CA files are `certs/api/ca.pem` and `certs/web/ca.pem` under the
 configuration directory. Inspect their fingerprints and explicitly grant SSL
 trust in the login Keychain before installing. Import only those public files;
 `authority.pem` contains a private key and stays on this computer. The installer
-does not change certificate trust or disable TLS validation. Then run
-`Install.command` and reopen Claude Desktop to load its proxy configuration.
+does not change certificate trust or disable TLS validation.
 
 ## Runtime
 

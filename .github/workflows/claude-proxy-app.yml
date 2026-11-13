@@ -1,0 +1,110 @@
+name: Claude proxy macOS application
+on:
+  push:
+    branches: [feat/proxy-macos-app-20261113]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: proxy-app-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Format changed Go sources
+        run: |
+          gofmt -w cmd/claude-login-proxy internal/claudeproxy
+          git diff -- '*.go' > "$RUNNER_TEMP/format.patch"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proxy-app-format
+          path: ${{ runner.temp }}/format.patch
+      - name: Settings, credentials and existing proxy regressions
+        run: |
+          go list -deps ./cmd/claude-login-proxy > "$RUNNER_TEMP/dependencies"
+          if grep -E '^github.com/yetone/magpie/(internal/(gateway|provider|gui|claudeteam|settings)|plugins)(/|$)' "$RUNNER_TEMP/dependencies"; then exit 1; fi
+          go vet ./internal/claudeproxy ./cmd/claude-login-proxy
+          go test -race -count=3 -timeout 8m ./internal/claudeproxy
+          go test -race -timeout 8m ./internal/claudelogin
+          python3 -m unittest discover -s build/claude-login-proxy -p '*_test.py'
+  native:
+    runs-on: macos-26-intel
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Native editor state and page rendering
+        run: |
+          dir=build/claude-login-proxy/macos
+          swiftc -swift-version 5 -parse-as-library -target x86_64-apple-macos14.0 "$dir/ProxyModel.swift" "$dir/ProxyViews.swift" "$dir/UIValidation.swift" -o "$RUNNER_TEMP/ui-validation"
+          "$RUNNER_TEMP/ui-validation" "$RUNNER_TEMP/screenshots"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: proxy-native-screenshots
+          path: ${{ runner.temp }}/screenshots
+      - name: Build native applications with bundled helper
+        run: |
+          set -euo pipefail
+          mkdir dist
+          swift build/claude-login-proxy/macos/Icon.swift "$RUNNER_TEMP/AppIcon.iconset"
+          iconutil -c icns "$RUNNER_TEMP/AppIcon.iconset" -o "$RUNNER_TEMP/AppIcon.icns"
+          for arch in arm64 amd64; do
+            swift_arch="$arch"
+            if [ "$arch" = amd64 ]; then swift_arch=x86_64; fi
+            pkg="$RUNNER_TEMP/claude-login-proxy-$arch"
+            app="$pkg/Claude Login Proxy.app"
+            mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+            dir=build/claude-login-proxy/macos
+            swiftc -swift-version 5 -O -parse-as-library -target "$swift_arch-apple-macos14.0" "$dir/ProxyModel.swift" "$dir/ProxyViews.swift" "$dir/ProxyApp.swift" -o "$app/Contents/MacOS/Claude Login Proxy"
+            cp "$dir/Info.plist" "$app/Contents/Info.plist"
+            cp "$RUNNER_TEMP/AppIcon.icns" "$app/Contents/Resources/"
+            GOARCH="$arch" CGO_ENABLED=1 go build -trimpath -ldflags '-s -w -X main.version=0.2.0' -o "$app/Contents/Resources/claude-login-proxy" ./cmd/claude-login-proxy
+            cp LICENSE build/claude-login-proxy/install.py "$app/Contents/Resources/"
+            cp build/claude-login-proxy/README.md "$pkg/README.md"
+            cp "$dir/Restore Magpie.command" "$pkg/Restore Magpie.command"
+            chmod 755 "$pkg/Restore Magpie.command"
+            codesign --force --sign - "$app/Contents/Resources/claude-login-proxy"
+            codesign --force --sign - "$app"
+            codesign --verify --deep --strict "$app"
+            ditto -c -k --keepParent "$pkg" "dist/claude-login-proxy-0.2.0-darwin-$arch.zip"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proxy-app-clients
+          path: dist/*
+  sign:
+    needs: [core, native]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: proxy-app-clients
+          path: dist
+      - name: Sign independent application manifest
+        env:
+          FORK_RELEASE_PRIVATE_KEY: ${{ secrets.FORK_RELEASE_PRIVATE_KEY }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,os
+          root=Path('dist');assets={}
+          for p in sorted(root.glob('*.zip')):
+            b=p.read_bytes();assets[p.name]={'size':len(b),'sha256':hashlib.sha256(b).hexdigest()}
+          assert len(assets)==2
+          (root/'latest.json').write_text(json.dumps({'product':'claude-login-proxy','version':'0.2.0','sourceCommit':os.environ['GITHUB_SHA'],'assets':assets},indent=2)+'\n')
+          PY
+          python3 build/fork_release.py sign dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proxy-app-signed
+          path: dist/*
