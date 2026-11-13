@@ -158,6 +158,9 @@ def install():
             stopped=True
         BIN.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
         remember(BIN);atomic(BIN,SOURCE.read_bytes(),0o700)
+        license_file=SOURCE.parent/'LICENSE'
+        if license_file.exists():
+            installed_license=BIN.parent/'LICENSE';remember(installed_license);atomic(installed_license,license_file.read_bytes())
         old_start=HOME/'Library/LaunchAgents/com.yetone.magpie.plist'
         remember(old_start)
         if old_start.exists():old_start.unlink()

@@ -86,6 +86,7 @@ jobs:
             codesign --force --sign - "$dir/claude-login-proxy"
             codesign --verify --strict "$dir/claude-login-proxy"
             cp build/claude-login-proxy/README.md build/claude-login-proxy/install.py build/claude-login-proxy/*.command "$dir/"
+            cp LICENSE "$dir/LICENSE"
             chmod 755 "$dir/"*.command "$dir/claude-login-proxy"
             ditto -c -k --keepParent "$dir" "dist/claude-login-proxy-0.1.0-darwin-$arch.zip"
           done
