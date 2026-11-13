@@ -1,7 +1,7 @@
 name: Claude proxy macOS application
 on:
   push:
-    branches: [feat/proxy-login-items-20261113]
+    branches: [feat/proxy-hide-dock-20261113]
   workflow_dispatch:
 permissions:
   contents: read
@@ -52,7 +52,7 @@ jobs:
             swiftc -swift-version 5 -O -parse-as-library -target "$swift_arch-apple-macos14.0" "$dir/ProxyModel.swift" "$dir/LoginItems.swift" "$dir/ProxyViews.swift" "$dir/ProxyApp.swift" -o "$app/Contents/MacOS/Claude Login Proxy"
             cp "$dir/Info.plist" "$app/Contents/Info.plist"
             cp "$RUNNER_TEMP/AppIcon.icns" "$app/Contents/Resources/"
-            GOARCH="$arch" CGO_ENABLED=1 go build -trimpath -ldflags '-s -w -X main.version=0.2.1' -o "$app/Contents/Resources/claude-login-proxy" ./cmd/claude-login-proxy
+            GOARCH="$arch" CGO_ENABLED=1 go build -trimpath -ldflags '-s -w -X main.version=0.2.2' -o "$app/Contents/Resources/claude-login-proxy" ./cmd/claude-login-proxy
             cp LICENSE build/claude-login-proxy/install.py "$app/Contents/Resources/"
             cp build/claude-login-proxy/README.md "$pkg/README.md"
             cp "$dir/Restore Magpie.command" "$pkg/Restore Magpie.command"
@@ -60,7 +60,7 @@ jobs:
             codesign --force --sign - "$app/Contents/Resources/claude-login-proxy"
             codesign --force --sign - "$app"
             codesign --verify --deep --strict "$app"
-            ditto -c -k --keepParent "$pkg" "dist/claude-login-proxy-0.2.1-darwin-$arch.zip"
+            ditto -c -k --keepParent "$pkg" "dist/claude-login-proxy-0.2.2-darwin-$arch.zip"
           done
       - uses: actions/upload-artifact@v4
         with:
@@ -86,7 +86,7 @@ jobs:
           for p in sorted(root.glob('*.zip')):
             b=p.read_bytes();assets[p.name]={'size':len(b),'sha256':hashlib.sha256(b).hexdigest()}
           assert len(assets)==2
-          (root/'latest.json').write_text(json.dumps({'product':'claude-login-proxy','version':'0.2.1','sourceCommit':os.environ['GITHUB_SHA'],'assets':assets},indent=2)+'\n')
+          (root/'latest.json').write_text(json.dumps({'product':'claude-login-proxy','version':'0.2.2','sourceCommit':os.environ['GITHUB_SHA'],'assets':assets},indent=2)+'\n')
           PY
           python3 build/fork_release.py sign dist
       - uses: actions/upload-artifact@v4
