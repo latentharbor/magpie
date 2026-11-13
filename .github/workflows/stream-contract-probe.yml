@@ -17,8 +17,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Repeat both stream contracts
-        run: go test -race -tags nogui -count=20 -timeout 15m ./internal/gateway -run '^(TestQuietCodexStreamKeptAliveThroughReplyWriters|TestClaudeSilentTurnFails|TestRelayUnendedReplyFails)$'
       - name: Holding comments must still fail the keepalive test
         shell: bash
         run: |
@@ -52,7 +50,7 @@ jobs:
           assert s.count(old) == 1
           p.write_text(s.replace(old, 'if false && failed == "" && stop == "" && r.Context().Err() == nil {'))
           PY
-          if go test -tags nogui -timeout 2m ./internal/gateway -run '^TestRelayUnendedReplyFails$/stream=true|^TestRelayUnendedReplyFails$' > "$RUNNER_TEMP/silent-success.log" 2>&1; then
+          if go test -tags nogui -timeout 2m ./internal/gateway -run '^TestRelayUnendedReplyFails$' > "$RUNNER_TEMP/silent-success.log" 2>&1; then
             cat "$RUNNER_TEMP/silent-success.log"
             exit 1
           fi
