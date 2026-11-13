@@ -1,11 +1,49 @@
 import AppKit
 import SwiftUI
 
+@MainActor final class FakeLoginItemService: LoginItemService {
+    var state: LoginItemState = .disabled
+    var fail = false
+    var enableCount = 0
+    func enable() throws {
+        enableCount += 1
+        if fail { throw ClientError(message: "fixture denied registration") }
+        state = .needsApproval
+    }
+    func disable() throws { state = .disabled }
+}
+
 // CI only: exercise editor documents and render every native page at the
 // minimum supported window size. No daemon, real config, or network is used.
 @main struct UIValidation {
     @MainActor static func main() throws {
         _ = NSApplication.shared
+        let service = FakeLoginItemService()
+        let loginItems = LoginItems(service: service)
+        service.fail = true
+        loginItems.setEnabled(true)
+        precondition(loginItems.state == .disabled && !loginItems.error.isEmpty, "failed registration was presented as enabled")
+        service.fail = false
+        loginItems.setEnabled(true)
+        precondition(loginItems.state == .needsApproval, "approval was assumed")
+        service.state = .enabled
+        loginItems.refresh()
+        precondition(loginItems.state == .enabled)
+        loginItems.setEnabled(true)
+        precondition(service.enableCount == 2, "already registered service was registered again")
+        service.state = .needsApproval
+        loginItems.refresh()
+        precondition(loginItems.state == .needsApproval, "external revocation was missed")
+        loginItems.setEnabled(false)
+        precondition(loginItems.state == .disabled)
+        let lifecycle = ProxyAppDelegate()
+        precondition(!lifecycle.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared))
+        let reopen = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        reopen.identifier = ProxyAppDelegate.settingsID
+        reopen.orderOut(nil)
+        precondition(!lifecycle.applicationShouldHandleReopen(NSApplication.shared, hasVisibleWindows: false))
+        precondition(reopen.isVisible, "Dock reopen did not restore the existing window")
+        reopen.orderOut(nil)
         let model = ProxyModel()
         model.preview = true
         var p = Preferences.empty
@@ -25,7 +63,7 @@ import SwiftUI
         model.removeServer("nas")
         precondition(model.preferences.servers.count == 1, "referenced server removed")
         model.message = ""
-        model.status = ServiceStatus(running: true, activeRequests: 0, version: "0.2.0", listen: p.listen)
+        model.status = ServiceStatus(running: true, activeRequests: 0, version: "0.2.1", listen: p.listen)
         model.statusMessage = "后台代理正在运行"
         model.certificates = ["api": CertificateInfo(path: "/example/ca.pem", exists: true, trusted: true, sha256: String(repeating: "a1", count: 32))]
         let directory = URL(fileURLWithPath: CommandLine.arguments[1])

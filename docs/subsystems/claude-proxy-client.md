@@ -23,6 +23,16 @@ is an explicit action; updates require idle and retain configuration and trust.
 Closing the settings window leaves the service running. New configurations
 prepare restricted certificates but trust remains an explicit Keychain action.
 
+The native app uses `WindowGroup` rather than the single `Window` scene, whose
+last-window-close behavior quits the app. Closing its window retains the menu
+bar app and shared editing state. Dock/menu commands reopen the settings window;
+only an explicit Quit ends the settings application, never the proxy service.
+The launch-at-login toggle registers `SMAppService.mainApp` and reads system
+status back, including pending approval and changes made in System Settings.
+It controls the settings application only; the existing proxy LaunchAgent stays
+independent. Changing that toggle never restarts or stops inference. Native CI
+covers denied registration, pending approval, external revocation and reopening.
+
 The source of truth is `~/.config/claude-login-proxy/config.json`, schema 1. Exact
 native model names map to `upstream-id/remote-model`. Each upstream owns an origin
 and a private key file; no subscription credentials live here. `import-magpie`

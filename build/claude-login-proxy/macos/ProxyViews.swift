@@ -95,6 +95,7 @@ struct ProxyWindow: View {
             } header: { Text("服务") } footer: {
                 Text("关闭此窗口或退出设置应用，后台代理仍会运行。服务安装后随用户登录启动。")
             }
+            LoginSettings()
             Section("当前配置") {
                 LabeledContent("服务器", value: "\(model.preferences.servers.count) 个")
                 LabeledContent("模型映射", value: "\(model.mappings.count) 条")
