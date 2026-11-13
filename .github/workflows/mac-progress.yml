@@ -1,0 +1,42 @@
+name: Diagnose native backend progress
+on:
+  push:
+    branches: [probe/mac-progress-20261113]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  progress:
+    runs-on: macos-26-intel
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: plugin
+            target: ./internal/plugin
+            seconds: 1200
+          - label: backend
+            target: ./...
+            seconds: 2700
+    name: progress (${{ matrix.label }})
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Observe test progress and bound diagnostic lifetime
+        run: |
+          ulimit -c 0
+          python3 .github/mac-progress.py '${{ matrix.target }}' '${{ matrix.seconds }}'
+      - name: Keep complete diagnostic output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-progress-${{ matrix.label }}
+          path: ${{ runner.temp }}/mac-test-progress.jsonl
