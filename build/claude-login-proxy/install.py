@@ -4,6 +4,7 @@ import datetime
 import json
 import os
 import plistlib
+import re
 import shutil
 import signal
 import subprocess
@@ -34,6 +35,33 @@ def atomic(path, data, mode=0o600):
     with temporary.open('wb') as f:
         f.write(data); f.flush(); os.fsync(f.fileno())
     temporary.chmod(mode); temporary.replace(path)
+
+def codex_image_changes(text):
+    header=re.search(r'(?m)^\[mcp_servers\.(?:magpie-image|"magpie-image"|\x27magpie-image\x27)\][ \t]*$',text)
+    if not header:return []
+    tail=text[header.end():];next_table=re.search(r'(?m)^\[',tail)
+    block=tail[:next_table.start()] if next_table else tail
+    changes=[];values={}
+    for field in ('command','args'):
+        line=re.search(r'(?m)^('+field+r'[ \t]*=[ \t]*)([^\n]+)$',block)
+        if not line:return []
+        try:values[field]=json.loads(line.group(2))
+        except ValueError:return []
+        value=str(BIN) if field=='command' else ['mcp-image','--config',str(CONFIG)]
+        changes.append({'before':line.group(0),'after':line.group(1)+json.dumps(value)})
+    if not isinstance(values['command'],str) or not values['command'].endswith('/magpie.app/Contents/MacOS/magpie') or values['args']!=['mcp','image']:
+        return []
+    return changes
+
+def replace_codex_image(text, changes, reverse=False):
+    header=re.search(r'(?m)^\[mcp_servers\.(?:magpie-image|"magpie-image"|\x27magpie-image\x27)\][ \t]*$',text)
+    if not header:return text
+    end=re.search(r'(?m)^\[',text[header.end():]);stop=header.end()+end.start() if end else len(text)
+    block=text[header.end():stop]
+    for change in changes:
+        old,new=(change['after'],change['before']) if reverse else (change['before'],change['after'])
+        block=re.sub(r'(?m)^'+re.escape(old)+r'$',lambda _:new,block,count=1)
+    return text[:header.end()]+block+text[stop:]
 
 def owner():
     p = call(['/usr/sbin/lsof', '-nP', '-t', '-iTCP:3425', '-sTCP:LISTEN'], False)
@@ -77,6 +105,9 @@ def restore():
 
 def restore_files(journal):
     edited = {x['path'] for x in journal.get('edits',[])}
+    for item in journal.get('tomlEdits',[]):
+        p=Path(item['path']);edited.add(str(p))
+        if p.exists():atomic(p,replace_codex_image(p.read_text(),item['changes'],True).encode())
     for item in reversed(journal.get('edits',[])):
         p=Path(item['path'])
         if not p.exists():continue
@@ -123,7 +154,7 @@ def install():
     existing_proxy=json.loads(active.read_text()).get('egressProxyUrl') if active and active.exists() else None
     reuse_profile=existing_proxy=='http://'+cfg['listen']
     if not reuse_profile and 'hybridPointer' in d:raise RuntimeError('Desktop has a managed profile; configure its proxy through that policy')
-    for p in [base/'Claude/claude_desktop_config.json',HOME/'.claude.json',base/'Claude/config.json',base/'Claude-3p/config.json']:
+    for p in [base/'Claude/claude_desktop_config.json',base/'Claude-3p/claude_desktop_config.json',HOME/'.claude.json',base/'Claude/config.json',base/'Claude-3p/config.json']:
         if p.exists():json.loads(p.read_text())
     pid = owner(); wait_idle(pid)
     backup = ROOT/'backups'/datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -175,8 +206,18 @@ def install():
         changes += [(base/'Claude/config.json','deploymentMode','1p'),(base/'Claude-3p/config.json','deploymentMode','1p')]
         for p,k,v in changes:
             change(p,[k],v)
-        for p in [base/'Claude/claude_desktop_config.json',HOME/'.claude.json']:
+        mcp_files=[base/'Claude/claude_desktop_config.json',HOME/'.claude.json']
+        alternate=base/'Claude-3p/claude_desktop_config.json'
+        if alternate.exists():mcp_files.append(alternate)
+        for p in mcp_files:
             change(p,['mcpServers','magpie-image'],{'command':str(BIN),'args':['mcp-image','--config',str(CONFIG)]})
+        codex=HOME/'.codex/config.toml'
+        if codex.exists():
+            text=codex.read_text();changes=codex_image_changes(text)
+            if changes:
+                remember(codex);journal.setdefault('tomlEdits',[]).append({'path':str(codex),'changes':changes})
+                atomic(ROOT/'installation.json',json.dumps(journal,indent=2).encode())
+                atomic(codex,replace_codex_image(text,changes).encode())
         logs=HOME/'Library/Logs/Claude Login Proxy';logs.mkdir(parents=True,exist_ok=True,mode=0o700)
         agent={'Label':LABEL,'ProgramArguments':[str(BIN),'serve','--config',str(CONFIG)],'RunAtLoad':True,'KeepAlive':{'SuccessfulExit':False},'ThrottleInterval':10,'ExitTimeOut':60,'LimitLoadToSessionType':'Aqua','ProcessType':'Background','Umask':63,'StandardOutPath':str(logs/'service.log'),'StandardErrorPath':str(logs/'error.log')}
         remember(PLIST);atomic(PLIST,plistlib.dumps(agent))
@@ -194,5 +235,6 @@ def install():
         if stopped:call(['/usr/bin/open','-a',APP],False)
         raise
 
-if '--restore' in sys.argv:restore()
-else:install()
+if __name__=='__main__':
+    if '--restore' in sys.argv:restore()
+    else:install()
