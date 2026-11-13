@@ -118,7 +118,11 @@ def install():
     base=HOME/'Library/Application Support'
     meta=base/'Claude-3p/configLibrary/_meta.json'
     d=json.loads(meta.read_text()) if meta.exists() else {}
-    if 'hybridPointer' in d:raise RuntimeError('Desktop has a managed profile; configure its proxy through that policy')
+    applied=d.get('appliedId','')
+    active=meta.parent/(applied+'.json') if applied and '/' not in applied and '\\' not in applied else None
+    existing_proxy=json.loads(active.read_text()).get('egressProxyUrl') if active and active.exists() else None
+    reuse_profile=existing_proxy=='http://'+cfg['listen']
+    if not reuse_profile and 'hybridPointer' in d:raise RuntimeError('Desktop has a managed profile; configure its proxy through that policy')
     for p in [base/'Claude/claude_desktop_config.json',HOME/'.claude.json',base/'Claude/config.json',base/'Claude-3p/config.json']:
         if p.exists():json.loads(p.read_text())
     pid = owner(); wait_idle(pid)
@@ -164,7 +168,9 @@ def install():
         # The endpoint and trusted CAs are unchanged; existing Desktop login
         # profiles keep working. A fresh installation gets its own 1p profile.
         profile=base/'Claude-3p/configLibrary'/('claude-login-proxy.json')
-        for p,k,v in [(profile,'egressProxyUrl','http://'+cfg['listen']),(meta,'appliedId','claude-login-proxy'),(base/'Claude/config.json','deploymentMode','1p'),(base/'Claude-3p/config.json','deploymentMode','1p')]:
+        changes=[] if reuse_profile else [(profile,'egressProxyUrl','http://'+cfg['listen']),(meta,'appliedId','claude-login-proxy')]
+        changes += [(base/'Claude/config.json','deploymentMode','1p'),(base/'Claude-3p/config.json','deploymentMode','1p')]
+        for p,k,v in changes:
             change(p,[k],v)
         for p in [base/'Claude/claude_desktop_config.json',HOME/'.claude.json']:
             change(p,['mcpServers','magpie-image'],{'command':str(BIN),'args':['mcp-image','--config',str(CONFIG)]})

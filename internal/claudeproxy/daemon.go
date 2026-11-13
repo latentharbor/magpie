@@ -201,17 +201,40 @@ func run(ctx context.Context, path, version string, trust func(string, string) c
 			return err
 		}
 	}
-	socket := filepath.Join(filepath.Dir(path), "status.sock")
-	_ = os.Remove(socket) // service.lock establishes that no other owner serves it
+	// Darwin limits Unix socket paths to about 100 bytes. Configuration paths
+	// can be much longer, so publish a private locator to a short private folder.
+	runtimeDir, err := os.MkdirTemp("/tmp", "claude-login-proxy-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(runtimeDir)
+	socket := filepath.Join(runtimeDir, "status.sock")
 	ln, err := net.Listen("unix", socket)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(socket)
 	if err := os.Chmod(socket, 0o600); err != nil {
 		ln.Close()
 		return err
 	}
+	locator := filepath.Join(filepath.Dir(path), "status-path")
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".status-path-")
+	if err != nil {
+		ln.Close()
+		return err
+	}
+	defer os.Remove(temporary.Name())
+	_, writeErr := temporary.WriteString(socket + "\n")
+	closeErr := temporary.Close()
+	if writeErr != nil || closeErr != nil {
+		ln.Close()
+		return fmt.Errorf("cannot publish proxy status location")
+	}
+	if err := os.Rename(temporary.Name(), locator); err != nil {
+		ln.Close()
+		return err
+	}
+	defer os.Remove(locator)
 	control := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" || r.URL.Path != "/status" {
 			http.NotFound(w, r)
@@ -288,8 +311,13 @@ func mediaRelay(path string, transport http.RoundTripper) http.Handler {
 }
 
 func Status(ctx context.Context, path string) (map[string]any, error) {
+	location, err := os.ReadFile(filepath.Join(filepath.Dir(path), "status-path"))
+	if err != nil || len(location) > 1024 {
+		return nil, fmt.Errorf("standalone proxy is not running")
+	}
+	socket := strings.TrimSpace(string(location))
 	t := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(filepath.Dir(path), "status.sock"))
+		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
 	}}
 	defer t.CloseIdleConnections()
 	req, _ := http.NewRequestWithContext(ctx, "GET", "http://proxy/status", nil)

@@ -16,6 +16,11 @@ capabilities, or guarantee that every native feature works on another provider.
   unmap, on, off, and `usage gateway|official`. GUI and CLI use the same serialized configuration writer.
 - `gateway.Server.ListenAndServe`: starts the optional keeper only in the gateway process.
 
+The same TLS implementation is also hosted by the independent
+[Claude proxy client](claude-proxy-client.md), with its own configuration,
+certificate paths, lifecycle and NAS device key. Its optional authority callback
+renews leaf certificates without changing the CA or installing trust.
+
 Configuration is `claude-login.json` under Magpie's configuration directory,
 mode 0600. Fields are `enabled`, a literal loopback `listen` IP with a nonzero
 numeric port (default `127.0.0.1:3426`), and `models`, mapping exact Claude
