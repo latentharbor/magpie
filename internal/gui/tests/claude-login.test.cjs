@@ -53,6 +53,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ['chromium',
   assert.equal(await modal.locator('.login-target-error:not([hidden])').count(),0);
   const check=modal.locator('input[type=checkbox]').first();
   const usage=modal.locator('input[type=checkbox]').nth(1); await usage.check();await assert.doesNotReject(()=>check.waitFor());
+  const remote=modal.getByRole('checkbox',{name:await page.evaluate(()=>t('Let Remote magpie manage inference')),exact:true});await remote.check();
   await page.waitForFunction(()=>document.querySelector('.claude-login input[type=checkbox]').disabled);
   const org=modal.locator('input[placeholder="00000000-0000-0000-0000-000000000000"]'); await org.fill('11111111-2222-4333-8444-555555555555');
   const inputs=modal.locator('.login-mapping input');
@@ -62,12 +63,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ['chromium',
   await modal.locator('.login-certificate').getByText('SHA-256:',{exact:false}).waitFor();
   assert.equal(await inputs.nth(0).inputValue(),'claude-opus-5-5');assert.equal(await check.isDisabled(),true);
   await modal.locator('.bar button').nth(1).click();
-  assert.equal(await inputs.nth(1).inputValue(),'group/opus'); assert.equal(await usage.isChecked(),true);
+  assert.equal(await inputs.nth(1).inputValue(),'group/opus'); assert.equal(await usage.isChecked(),true); assert.equal(await remote.isChecked(),true);
   await modal.locator('.bar button').nth(2).click();
   assert.equal(await org.inputValue(),'11111111-2222-4333-8444-555555555555');
   await modal.locator('.bar button').last().click();
   await page.waitForFunction(()=>document.querySelector('.claude-login .bar button:last-child').disabled===false);
-  assert.deepEqual(posts,[{enabled:false,gatewayUsage:true,usageOrganization:'11111111-2222-4333-8444-555555555555',listen:'127.0.0.1:3426',models:{'claude-opus-5-5':'group/opus'}}]);
+  assert.deepEqual(posts,[{enabled:false,gatewayUsage:true,remoteInference:true,usageOrganization:'11111111-2222-4333-8444-555555555555',listen:'127.0.0.1:3426',models:{'claude-opus-5-5':'group/opus'}}]);
   await page.setViewportSize({width:420,height:760});
   await page.waitForTimeout(120);
   assert.equal(await modal.evaluate(e=>e.scrollWidth<=e.clientWidth+1),true);

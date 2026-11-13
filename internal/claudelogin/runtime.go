@@ -47,7 +47,7 @@ func ListenerBusy() (bool, error) {
 // proxy owner; a failed read never turns selected inference into passthrough.
 // Once started, disabling rules keeps the proxy reachable until Magpie exits,
 // so clients still configured to use it can reach the official service.
-func Keep(ctx context.Context, gateway string, official http.RoundTripper) {
+func Keep(ctx context.Context, gateway string, official http.RoundTripper, remote ...RemoteOptions) {
 	timer := time.NewTicker(time.Second)
 	defer timer.Stop()
 	for {
@@ -55,7 +55,7 @@ func Keep(ctx context.Context, gateway string, official http.RoundTripper) {
 		if err != nil {
 			setStatus(Status{Error: err.Error()})
 		} else if c.Enabled {
-			err = runOwned(ctx, c, gateway, official)
+			err = runOwned(ctx, c, gateway, official, remote...)
 			if ctx.Err() != nil {
 				return
 			}
@@ -71,7 +71,7 @@ func Keep(ctx context.Context, gateway string, official http.RoundTripper) {
 	}
 }
 
-func runOwned(ctx context.Context, c Config, gateway string, official http.RoundTripper) error {
+func runOwned(ctx context.Context, c Config, gateway string, official http.RoundTripper, remote ...RemoteOptions) error {
 	unlock, err := filelock.LockContext(ctx, Path()+".proxy.lock")
 	if err != nil {
 		return err
@@ -94,6 +94,9 @@ func runOwned(ctx context.Context, c Config, gateway string, official http.Round
 		return err
 	}
 	p := &Proxy{Authority: a, Config: Load, Gateway: u, Official: official, Local: &http.Transport{}}
+	if len(remote) > 0 {
+		p.Remote = remote[0]
+	}
 	if c.GatewayUsage && c.UsageOrganization != "" {
 		if !ReadWebCertificate().Trusted {
 			return fmt.Errorf("trust the separately prepared claude.ai quota CA before enabling organization usage")

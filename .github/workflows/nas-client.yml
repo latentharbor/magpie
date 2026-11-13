@@ -1,0 +1,110 @@
+name: NAS client integration
+on:
+  push:
+    branches: [feat/nas-login-relay-20261113]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: nas-client-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Format source on CI
+        run: |
+          gofmt -w $(git ls-files '*.go')
+          git diff -- '*.go' > "$RUNNER_TEMP/nas-format.patch"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nas-format
+          path: ${{ runner.temp }}/nas-format.patch
+      - name: Source formatting is committed
+        run: test ! -s "$RUNNER_TEMP/nas-format.patch"
+  integration:
+    needs: format
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Native bodies, credentials, cache ownership and cancellation
+        run: |
+          go test -race -tags nogui -count=20 -timeout 10m ./internal/claudelogin -run '^TestRemoteInference'
+          go test -race -tags nogui -timeout 10m ./internal/claudelogin
+      - name: Host resolver, shutdown ownership and saved settings
+        run: |
+          go test -race -tags nogui -count=20 -timeout 10m ./internal/gateway -run '^TestClaudeLoginRemote'
+          go test -tags nogui -timeout 10m ./internal/gui ./internal/agent ./internal/cli -run 'TestClaudeLogin|TestDesktopLogin|TestKeepClaude'
+      - name: Native requests must not silently return to the local router
+        if: runner.os == 'Linux'
+        run: |
+          cp internal/claudelogin/remote.go "$RUNNER_TEMP/remote.go"
+          trap 'cp "$RUNNER_TEMP/remote.go" internal/claudelogin/remote.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/claudelogin/remote.go')
+          s=p.read_text()
+          old='if !c.RemoteInference || selected == "" {'
+          assert s.count(old)==1
+          p.write_text(s.replace(old,'if true || !c.RemoteInference || selected == "" {'))
+          PY
+          if go test -tags nogui -timeout 2m ./internal/claudelogin -run '^TestRemoteInferenceKeepsNativeThreadsAndCacheTouch$' > "$RUNNER_TEMP/remote-negative.log" 2>&1; then
+            cat "$RUNNER_TEMP/remote-negative.log"
+            exit 1
+          fi
+          grep -F 'native remote request entered the local routing gateway' "$RUNNER_TEMP/remote-negative.log"
+      - name: A proxy stream must hold handover too
+        if: runner.os == 'Linux'
+        run: |
+          cp internal/gateway/claude_login_remote.go "$RUNNER_TEMP/remote-host.go"
+          trap 'cp "$RUNNER_TEMP/remote-host.go" internal/gateway/claude_login_remote.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/gateway/claude_login_remote.go')
+          s=p.read_text()
+          old='end := s.bridgeTurn()'
+          assert s.count(old)==1
+          p.write_text(s.replace(old,'end := func() {}'))
+          PY
+          if go test -tags nogui -timeout 2m ./internal/gateway -run '^TestClaudeLoginRemoteStreamsHoldOrdinaryAndHandoverRestarts$' > "$RUNNER_TEMP/ownership-negative.log" 2>&1; then
+            cat "$RUNNER_TEMP/ownership-negative.log"
+            exit 1
+          fi
+          grep -F 'remote TLS stream was not held across restarts' "$RUNNER_TEMP/ownership-negative.log"
+  ui:
+    needs: format
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+    env:
+      BROWSER: ${{ matrix.browser }}
+      NODE_PATH: ${{ github.workspace }}/.github/ui-preview/node_modules
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install the selected browser
+        run: |
+          npm install --ignore-scripts --no-package-lock --prefix .github/ui-preview
+          .github/ui-preview/node_modules/.bin/playwright install --with-deps "$BROWSER"
+      - name: Remote inference setting in five locales
+        run: node --test --test-timeout=600000 internal/gui/tests/claude-login.test.cjs

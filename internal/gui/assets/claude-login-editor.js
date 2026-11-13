@@ -14,6 +14,9 @@ async function showClaudeLoginEditor() {
   fields.append(...field(t("Proxy address"), address), ...field(t("Status"), enabledRow));
   const [usageRow, usage] = tick(t("Let Magpie manage Code usage"), false);
   fields.append(...field(t("Code usage"), usageRow));
+  const [remoteRow, remote] = tick(t("Let Remote magpie manage inference"), false);
+  fields.append(...field(t("Remote magpie"), remoteRow));
+  const remoteHint = el("p", "hint", t("Mapped Remote magpie models use the remote gateway's routing, limits and request history. Local models keep their local routing."));
   const usageHint = el("p", "hint", t("Shows local Code quota as available. Every Code model needs a Magpie mapping. Real usage and rotation stay in Magpie; an official subscription is still required."));
   const organization = input("", "00000000-0000-0000-0000-000000000000"); organization.setAttribute("aria-label", t("Usage organization UUID"));
   fields.append(...field(t("Usage organization UUID"), organization));
@@ -27,7 +30,7 @@ async function showClaudeLoginEditor() {
   const close = el("button", "text", t("Cancel"));
   const save = el("button", "text primary", t("Save"));
   const bar = el("div", "bar"); bar.append(prepare, refresh, prepareUsage, el("span", "grow"), close, save);
-  editor.append(head, explanation, fields, certificate, validation, usageHint, usageCertificate, mappings, add, mapProvider, message, bar);
+  editor.append(head, explanation, fields, remoteHint, certificate, validation, usageHint, usageCertificate, mappings, add, mapProvider, message, bar);
   openModal(editor);
   const addMapping = (from = "", target = "") => {
     const row = el("div", "login-mapping");
@@ -48,7 +51,7 @@ async function showClaudeLoginEditor() {
     row.append(source, el("span", "", "→"), destination, pick, remove, warning); mappings.append(row); validate();
   };
   const draw = (view, keepDraft = false) => {
-    if (!keepDraft) { address.value = view.config.listen; enabled.checked = view.config.enabled; usage.checked = !!view.config.gatewayUsage; organization.value = view.config.usageOrganization || ""; }
+    if (!keepDraft) { address.value = view.config.listen; enabled.checked = view.config.enabled; usage.checked = !!view.config.gatewayUsage; remote.checked = !!view.config.remoteInference; organization.value = view.config.usageOrganization || ""; }
     enabled.disabled = !view.certificate.trusted || !view.supported;
     certificate.replaceChildren(el("p", "", t(view.certificate.trusted ? "Local certificate is trusted" : "Local certificate needs your trust before enabling")), el("code", "", view.certificate.path));
     const quotaCA = view.usageCertificate;
@@ -113,7 +116,7 @@ async function showClaudeLoginEditor() {
     }
     save.disabled = true;
     try {
-      draw(await api("claude-login", { enabled: enabled.checked, gatewayUsage: usage.checked, usageOrganization: organization.value.trim(), listen: address.value.trim(), models }));
+      draw(await api("claude-login", { enabled: enabled.checked, gatewayUsage: usage.checked, remoteInference: remote.checked, usageOrganization: organization.value.trim(), listen: address.value.trim(), models }));
       message.textContent = t("Saved — quit and reopen Claude Desktop to see it");
     } catch (e) { message.textContent = e.message; }
     finally { save.disabled = false; }
