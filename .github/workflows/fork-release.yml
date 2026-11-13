@@ -35,6 +35,11 @@ jobs:
         github.event.workflow_run.head_repository.full_name == github.repository &&
         github.event.workflow_run.head_branch == 'main'))
     runs-on: ubuntu-latest
+    permissions:
+      # GitHub only lists unpublished releases to a token with push access.
+      # Keep draft version selection identical to the publisher's view.
+      contents: write
+      actions: read
     outputs:
       eligible: ${{ steps.gate.outputs.eligible }}
       sha: ${{ steps.gate.outputs.sha }}
@@ -98,7 +103,9 @@ jobs:
           set -euo pipefail
           test "$(go env GOARCH)" = "$ARCH"
           FLAGS="$(python3 build/fork_release.py flags "$VERSION")"
-          make app VERSION="$VERSION" LDFLAGS="$FLAGS"
+          # The generator executes on this runner; only the app is cross-built.
+          GOARCH="$(go env GOHOSTARCH)" make assets-pack
+          make -o assets-pack app VERSION="$VERSION" LDFLAGS="$FLAGS"
           expected="$ARCH"
           if [ "$ARCH" = amd64 ]; then expected=x86_64; fi
           test "$(lipo -archs magpie.app/Contents/MacOS/magpie)" = "$expected"
