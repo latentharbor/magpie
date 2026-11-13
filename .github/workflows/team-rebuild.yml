@@ -74,6 +74,7 @@ jobs:
       - name: Team and retained transports
         run: |
           go test -race -count=20 -timeout 10m ./internal/testenv
+          go test -race -tags nogui -count=100 -timeout 10m ./internal/plugin -run '^TestHost(CompletedHeadAfterEmptyQueueCheck|CompletionWithoutHeadStillFails|HeadKeepsTheAnswerWhenItCameWithTheHead)$'
           go test -race -count=20 -timeout 10m ./internal/claudeteam
           go test -tags nogui -timeout 20m ./internal/provider ./internal/gateway ./internal/agent ./internal/claudelogin ./internal/claudeanchor ./internal/update -run 'TestClaudeTeam|TestClaudeHTTP|TestClaudeThread|TestDesktopLogin|TestDistribution|TestKeepClaude|TestClaudeLogin'
       - name: Repeated coordination races
@@ -175,3 +176,22 @@ jobs:
             exit 1
           fi
           grep -F 'warm-up did not return after its deadline' "$RUNNER_TEMP/warmup-regression.log"
+      - name: Header ordering regression fails without its queue recheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/plugin/host.go "$RUNNER_TEMP/plugin-host.go"
+          trap 'cp "$RUNNER_TEMP/plugin-host.go" internal/plugin/host.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/plugin/host.go')
+          text = p.read_text()
+          block = '\tif hm, ok := c.pop(); ok {\n\t\treturn hm, answer, nil\n\t}\n'
+          assert text.count(block) == 1
+          p.write_text(text.replace(block, ''))
+          PY
+          if go test -tags nogui ./internal/plugin -run '^TestHostCompletedHeadAfterEmptyQueueCheck$' > "$RUNNER_TEMP/head-regression.log" 2>&1; then
+            cat "$RUNNER_TEMP/head-regression.log"
+            exit 1
+          fi
+          grep -F 'queued head lost after empty observation' "$RUNNER_TEMP/head-regression.log"

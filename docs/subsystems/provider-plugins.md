@@ -329,6 +329,14 @@ The GUI's plugin integration includes `subOf`, `pluginSubs`, and `startPluginSig
 
 ## Verification
 
+The host's response-header waiter rechecks its queue after observing a terminal
+answer (`completedHead` in `host.go`). A head and completion may both arrive
+after the waiter's initial empty observation; seeing completion alone must not
+turn that valid response into a 502. The header and queued body remain intact,
+and a terminal error still reaches the body reader. An answer without a head
+remains an error. `TestHostCompletedHeadAfterEmptyQueueCheck` forces this ordering,
+and the Grok drawing parity test exercises the full gateway/host path.
+
 Plugins may also declare a provider-independent `magpie.hooks` entry, including pure gateway packages and mixed provider/Pi packages. Its asynchronous request contract and verification are documented in [Gateway request hooks](gateway-request-hooks.md). Existing provider hooks still use their normal entry path.
 
 [`migrate_notice_test.go`](../../internal/provider/migrate_notice_test.go) includes `TestMovedBuiltinsSayTheirPlugin`, which checks that moved built-ins tell contributors which plugin serves them. Migration tests live beside [`migrate.go`](../../internal/provider/migrate.go).
