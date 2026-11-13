@@ -158,8 +158,23 @@ func TestClaudeSilentTurnFails(t *testing.T) {
 							t.Fatalf("17 images: status %d: %s", code, body)
 						}
 						code, body := send(18)
-						if code != 502 || !strings.Contains(body, past.why) {
-							t.Fatalf("18 images: status %d, not a 502 saying %q:\n%s", code, past.why, body)
+						// A keepalive may already have committed a stream's 200
+						// while the child exits. It must then end with the same
+						// failure in the client's protocol, never a success.
+						failed := code == 502
+						if stream && code == 200 && strings.Contains(body, ": keepalive") {
+							failed = strings.Contains(body, `"error":{`)
+							switch path {
+							case "/v1/responses":
+								failed = failed && strings.Contains(body, "event: response.failed") && !strings.Contains(body, "event: response.completed")
+							case "/v1/messages":
+								failed = failed && strings.Contains(body, "event: error") && !strings.Contains(body, "event: message_stop")
+							default:
+								failed = failed && !strings.Contains(body, "[DONE]")
+							}
+						}
+						if !failed || !strings.Contains(body, past.why) {
+							t.Fatalf("18 images: status %d, not a failure saying %q:\n%s", code, past.why, body)
 						}
 						if strings.Contains(body, `"content":null`) || strings.Contains(body, "saw 18") {
 							t.Fatalf("18 images: an answer of nothing:\n%s", body)

@@ -74,13 +74,20 @@ func TestQuietCodexStreamKeptAliveThroughReplyWriters(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.middleware {
-				mw := filepath.Join(t.TempDir(), "upper.middleware.js")
-				os.WriteFile(mw, []byte(`export function onEvent(ev) { if (ev.delta) ev.delta = ev.delta.toUpperCase(); return ev; }`), 0o644)
+				// Exercise the event writer without depending on a hook's
+				// 50ms CPU budget. A timed-out hook deliberately passes the
+				// event through; that must not invalidate a keepalive (#2565).
+				mw := filepath.Join(t.TempDir(), "pass.middleware.js")
+				os.WriteFile(mw, []byte(`export function onEvent(ev) { return ev; }`), 0o644)
 				b, _ := json.Marshal(plugin.List{Plugins: []plugin.Entry{{Spec: mw}}})
 				os.MkdirAll(settings.Dir(), 0o755)
 				os.WriteFile(filepath.Join(settings.Dir(), "plugins.json"), b, 0o644)
 				middleware.Reload()
 				t.Cleanup(middleware.Reload)
+				st := middleware.States()[mw]
+				if st.Error != "" || !strings.Contains(strings.Join(st.Hooks, ","), "onEvent") {
+					t.Fatalf("event middleware did not load: %+v", st)
+				}
 			}
 
 			gw := httptest.NewServer(New().Handler())
@@ -99,11 +106,7 @@ func TestQuietCodexStreamKeptAliveThroughReplyWriters(t *testing.T) {
 			if timedOut.Load() || resp.StatusCode != 200 || alive < 0 || words < alive {
 				t.Fatalf("the agent heard no keepalive while the vendor was quiet (held %v): %d %q", timedOut.Load(), resp.StatusCode, body)
 			}
-			hello := "hello"
-			if tc.middleware {
-				hello = "HELLO"
-			}
-			if !strings.Contains(body[alive:], hello) || !strings.Contains(body, "response.completed") {
+			if !strings.Contains(body[alive:], "hello") || !strings.Contains(body, "response.completed") {
 				t.Fatalf("the reply after the keepalives: %q", body)
 			}
 		})

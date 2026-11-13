@@ -158,6 +158,12 @@ jobs:
           go test -race -tags "${{ steps.tags.outputs.tags }}" ./internal/redact/
 
       # Account usage mixes cached results with concurrent fetches.
+      - name: Repeated stream failure and keepalive contracts
+        if: runner.os != 'Windows'
+        timeout-minutes: 25
+        shell: bash
+        run: go test -race -tags "${{ steps.tags.outputs.tags }}" -count=20 -timeout 20m ./internal/gateway -run '^(TestQuietCodexStreamKeptAliveThroughReplyWriters|TestClaudeSilentTurnFails|TestRelayUnendedReplyFails)$'
+
       - name: Race account usage
         if: runner.os != 'Windows'
         run: go test -race -tags "${{ steps.tags.outputs.tags }}" ./internal/provider/ -run '^Test(LoginUsage|SubscriptionUsageEachAccount)'
