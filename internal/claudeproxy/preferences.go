@@ -23,15 +23,15 @@ import (
 // Preferences is the native application's editing document. Keys are accepted
 // on input only; reads expose whether one is saved, never the credential itself.
 type Preferences struct {
-	Revision          string            `json:"revision"`
-	Exists            bool              `json:"exists"`
-	Enabled           bool              `json:"enabled"`
-	Listen            string            `json:"listen"`
-	MediaListen       string            `json:"mediaListen"`
-	Models            map[string]string `json:"models"`
-	GatewayUsage      bool              `json:"gatewayUsage"`
-	UsageOrganization string            `json:"usageOrganization"`
-	ImageUpstream     string            `json:"imageUpstream"`
+	Revision          string             `json:"revision"`
+	Exists            bool               `json:"exists"`
+	Enabled           bool               `json:"enabled"`
+	Listen            string             `json:"listen"`
+	MediaListen       string             `json:"mediaListen"`
+	Models            map[string]string  `json:"models"`
+	GatewayUsage      bool               `json:"gatewayUsage"`
+	UsageOrganization string             `json:"usageOrganization"`
+	ImageUpstream     string             `json:"imageUpstream"`
 	Servers           []ServerPreference `json:"servers"`
 }
 
@@ -282,7 +282,9 @@ func ProbeServer(ctx context.Context, path string, s ServerPreference) ([]string
 		return nil, fmt.Errorf("model catalog is too large or unreadable")
 	}
 	var catalog struct {
-		Data []struct { ID string `json:"id"` } `json:"data"`
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 	if json.Unmarshal(b, &catalog) != nil || catalog.Data == nil {
 		return nil, fmt.Errorf("server did not return a model catalog")

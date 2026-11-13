@@ -136,7 +136,7 @@ struct ProxyWindow: View {
                     Text("地址只填写协议、主机与端口，不要附加 /v1。密钥仅存于本机权限为 0600 的独立文件。")
                 }
             }
-        }.formStyle(.grouped)
+        }.formStyle(.grouped).disabled(model.busy)
     }
 
     private var models: some View {
@@ -175,7 +175,7 @@ struct ProxyWindow: View {
                     }
                 }
             }
-        }.formStyle(.grouped)
+        }.formStyle(.grouped).disabled(model.busy)
     }
 
     private var local: some View {
@@ -225,7 +225,7 @@ struct ProxyWindow: View {
                 Text("当前端口已被 Desktop 与旧图像工具引用，界面保留这些端口以避免断开现有连接。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-        }.formStyle(.grouped)
+        }.formStyle(.grouped).disabled(model.busy)
     }
 
     private func serverTitle(_ id: String) -> String {

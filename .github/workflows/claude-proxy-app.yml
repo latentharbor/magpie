@@ -55,6 +55,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir dist
+          swift build/claude-login-proxy/macos/Icon.swift "$RUNNER_TEMP/AppIcon.iconset"
+          iconutil -c icns "$RUNNER_TEMP/AppIcon.iconset" -o "$RUNNER_TEMP/AppIcon.icns"
           for arch in arm64 amd64; do
             swift_arch="$arch"
             if [ "$arch" = amd64 ]; then swift_arch=x86_64; fi
@@ -64,9 +66,12 @@ jobs:
             dir=build/claude-login-proxy/macos
             swiftc -swift-version 5 -O -parse-as-library -target "$swift_arch-apple-macos14.0" "$dir/ProxyModel.swift" "$dir/ProxyViews.swift" "$dir/ProxyApp.swift" -o "$app/Contents/MacOS/Claude Login Proxy"
             cp "$dir/Info.plist" "$app/Contents/Info.plist"
+            cp "$RUNNER_TEMP/AppIcon.icns" "$app/Contents/Resources/"
             GOARCH="$arch" CGO_ENABLED=1 go build -trimpath -ldflags '-s -w -X main.version=0.2.0' -o "$app/Contents/Resources/claude-login-proxy" ./cmd/claude-login-proxy
             cp LICENSE build/claude-login-proxy/install.py "$app/Contents/Resources/"
             cp build/claude-login-proxy/README.md "$pkg/README.md"
+            cp "$dir/Restore Magpie.command" "$pkg/Restore Magpie.command"
+            chmod 755 "$pkg/Restore Magpie.command"
             codesign --force --sign - "$app/Contents/Resources/claude-login-proxy"
             codesign --force --sign - "$app"
             codesign --verify --deep --strict "$app"

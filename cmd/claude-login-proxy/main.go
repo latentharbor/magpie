@@ -62,19 +62,29 @@ func run(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(v)
 	case "preferences":
 		v, err := claudeproxy.ReadPreferences(*path)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		return json.NewEncoder(os.Stdout).Encode(v)
 	case "save-preferences":
 		var p claudeproxy.Preferences
-		if err := decodeInput(&p); err != nil { return err }
+		if err := decodeInput(&p); err != nil {
+			return err
+		}
 		v, err := claudeproxy.SavePreferences(ctx, *path, p)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		return json.NewEncoder(os.Stdout).Encode(v)
 	case "probe-server":
 		var p claudeproxy.ServerPreference
-		if err := decodeInput(&p); err != nil { return err }
+		if err := decodeInput(&p); err != nil {
+			return err
+		}
 		v, err := claudeproxy.ProbeServer(ctx, *path, p)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		return json.NewEncoder(os.Stdout).Encode(v)
 	case "init":
 		var b []byte

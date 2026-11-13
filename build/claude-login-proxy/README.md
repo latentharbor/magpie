@@ -2,8 +2,9 @@
 
 A small macOS background client for a remote Magpie gateway. It keeps Claude
 Desktop's official login, routes selected inference to the NAS, handles local
-Code usage display, and forwards the image MCP tool. It has no GUI, subscription
-accounts, seat controller or local inference engine.
+Code usage display, and forwards the image MCP tool. A native settings window
+manages the independent background service. Neither component loads subscription
+accounts, a seat controller or a local inference engine.
 
 ## macOS application
 
@@ -30,7 +31,8 @@ changed. Each computer should have a separate NAS gateway key.
 
 ## Existing Magpie setup
 
-Run `Install.command`. It imports only the remote gateway key, exact model
+Use the service page's install button (or `Install.command` in the legacy 0.1
+command-line packages). Installation imports only the remote gateway key, exact model
 mappings and existing restricted certificates into
 `~/.config/claude-login-proxy`. It does not copy subscription credentials or add
 certificate trust. The installer waits for idle, backs up the changed files,
@@ -46,9 +48,16 @@ replacement for a general local inference gateway.
 
 ## Fresh computer
 
-Start Claude Desktop and sign in first. Create a device key on NAS, put it in a
-private file, then prepare the client (choose `--provider` when NAS has several
-Claude providers):
+Start Claude Desktop and sign in first. Create a device key on NAS, then open
+Claude Login Proxy. Add the server address and key, check its model catalog,
+and add exact Desktop-to-server model mappings. Save the configuration, inspect
+the certificates on the local settings page, and explicitly grant SSL trust in
+your login Keychain. Then use the service page's install button and reopen Claude
+Desktop to load the proxy configuration.
+
+For command-line setup, the helper is inside the app's `Contents/Resources`.
+Put the device key in a private file, then run (choose `--provider` when NAS has
+several Claude providers):
 
 ```sh
 ./claude-login-proxy init --gateway http://NAS:3425 --key-file /private/device-key --organization YOUR-DESKTOP-ORGANIZATION-UUID
@@ -59,8 +68,7 @@ The public CA files are `certs/api/ca.pem` and `certs/web/ca.pem` under the
 configuration directory. Inspect their fingerprints and explicitly grant SSL
 trust in the login Keychain before installing. Import only those public files;
 `authority.pem` contains a private key and stays on this computer. The installer
-does not change certificate trust or disable TLS validation. Then run
-`Install.command` and reopen Claude Desktop to load its proxy configuration.
+does not change certificate trust or disable TLS validation.
 
 ## Runtime
 

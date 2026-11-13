@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-@main struct ClaudeProxyApp: App {
+@main @MainActor struct ClaudeProxyApp: App {
     @StateObject private var model = ProxyModel()
     var body: some Scene {
         Window("Claude Login Proxy", id: "settings") {
