@@ -70,6 +70,7 @@ jobs:
           go test -tags nogui -timeout 10m ./ ./internal/gui ./internal/provider ./internal/gateway ./internal/agent ./internal/cli -run '^(TestNoEagerPackageRegexps|TestBuiltinSwitch|TestBootSaysBuiltinsOff|TestBuiltinsTranslated|TestBuiltinClientsLoaded|TestCoreScriptBudget|TestQuotaSpanCarriesEveryWindowField|TestKeySlotEveryRoute|TestReadOnlyKeyEveryRoute|TestEveryNoticeIsTranslated|TestEveryRouteHasACommandOrIsNamed)$'
           go test -tags nogui -timeout 10m ./internal/update
           go test -tags nogui -count=20 ./internal/usage -run '^TestAliasCallsAreTheGatewaysNotDirect$'
+          go test -tags nogui -count=20 -timeout 10m ./internal/sessions -run '^TestWSL(SessionsListed|StoppedDistroKept|StoppedSinceNotOpened)$'
       - name: Team and retained transports
         run: |
           go test -race -count=20 -timeout 10m ./internal/testenv

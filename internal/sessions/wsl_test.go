@@ -18,6 +18,14 @@ func wslSettle() {
 	}
 }
 
+// Content assertions need a finished snapshot. The first UI read is allowed
+// to return after wslFirstWait while discovery continues in the background.
+func listedWSLSessions() []Session {
+	wslFiles("claude", "codex")
+	wslSettle()
+	return List(0)
+}
+
 // wslDistro is a distro's home in a temp dir with Claude Code's, Codex's
 // Pi's and omp's sessions in it, and this computer's own folders empty;
 // WSLHomes says it runs while *running is true.
@@ -42,7 +50,7 @@ func wslDistro(t *testing.T) (home string, running *bool) {
 // with the distro, resumed there through wsl.exe; their calls count in usage.
 func TestWSLSessionsListed(t *testing.T) {
 	home, _ := wslDistro(t)
-	ss := List(0)
+	ss := listedWSLSessions()
 	got := map[string]Session{}
 	for _, s := range ss {
 		if s.WSL != "Ubuntu" || !strings.HasPrefix(s.Path, home) {
@@ -278,7 +286,7 @@ func TestWSLOmpProfiles(t *testing.T) {
 // opened: that would start it.
 func TestWSLStoppedDistroKept(t *testing.T) {
 	home, running := wslDistro(t)
-	if n := len(List(0)); n != 7 {
+	if n := len(listedWSLSessions()); n != 7 {
 		t.Fatalf("want the 7 sessions, got %d", n)
 	}
 	wslSettle()
@@ -314,7 +322,7 @@ func TestWSLStoppedSinceNotOpened(t *testing.T) {
 	up := true
 	WSLRunning = func(d string) bool { return d == "Ubuntu" && up }
 	t.Cleanup(func() { WSLRunning = nil })
-	if n := len(List(0)); n != 7 {
+	if n := len(listedWSLSessions()); n != 7 {
 		t.Fatalf("want the 7 sessions, got %d", n)
 	}
 	wslSettle()
