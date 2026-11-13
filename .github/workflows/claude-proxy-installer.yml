@@ -10,5 +10,62 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Preserve other MCP and model settings
         run: python3 -m unittest discover -s build/claude-login-proxy -p '*_test.py'
+      - name: Runtime matches the validated client
+        run: git diff --exit-code cd9d5b0e3fbab944bad43ef272d4408e25210ad0 HEAD -- go.mod go.sum cmd/claude-login-proxy internal/claudeproxy internal/claudelogin
+  package:
+    needs: installer
+    runs-on: macos-26-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Package the installer correction
+        run: |
+          set -euo pipefail
+          mkdir dist
+          for arch in arm64 amd64; do
+            dir="$RUNNER_TEMP/client-$arch"
+            mkdir -p "$dir"
+            GOARCH="$arch" CGO_ENABLED=1 go build -trimpath -ldflags '-s -w -X main.version=0.1.1' -o "$dir/claude-login-proxy" ./cmd/claude-login-proxy
+            codesign --force --sign - "$dir/claude-login-proxy"
+            codesign --verify --strict "$dir/claude-login-proxy"
+            cp LICENSE build/claude-login-proxy/README.md build/claude-login-proxy/install.py build/claude-login-proxy/*.command "$dir/"
+            chmod 755 "$dir/claude-login-proxy" "$dir/"*.command
+            ditto -c -k --keepParent "$dir" "dist/claude-login-proxy-0.1.1-darwin-$arch.zip"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proxy-installer-clients
+          path: dist/*
+  sign:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: proxy-installer-clients
+          path: dist
+      - name: Sign package metadata
+        env:
+          FORK_RELEASE_PRIVATE_KEY: ${{ secrets.FORK_RELEASE_PRIVATE_KEY }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,os
+          p=Path('dist');assets={}
+          for f in p.glob('*.zip'):
+            b=f.read_bytes();assets[f.name]={'size':len(b),'sha256':hashlib.sha256(b).hexdigest()}
+          assert len(assets)==2
+          (p/'latest.json').write_text(json.dumps({'product':'claude-login-proxy','version':'0.1.1','sourceCommit':os.environ['GITHUB_SHA'],'runtimeVerifiedAt':'cd9d5b0e3fbab944bad43ef272d4408e25210ad0','assets':assets},indent=2)+'\n')
+          PY
+          python3 build/fork_release.py sign dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proxy-installer-signed
+          path: dist/*
