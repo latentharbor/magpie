@@ -1,0 +1,14 @@
+name: Standalone installer compatibility
+on:
+  push:
+    branches: [fix/proxy-installer-entries-20261113]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preserve other MCP and model settings
+        run: python3 -m unittest discover -s build/claude-login-proxy -p '*_test.py'
