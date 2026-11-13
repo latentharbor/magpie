@@ -76,6 +76,15 @@ login state, and redirects the existing image MCP entry. Configuration rollback
 restores only JSON fields still owned by the installation. Certificates are
 copied on the same Mac and no system trust setting is changed.
 
+New Desktop profiles use canonical lowercase UUID filenames and the same UUID
+in `configLibrary/_meta.json.appliedId`. Desktop 5.11492.2 silently ignores the
+old `claude-login-proxy` slug. A valid active profile with the same proxy endpoint
+is retained byte-for-byte. Updating the client can migrate only this installer's
+legacy slug, preserving profile fields, unrelated metadata and the original file.
+The migration is recorded in the existing rollback journal; managed pointers
+and valid user profiles are left alone. `claude-proxy-profile.yml` verifies fresh
+installation, legacy migration, failure rollback and a negative naming case.
+
 Verification is the dedicated `claude-login-proxy.yml` workflow: dependency and
 vet checks, Linux/macOS proxy and MCP cases under the race detector, a negative
 drain mutation, Python installer syntax, and signed arm64/amd64 archives. Full

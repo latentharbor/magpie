@@ -1,0 +1,35 @@
+name: Claude proxy profile compatibility
+on:
+  push:
+    branches: [fix/proxy-profile-uuid-20261113]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fresh installation, legacy migration and rollback
+        run: python3 -m unittest discover -s build/claude-login-proxy -p '*_test.py' -v
+      - name: Confirm old profile naming fails the new regression
+        run: |
+          cp build/claude-login-proxy/install.py "$RUNNER_TEMP/install.py"
+          trap 'cp "$RUNNER_TEMP/install.py" build/claude-login-proxy/install.py' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('build/claude-login-proxy/install.py');s=p.read_text()
+          old='profile_id=str(uuid.uuid4())'
+          assert s.count(old)==1
+          p.write_text(s.replace(old,'profile_id=LEGACY_PROFILE_ID'))
+          PY
+          if python3 -m unittest discover -s build/claude-login-proxy -p '*_test.py' > "$RUNNER_TEMP/negative.log" 2>&1; then
+            cat "$RUNNER_TEMP/negative.log"; exit 1
+          fi
+          grep -F 'test_fresh_install_creates_a_desktop_readable_profile' "$RUNNER_TEMP/negative.log"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validated-installer-source
+          path: |
+            build/claude-login-proxy/install.py
+            build/claude-login-proxy/install_test.py

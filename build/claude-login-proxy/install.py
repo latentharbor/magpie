@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import uuid
 
 HOME = Path.home()
 SOURCE = Path(__file__).resolve().parent / 'claude-login-proxy'
@@ -22,6 +23,54 @@ PLIST = HOME / 'Library/LaunchAgents' / (LABEL + '.plist')
 DOMAIN = 'gui/' + str(os.getuid())
 MAGPIE = HOME / '.config/magpie'
 APP = Path('/Applications/magpie.app')
+LEGACY_PROFILE_ID = 'claude-login-proxy'
+
+def valid_profile_id(value):
+    if not isinstance(value,str):return False
+    try:return str(uuid.UUID(value))==value
+    except ValueError:return False
+
+def record_file(journal, path):
+    if any(x['path']==str(path) for x in journal['files']):return
+    copy=Path(journal['backup'])/('file-'+uuid.uuid4().hex)
+    mode=0o600
+    if path.exists():
+        mode=path.stat().st_mode&0o777;shutil.copy2(path,copy);saved=str(copy)
+    else:saved=None
+    journal['files'].append({'path':str(path),'copy':saved,'mode':mode})
+    atomic(ROOT/'installation.json',json.dumps(journal,indent=2).encode())
+
+def change_field(journal, path, keys, value):
+    record_file(journal,path)
+    data=json.loads(path.read_text()) if path.exists() else {};parent=data
+    for key in keys[:-1]:parent=parent.setdefault(key,{})
+    key=keys[-1]
+    journal.setdefault('edits',[]).append({'path':str(path),'keys':keys,'had':key in parent,'before':parent.get(key),'after':value})
+    atomic(ROOT/'installation.json',json.dumps(journal,indent=2).encode())
+    parent[key]=value;atomic(path,json.dumps(data,indent=2).encode())
+
+def repair_legacy_profile():
+    """Repair only this installer's old slug; do not rewrite valid/user profiles."""
+    meta=HOME/'Library/Application Support/Claude-3p/configLibrary/_meta.json'
+    if not meta.exists():return False
+    before=meta.read_bytes();data=json.loads(before)
+    if data.get('appliedId')!=LEGACY_PROFILE_ID or data.get('hybridPointer'):return False
+    old=meta.parent/(LEGACY_PROFILE_ID+'.json')
+    profile=json.loads(old.read_text())
+    if not isinstance(profile,dict) or not isinstance(profile.get('egressProxyUrl'),str):
+        raise RuntimeError('Legacy proxy profile is unreadable; no configuration changed')
+    journal_path=ROOT/'installation.json';journal_before=journal_path.read_bytes();journal=json.loads(journal_before)
+    new_id=str(uuid.uuid4());new_path=meta.parent/(new_id+'.json')
+    try:
+        for key,value in profile.items():change_field(journal,new_path,[key],value)
+        if meta.read_bytes()!=before:raise RuntimeError('Desktop configuration changed during repair; retry when settings are idle')
+        change_field(journal,meta,['appliedId'],new_id)
+        return True
+    except Exception:
+        # The new profile wasn't active until the last atomic metadata write.
+        new_path.unlink(missing_ok=True)
+        atomic(journal_path,journal_before)
+        raise
 
 def call(args, required=True):
     p = subprocess.run([str(x) for x in args], capture_output=True, text=True)
@@ -153,7 +202,7 @@ def install():
     applied=d.get('appliedId','')
     active=meta.parent/(applied+'.json') if applied and '/' not in applied and '\\' not in applied else None
     existing_proxy=json.loads(active.read_text()).get('egressProxyUrl') if active and active.exists() else None
-    reuse_profile=existing_proxy=='http://'+cfg['listen']
+    reuse_profile=valid_profile_id(applied) and existing_proxy=='http://'+cfg['listen']
     if not reuse_profile and 'hybridPointer' in d:raise RuntimeError('Desktop has a managed profile; configure its proxy through that policy')
     for p in [base/'Claude/claude_desktop_config.json',base/'Claude-3p/claude_desktop_config.json',HOME/'.claude.json',base/'Claude/config.json',base/'Claude-3p/config.json']:
         if p.exists():json.loads(p.read_text())
@@ -162,22 +211,9 @@ def install():
     backup.mkdir(parents=True,mode=0o700)
     journal = {'files':[], 'edits':[], 'backup':str(backup)}
     def remember(p):
-        if any(x['path']==str(p) for x in journal['files']):return
-        copy = backup/str(len(journal['files']))
-        mode = 0o600
-        if p.exists():
-            mode=p.stat().st_mode&0o777;shutil.copy2(p,copy)
-            saved=str(copy)
-        else: saved=None
-        journal['files'].append({'path':str(p),'copy':saved,'mode':mode})
-        atomic(ROOT/'installation.json',json.dumps(journal,indent=2).encode())
+        record_file(journal,p)
     def change(p,keys,value):
-        remember(p);d=json.loads(p.read_text()) if p.exists() else {};parent=d
-        for k in keys[:-1]:parent=parent.setdefault(k,{})
-        key=keys[-1]
-        journal['edits'].append({'path':str(p),'keys':keys,'had':key in parent,'before':parent.get(key),'after':value})
-        atomic(ROOT/'installation.json',json.dumps(journal,indent=2).encode())
-        parent[key]=value;atomic(p,json.dumps(d,indent=2).encode())
+        change_field(journal,p,keys,value)
     stopped = False
     try:
         if pid:
@@ -202,8 +238,10 @@ def install():
             change(p,['enabled'],False)
         # The endpoint and trusted CAs are unchanged; existing Desktop login
         # profiles keep working. A fresh installation gets its own 1p profile.
-        profile=base/'Claude-3p/configLibrary'/('claude-login-proxy.json')
-        changes=[] if reuse_profile else [(profile,'egressProxyUrl','http://'+cfg['listen']),(meta,'appliedId','claude-login-proxy')]
+        profile_id=str(uuid.uuid4())
+        profile=base/'Claude-3p/configLibrary'/(profile_id+'.json')
+        inherited=json.loads(active.read_text()) if applied==LEGACY_PROFILE_ID and active and active.exists() else {}
+        changes=[] if reuse_profile else [(profile,k,v) for k,v in inherited.items() if k!='egressProxyUrl']+[(profile,'egressProxyUrl','http://'+cfg['listen']),(meta,'appliedId',profile_id)]
         changes += [(base/'Claude/config.json','deploymentMode','1p'),(base/'Claude-3p/config.json','deploymentMode','1p')]
         for p,k,v in changes:
             change(p,[k],v)
@@ -263,6 +301,7 @@ def upgrade():
         for _ in range(40):
             result=call([BIN,'status'],False)
             if result.returncode==0 and json.loads(result.stdout).get('running'):
+                repair_legacy_profile()
                 atomic(ROOT/'maintenance/install.py',Path(__file__).read_bytes())
                 print(result.stdout.strip());return
             time.sleep(0.5)
