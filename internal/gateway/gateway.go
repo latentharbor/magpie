@@ -885,7 +885,10 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	// Disabled installations create neither a listener nor a certificate.
 	loginCtx, stopLogin := context.WithCancel(ctx)
 	loginDone := make(chan struct{})
-	go func() { defer close(loginDone); claudelogin.Keep(loginCtx, URL(), http.DefaultTransport, s.claudeLoginRemote()) }()
+	go func() {
+		defer close(loginDone)
+		claudelogin.Keep(loginCtx, URL(), http.DefaultTransport, s.claudeLoginRemote())
+	}()
 	defer func() { stopLogin(); <-loginDone }()
 	// and signs Codex and Claude Code in to their next account when the
 	// one they are on is spent
