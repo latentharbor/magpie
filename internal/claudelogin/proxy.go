@@ -37,10 +37,10 @@ type Proxy struct {
 	Remote       RemoteOptions
 	// AuthorityForHost refreshes leaf certificates without replacing the CA.
 	AuthorityForHost func(context.Context, string) (*Authority, error)
-	mu           sync.Mutex
-	conns        map[net.Conn]struct{}
-	closed       bool
-	requests     claudeanchor.Store[string]
+	mu               sync.Mutex
+	conns            map[net.Conn]struct{}
+	closed           bool
+	requests         claudeanchor.Store[string]
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {

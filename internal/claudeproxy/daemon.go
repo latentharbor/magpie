@@ -175,7 +175,7 @@ func run(ctx context.Context, path, version string, trust func(string, string) c
 	tracked := countedTransport{base: transport, jobs: jobs}
 	p := &claudelogin.Proxy{Authority: a, AuthorityForHost: certs.get, Local: tracked,
 		Official: countedTransport{base: http.DefaultTransport, jobs: jobs},
-		Config: func() (claudelogin.Config, error) { c, err := load(); return c.ProxyConfig(), err },
+		Config:   func() (claudelogin.Config, error) { c, err := load(); return c.ProxyConfig(), err },
 		Remote: claudelogin.RemoteOptions{Begin: func() func() { return func() {} }, Resolve: func(ctx context.Context, selected string) (*claudelogin.RemoteTarget, error) {
 			c, err := load()
 			if err != nil || !c.Enabled {
@@ -212,8 +212,11 @@ func run(ctx context.Context, path, version string, trust func(string, string) c
 		ln.Close()
 		return err
 	}
-	control := &http.Server{ReadHeaderTimeout: 5*time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" || r.URL.Path != "/status" { http.NotFound(w, r); return }
+	control := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/status" {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"version": version, "running": ready.Load(), "activeRequests": jobs.count(), "listen": initial.Listen})
 	})}
@@ -223,13 +226,17 @@ func run(ctx context.Context, path, version string, trust func(string, string) c
 	defer cancel()
 	if initial.MediaListen != "" {
 		mediaLn, err := net.Listen("tcp", initial.MediaListen)
-		if err != nil { return err }
-		media := &http.Server{ReadHeaderTimeout: 10*time.Second, Handler: mediaRelay(path, tracked)}
+		if err != nil {
+			return err
+		}
+		media := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: mediaRelay(path, tracked)}
 		go media.Serve(mediaLn)
 		defer media.Close()
 	}
 	done := make(chan error, 1)
-	go func() { done <- claudelogin.ServeReady(serveCtx, initial.ProxyConfig(), p, func(){ready.Store(true)}) }()
+	go func() {
+		done <- claudelogin.ServeReady(serveCtx, initial.ProxyConfig(), p, func() { ready.Store(true) })
+	}()
 	select {
 	case err := <-done:
 		return err
@@ -246,33 +253,52 @@ func run(ctx context.Context, path, version string, trust func(string, string) c
 func mediaRelay(path string, transport http.RoundTripper) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() || r.Header.Get("Origin") != "" { http.Error(w,"local clients only",403); return }
-		allowed := r.URL.Path == "/mcp/magpie/image" || r.URL.Path == "/v1/images/generations" || r.URL.Path == "/v1/images/edits" || r.URL.Path == "/v1/models" || r.URL.Path == "/v1/videos" || strings.HasPrefix(r.URL.Path,"/v1/videos/")
-		if !allowed || (r.Method != "POST" && r.Method != "GET") { http.NotFound(w,r); return }
+		if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() || r.Header.Get("Origin") != "" {
+			http.Error(w, "local clients only", 403)
+			return
+		}
+		allowed := r.URL.Path == "/mcp/magpie/image" || r.URL.Path == "/v1/images/generations" || r.URL.Path == "/v1/images/edits" || r.URL.Path == "/v1/models" || r.URL.Path == "/v1/videos" || strings.HasPrefix(r.URL.Path, "/v1/videos/")
+		if !allowed || (r.Method != "POST" && r.Method != "GET") {
+			http.NotFound(w, r)
+			return
+		}
 		c, err := Load(path)
-		if err != nil { http.Error(w,"proxy configuration unavailable",503); return }
-		u,key,err := upstream(path,c,c.ImageUpstream)
-		if err != nil { http.Error(w,"image gateway unavailable",503); return }
-		r.Body = http.MaxBytesReader(w,r.Body,64<<20)
+		if err != nil {
+			http.Error(w, "proxy configuration unavailable", 503)
+			return
+		}
+		u, key, err := upstream(path, c, c.ImageUpstream)
+		if err != nil {
+			http.Error(w, "image gateway unavailable", 503)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
 		proxy := &httputil.ReverseProxy{Transport: transport, FlushInterval: -1, Rewrite: func(pr *httputil.ProxyRequest) {
-			pr.SetURL(u); pr.Out.Host=u.Host
-			pr.Out.Header.Del("Cookie"); pr.Out.Header.Del("X-Api-Key"); pr.Out.Header.Del("Proxy-Authorization")
-			pr.Out.Header.Set("Authorization","Bearer "+key)
-		}, ErrorHandler: func(w http.ResponseWriter,r *http.Request,err error){http.Error(w,"image gateway unavailable",502)}}
-		proxy.ServeHTTP(w,r)
+			pr.SetURL(u)
+			pr.Out.Host = u.Host
+			pr.Out.Header.Del("Cookie")
+			pr.Out.Header.Del("X-Api-Key")
+			pr.Out.Header.Del("Proxy-Authorization")
+			pr.Out.Header.Set("Authorization", "Bearer "+key)
+		}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, "image gateway unavailable", 502)
+		}}
+		proxy.ServeHTTP(w, r)
 	})
 }
 
 func Status(ctx context.Context, path string) (map[string]any, error) {
-	t := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn,error) {
-		return (&net.Dialer{}).DialContext(ctx,"unix",filepath.Join(filepath.Dir(path),"status.sock"))
+	t := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(filepath.Dir(path), "status.sock"))
 	}}
 	defer t.CloseIdleConnections()
-	req,_ := http.NewRequestWithContext(ctx,"GET","http://proxy/status",nil)
-	res,err := (&http.Client{Transport:t,Timeout:5*time.Second}).Do(req)
-	if err != nil { return nil,fmt.Errorf("standalone proxy is not running") }
+	req, _ := http.NewRequestWithContext(ctx, "GET", "http://proxy/status", nil)
+	res, err := (&http.Client{Transport: t, Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("standalone proxy is not running")
+	}
 	defer res.Body.Close()
 	var v map[string]any
-	err=json.NewDecoder(io.LimitReader(res.Body,8192)).Decode(&v)
-	return v,err
+	err = json.NewDecoder(io.LimitReader(res.Body, 8192)).Decode(&v)
+	return v, err
 }
