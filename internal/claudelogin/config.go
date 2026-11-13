@@ -26,6 +26,7 @@ type Config struct {
 	Models            map[string]string `json:"models"`
 	UsageOrganization string            `json:"usageOrganization,omitempty"`
 	GatewayUsage      bool              `json:"gatewayUsage,omitempty"`
+	RemoteInference   bool              `json:"remoteInference,omitempty"`
 }
 
 func WebCertDir() string { return filepath.Join(appdir.Config(), "claude-login-web-ca") }

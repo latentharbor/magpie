@@ -132,6 +132,34 @@ fall through to paid official inference. A gateway refusal or transport failure
 also never retries through the official subscription. SSE is flushed as received,
 and cancelling a Desktop stream cancels the gateway request.
 
+### Remote inference ownership
+
+`remoteInference` is an explicit opt-in (`magpie claude-login remote on`, or
+"Let Remote magpie manage inference" in the editor). For exact model mappings
+to a **Remote magpie** provider, the local proxy reads that provider's current
+URL and device key through an injected host resolver. It sends the native body
+directly to that gateway, changing only the model from its local provider/model
+reference to the model name the remote serves. Native Thread continuations,
+thinking signatures, cache markers, and owned `cache_touch` bodies are retained.
+The ordinary second routing hop would reject Threads and would not own the
+remote inference account's cache records. Groups and local providers still
+use the local router.
+
+This mode uses the remote gateway's routing, limits and request history for
+those remote models. Local gateway middleware and routing rules are not applied
+to that direct path. The device key is reused from the provider store, never
+copied into the login configuration or official headers. Missing, disabled or
+invalid destinations fail closed; no official subscription fallback occurs.
+Official login and quota handling remain local, and CA private keys stay on
+the client. Each remote gateway should issue a separate inference key per device.
+
+Direct proxy requests count as both in-flight and process-owned work in the
+host. Update/quit and gateway handover must wait for them: a local TLS stream
+cannot be moved to the replacement process. Cancellation releases that count
+and cancels the remote request. The NAS alone owns its Team controller and
+inference credentials; a client must stop controlling that same organization
+before its NAS copy is enabled.
+
 ### Gateway-managed local Code usage
 
 The opt-in `gatewayUsage` setting (`magpie claude-login usage gateway`) answers

@@ -34,6 +34,7 @@ type Proxy struct {
 	Gateway      *url.URL
 	Official     http.RoundTripper
 	Local        http.RoundTripper
+	Remote       RemoteOptions
 	mu           sync.Mutex
 	conns        map[net.Conn]struct{}
 	closed       bool
@@ -214,6 +215,7 @@ func (p *Proxy) inference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	selected := ""
+	var remote *RemoteTarget
 	if r.Method == http.MethodGet && r.URL.Path == "/api/oauth/usage" {
 		cfg, err := p.Config()
 		if err != nil || cfg.Validate() != nil {
@@ -285,6 +287,11 @@ func (p *Proxy) inference(w http.ResponseWriter, r *http.Request) {
 						http.Error(w, "Claude cache model is no longer mapped", http.StatusNotFound)
 						return
 					}
+					remote, err = p.remoteTarget(r.Context(), cfg, selected)
+					if err != nil {
+						http.Error(w, "Claude remote gateway unavailable", http.StatusServiceUnavailable)
+						return
+					}
 					r.Body = io.NopCloser(bytes.NewReader(decoded))
 					r.ContentLength = int64(len(decoded))
 					r.Header.Del("Content-Encoding")
@@ -307,10 +314,19 @@ func (p *Proxy) inference(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				if selected != "" {
+					remote, err = p.remoteTarget(r.Context(), cfg, selected)
+					if err != nil {
+						http.Error(w, "Claude remote gateway unavailable", http.StatusServiceUnavailable)
+						return
+					}
+					model := selected
+					if remote != nil {
+						model = remote.Model
+					}
 					// Change the routing field alone. Marshaling RawMessages
 					// compacts every nested value and rewrites the client's
 					// otherwise untouched tools, signed blocks and cache prefix.
-					decoded, err = sjson.SetBytes(decoded, "model", selected)
+					decoded, err = sjson.SetBytes(decoded, "model", model)
 					if err != nil {
 						http.Error(w, "cannot encode inference", 500)
 						return
@@ -328,6 +344,11 @@ func (p *Proxy) inference(w http.ResponseWriter, r *http.Request) {
 	if selected != "" {
 		base = p.Gateway
 		transport = p.Local
+		if remote != nil {
+			base = remote.URL
+			end := p.Remote.Begin()
+			defer end()
+		}
 	}
 	if transport == nil {
 		transport = http.DefaultTransport
@@ -346,6 +367,9 @@ func (p *Proxy) inference(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			clean.Set("Authorization", "Bearer magpie-claude-desktop")
+			if remote != nil {
+				clean.Set("Authorization", "Bearer "+remote.Key)
+			}
 			pr.Out.Header = clean
 		}
 	}, Transport: transport, FlushInterval: -1, ModifyResponse: func(res *http.Response) error {

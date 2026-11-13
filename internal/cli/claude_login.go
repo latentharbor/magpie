@@ -20,6 +20,7 @@ const claudeLoginUsage = `magpie claude-login — keep Claude's official login (
   magpie claude-login usage-organization <UUID|none>
   magpie claude-login prepare-usage    prepare separate claude.ai quota CA; does not install trust
   magpie claude-login usage gateway|official  choose local Code quota handling
+  magpie claude-login remote on|off    let mapped Remote magpie providers own inference
 
 Only api.anthropic.com /v1/messages and /v1/messages/count_tokens are routed.
 Optional gateway usage answers local Code quota checks; all Code models then
@@ -53,6 +54,8 @@ func claudeLoginCmd(args []string) error {
 		return err
 	}
 	switch {
+	case len(args) == 2 && args[0] == "remote" && (args[1] == "on" || args[1] == "off"):
+		c.RemoteInference = args[1] == "on"
 	case len(args) == 2 && args[0] == "usage-organization":
 		c.UsageOrganization = args[1]
 		if args[1] == "none" {

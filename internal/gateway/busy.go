@@ -21,7 +21,9 @@ import (
 // Bridge and BridgeLast are the same for the bridge's turns alone, which
 // a restart that hands the gateway over (handover.go) still waits for:
 // their Claude Code lives in this process, and only here can the turn go
-// on. Every other request finishes in the magpie that hands over while
+// on. Direct remote inference through the official-login TLS proxy is
+// included too: its live TLS streams belong to this process. Other requests
+// finish in the magpie that hands over while
 // the new one takes the next.
 type Busy struct {
 	Requests   int       `json:"requests"`
