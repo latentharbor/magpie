@@ -1,0 +1,32 @@
+name: Verify WSL fixture readiness
+on:
+  push:
+    branches: [probe/wsl-readiness-20261113]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  readiness:
+    runs-on: macos-26-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: All WSL session behaviors
+        run: go test -tags nogui -count=1 -timeout 10m ./internal/sessions -run '^TestWSL' -v
+      - name: First read may return immediately before discovery finishes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/sessions/wsl.go')
+          text=p.read_text()
+          before='wslFirstWait = 3 * time.Second'
+          assert text.count(before)==1
+          p.write_text(text.replace(before,'wslFirstWait = 0 * time.Second'))
+          PY
+          go test -tags nogui -count=20 -timeout 15m ./internal/sessions -run '^TestWSL(SessionsListed|StoppedDistroKept|StoppedSinceNotOpened)$' -v
