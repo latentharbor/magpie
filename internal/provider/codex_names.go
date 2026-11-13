@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"regexp"
+	"unsafe"
 
 	"github.com/tidwall/gjson"
+
+	"github.com/yetone/magpie/internal/lazyre"
 )
 
 // The ChatGPT backend checks every tool name a request carries, a call's
@@ -23,7 +25,7 @@ import (
 // conversation that worked is sent byte for byte as before.
 
 // codexNameOK is a name the ChatGPT backend takes.
-var codexNameOK = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+var codexNameOK = lazyre.New(`^[a-zA-Z0-9_.-]+$`)
 
 // CodexToolName is name as the ChatGPT backend takes it: as it is when
 // it is valid, else each character the backend refuses as "_", cut to
@@ -109,7 +111,9 @@ func codexNamesBad(body []byte) bool {
 			return !bad
 		})
 	}
-	top := gjson.GetManyBytes(body, "tools", "input", "tool_choice")
+	// read in place: GetManyBytes copies each value it finds, the input
+	// whole, which is the body's size (hundreds of MB with Codex's images)
+	top := gjson.GetMany(unsafe.String(unsafe.SliceData(body), len(body)), "tools", "input", "tool_choice")
 	tools(top[0])
 	top[1].ForEach(func(_, it gjson.Result) bool {
 		switch it.Get("type").String() {

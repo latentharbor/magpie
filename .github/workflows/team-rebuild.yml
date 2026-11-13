@@ -1,0 +1,177 @@
+name: Team module rebuild
+on:
+  push:
+    branches: ['rebuild/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: team-rebuild-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+    env:
+      BROWSER: ${{ matrix.browser }}
+      NODE_PATH: ${{ github.workspace }}/.github/ui-preview/node_modules
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install browser fixtures
+        run: |
+          npm install --ignore-scripts --no-package-lock --prefix .github/ui-preview
+          .github/ui-preview/node_modules/.bin/playwright install --with-deps "$BROWSER"
+      - name: Team and Desktop login UI
+        run: node --test --test-concurrency=2 --test-timeout=600000 internal/gui/tests/claude-team.test.cjs internal/gui/tests/claude-login.test.cjs internal/gui/tests/claude-transport-setting.test.cjs
+  compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Resolve dependency graph
+        timeout-minutes: 15
+        env:
+          GODEBUG: http2client=0
+        run: |
+          for attempt in 1 2 3; do
+            go mod tidy && exit 0
+            sleep 2
+          done
+          exit 1
+      - name: Format migrated source on CI
+        run: |
+          gofmt -w $(git ls-files '*.go')
+          git diff -- '*.go' > "$RUNNER_TEMP/source-format.patch"
+      - name: Retain resolved modules
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebuild-modules
+          path: |
+            go.mod
+            go.sum
+            ${{ runner.temp }}/source-format.patch
+      - name: Compile every package and its tests
+        run: go test -tags nogui -run '^$' ./...
+      - name: Upstream integration guards
+        run: |
+          go test -tags nogui -timeout 10m ./ ./internal/gui ./internal/provider ./internal/gateway ./internal/agent ./internal/cli -run '^(TestNoEagerPackageRegexps|TestBuiltinSwitch|TestBootSaysBuiltinsOff|TestBuiltinsTranslated|TestBuiltinClientsLoaded|TestCoreScriptBudget|TestQuotaSpanCarriesEveryWindowField|TestKeySlotEveryRoute|TestReadOnlyKeyEveryRoute|TestEveryNoticeIsTranslated|TestEveryRouteHasACommandOrIsNamed)$'
+          go test -tags nogui -timeout 10m ./internal/update
+          go test -tags nogui -count=20 ./internal/usage -run '^TestAliasCallsAreTheGatewaysNotDirect$'
+          go test -tags nogui -count=20 -timeout 10m ./internal/sessions -run '^TestWSL(SessionsListed|StoppedDistroKept|StoppedSinceNotOpened)$'
+      - name: Team and retained transports
+        run: |
+          go test -race -count=20 -timeout 10m ./internal/testenv
+          go test -race -count=20 -timeout 10m ./internal/claudeteam
+          go test -tags nogui -timeout 20m ./internal/provider ./internal/gateway ./internal/agent ./internal/claudelogin ./internal/claudeanchor ./internal/update -run 'TestClaudeTeam|TestClaudeHTTP|TestClaudeThread|TestDesktopLogin|TestDistribution|TestKeepClaude|TestClaudeLogin'
+      - name: Repeated coordination races
+        run: |
+          go test -race -tags nogui -count=100 -timeout 10m ./internal/gui -run '^TestPluginPageService(EarlyResponse|Proxied)$'
+          go test -race -tags nogui -count=100 -timeout 10m ./internal/gateway -run '^Test(BodyStalledByFlowControlIsGivenUp|MCPRelayBodyStalledIsGivenUp|StallVendorCountsOnlyItsRequest)$'
+          go test -race -tags nogui -count=20 -timeout 20m ./internal/provider -run '^(TestClaudeTeamRefusalDuringReconcileKeepsHandoffPending|TestClaudeTeamControllerWaitsForPreviousOwner|TestClaudeTeamDrainMultipleSeatsAndLostResponses)$'
+          go test -race -tags nogui -count=20 -timeout 20m ./internal/gateway -run '^(TestClaudeTeam|TestUnroutedTimerKeepsItsOwnCaller|TestGatewayWaitsForHubPruner|TestInfoSaysMCPHub|TestHandedOverGatewayFinishesItsStream)'
+      - name: Snapshot regression fails without the fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/gateway/unrouted.go "$RUNNER_TEMP/unrouted.go"
+          trap 'cp "$RUNNER_TEMP/unrouted.go" internal/gateway/unrouted.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/gateway/unrouted.go')
+          text = p.read_text()
+          assert text.count('u.r = r.Clone(r.Context())') == 1
+          p.write_text(text.replace('u.r = r.Clone(r.Context())', 'u.r = r'))
+          PY
+          if go test -tags nogui ./internal/gateway -run '^TestUnroutedTimerKeepsItsOwnCaller$' > "$RUNNER_TEMP/snapshot-regression.log" 2>&1; then
+            cat "$RUNNER_TEMP/snapshot-regression.log"
+            exit 1
+          fi
+          grep -F "handler mutations reached the timer's caller snapshot" "$RUNNER_TEMP/snapshot-regression.log"
+      - name: Pruner shutdown regression fails without joining
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/gateway/gateway.go "$RUNNER_TEMP/gateway.go"
+          trap 'cp "$RUNNER_TEMP/gateway.go" internal/gateway/gateway.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/gateway/gateway.go')
+          text = p.read_text()
+          assert text.count('stopFresh(); freshWorkers.Wait()') == 1
+          p.write_text(text.replace('stopFresh(); freshWorkers.Wait()', 'stopFresh()'))
+          PY
+          if go test -tags nogui ./internal/gateway -run '^TestGatewayWaitsForHubPruner$' > "$RUNNER_TEMP/pruner-regression.log" 2>&1; then
+            cat "$RUNNER_TEMP/pruner-regression.log"
+            exit 1
+          fi
+          grep -F "gateway returned while its hub pruner was still running" "$RUNNER_TEMP/pruner-regression.log"
+      - name: Stream regression fails without concurrent forwarding
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/gui/pageservice.go "$RUNNER_TEMP/pageservice.go"
+          trap 'cp "$RUNNER_TEMP/pageservice.go" internal/gui/pageservice.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/gui/pageservice.go')
+          text = p.read_text()
+          line = '\t_ = http.NewResponseController(rw).EnableFullDuplex()\n'
+          assert text.count(line) == 1
+          p.write_text(text.replace(line, ''))
+          PY
+          if go test -tags nogui ./internal/gui -run '^TestPluginPageServiceEarlyResponse$' > "$RUNNER_TEMP/stream-regression.log" 2>&1; then
+            cat "$RUNNER_TEMP/stream-regression.log"
+            exit 1
+          fi
+          grep -F "second event missing" "$RUNNER_TEMP/stream-regression.log"
+      - name: Stall request attribution fails without isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/gateway/upstream_stall_test.go "$RUNNER_TEMP/upstream_stall_test.go"
+          trap 'cp "$RUNNER_TEMP/upstream_stall_test.go" internal/gateway/upstream_stall_test.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/gateway/upstream_stall_test.go')
+          text = p.read_text()
+          line = 'if r.Header.Get("X-Stall-Test") != mark {'
+          assert text.count(line) == 1
+          p.write_text(text.replace(line, 'if false {'))
+          PY
+          if go test -tags nogui ./internal/gateway -run '^TestStallVendorCountsOnlyItsRequest$' > "$RUNNER_TEMP/stall-isolation.log" 2>&1; then
+            cat "$RUNNER_TEMP/stall-isolation.log"
+            exit 1
+          fi
+          grep -F 'foreign request reached the counter' "$RUNNER_TEMP/stall-isolation.log"
+      - name: Warm-up deadline regression fails without a timely bound
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/testenv/program.go "$RUNNER_TEMP/program.go"
+          trap 'cp "$RUNNER_TEMP/program.go" internal/testenv/program.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/testenv/program.go')
+          text = p.read_text()
+          line = 'timer := time.NewTimer(after)'
+          assert text.count(line) == 1
+          p.write_text(text.replace(line, 'timer := time.NewTimer(time.Hour)'))
+          PY
+          if go test -timeout 1m ./internal/testenv -run '^TestWarmupWaitKillsAndReapsStalledChild$' > "$RUNNER_TEMP/warmup-regression.log" 2>&1; then
+            cat "$RUNNER_TEMP/warmup-regression.log"
+            exit 1
+          fi
+          grep -F 'warm-up did not return after its deadline' "$RUNNER_TEMP/warmup-regression.log"

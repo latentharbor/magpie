@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/tidwall/gjson"
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/provider"
 )
 
@@ -156,6 +156,12 @@ func readAnthropic(body []byte, clientMarks, facts bool) (*Request, error) {
 	}
 	r := &Request{Model: a.Model, System: stringOrText(a.System), MaxTokens: a.MaxTokens,
 		Temp: a.Temperature, TopP: a.TopP, Stop: a.StopSequences, Stream: a.Stream, Fast: a.Speed == "fast"}
+	if len(a.System) > 0 {
+		r.systemRaw = []json.RawMessage{a.System}
+	}
+	if !facts {
+		r.askedTTL = askedCacheTTL(&a)
+	}
 	if clientMarks {
 		var err error
 		r.clientCache, err = readClientCache(a)
@@ -198,6 +204,16 @@ func readAnthropic(body []byte, clientMarks, facts bool) (*Request, error) {
 				case "image":
 					if b.Source != nil {
 						msg.Parts = append(msg.Parts, Part{Kind: Image, MediaType: b.Source.MediaType, Data: b.Source.Data, URL: b.Source.URL, block: true})
+					}
+				case "video":
+					// MiniMax's Anthropic endpoint takes a video in the image
+					// block's shape (#6135): a File of the video, which every
+					// builder sends on or turns away, never leaves out
+					if b.Source != nil {
+						if v, ok := videoPart(cmp.Or(b.Source.Data, b.Source.URL), cmp.Or(b.Source.MediaType, "video/mp4"), ""); ok {
+							v.block = true
+							msg.Parts = append(msg.Parts, v)
+						}
 					}
 				case "tool_use":
 					msg.Parts = append(msg.Parts, Part{Kind: ToolCall, ID: anthropicInID(b.ID), Name: b.Name, Args: b.Input, block: true})
@@ -283,13 +299,32 @@ func readAnthropic(body []byte, clientMarks, facts bool) (*Request, error) {
 	} else if th != nil && (th.Type == "enabled" || th.Type == "adaptive") {
 		r.Thinking = true
 		r.Effort = effortOfBudget(th.BudgetTokens)
-		if oc := a.OutputConfig; oc != nil {
-			if e := effortOf(oc.Effort); e != "" {
-				r.Effort = e
-			}
+		if oc := a.OutputConfig; oc != nil && effortOf(oc.Effort) != "" {
+			r.Effort = effortOf(oc.Effort)
+		} else if e := turnEffort(body); e != "" {
+			// the level of the turn, kept in a message of its own (Claude
+			// Desktop's and Claude Code's {role: "system"} message with an
+			// output_config), is the one picked; the budget beside it is
+			// only nearest to it (a High asked as 31999 read as Max)
+			r.Effort = e
 		}
 	}
 	return r, nil
+}
+
+// turnEffort is the last effort a message of an Anthropic request carries
+// in its own output_config; "" when none does.
+func turnEffort(body []byte) string {
+	if !bytes.Contains(body, []byte(`"output_config"`)) {
+		return ""
+	}
+	last := ""
+	for _, e := range gjson.GetBytes(body, "messages.#.output_config.effort").Array() {
+		if v := effortOf(e.String()); v != "" {
+			last = v
+		}
+	}
+	return last
 }
 
 // thinkingOffUnlessAsked says thinking is off when the request doesn't
@@ -420,7 +455,7 @@ func withThinkingOnToolTurns(body []byte) []byte {
 
 // anthropicModel is one of Anthropic's own models, which think only when asked,
 // so a request for one is left as the agent sent it.
-var anthropicModel = regexp.MustCompile(`(?i)(?:^|[/.:-])claude-`)
+var anthropicModel = lazyre.New(`(?i)(?:^|[/.:-])claude-`)
 
 // alwaysThinks is a vendor refusing to turn a model's thinking off: Z.ai's
 // GLM-5.3 answers 1210, "…always engages in thinking…", or, in Chinese
@@ -432,7 +467,7 @@ var anthropicModel = regexp.MustCompile(`(?i)(?:^|[/.:-])claude-`)
 // glm-5.3 "thinking.type `disabled` is not supported by this model"
 // (#1141). Kimi Code (China)'s K3.1 answers "…does not support disabled
 // thinking mode" (#3739).
-var alwaysThinks = regexp.MustCompile(`(?i)always engages in thinking|thinking (?:can ?not|can't) be (?:disabled|turned off)|enable_thinking[^"]{0,60}restricted to true|始终(?:支持|开启|启用)?思考|思考[^"]{0,20}(?:不可|无法|不能)关闭|requires adaptive thinking\W+thinking\.type\W+disabled\W+\(including reasoning\.effort=none\) is not allowed|thinking\.type \x60disabled\x60 is not supported by this model|does not support disabled thinking mode`)
+var alwaysThinks = lazyre.New(`(?i)always engages in thinking|thinking (?:can ?not|can't) be (?:disabled|turned off)|enable_thinking[^"]{0,60}restricted to true|始终(?:支持|开启|启用)?思考|思考[^"]{0,20}(?:不可|无法|不能)关闭|requires adaptive thinking\W+thinking\.type\W+disabled\W+\(including reasoning\.effort=none\) is not allowed|thinking\.type \x60disabled\x60 is not supported by this model|does not support disabled thinking mode`)
 
 // refusesThinkingOff is an Anthropic endpoint turning away a request
 // with thinking turned off (thinking.type disabled): a model that always
@@ -474,7 +509,7 @@ func withoutThinkingOff(body []byte) ([]byte, bool) {
 // claudeVersion finds the family's version in a Claude model id however a
 // relay spells it: claude-opus-4-6, claude-opus-5, anthropic.claude-sonnet-4.6-v1,
 // a relay's opus-5.5, claude-fable-5-1, or the old order, claude-3-7-sonnet.
-var claudeVersion = regexp.MustCompile(`(?:^|[^a-z0-9])(?:claude-)?(?:opus|sonnet|haiku|fable|mythos)-(\d{1,2})(?:[-.](\d{1,2}))?(?:[^0-9]|$)|claude-(\d+)(?:[-.](\d))?-(?:opus|sonnet|haiku)`)
+var claudeVersion = lazyre.New(`(?:^|[^a-z0-9])(?:claude-)?(?:opus|sonnet|haiku|fable|mythos)-(\d{1,2})(?:[-.](\d{1,2}))?(?:[^0-9]|$)|claude-(\d+)(?:[-.](\d))?-(?:opus|sonnet|haiku)`)
 
 // adaptiveOnly is a Claude model from 4.6 on, which thinks adaptively:
 // claude-opus-5-5 refuses thinking.type=enabled with a budget ("requires
@@ -533,7 +568,11 @@ func adaptiveThinking(body []byte) []byte {
 		thinking["display"] = d.Value()
 	}
 	fields := map[string]any{"thinking": thinking}
-	if gjson.GetBytes(body, "output_config.effort").String() == "" {
+	// a level a turn's message carries is the one asked: a top-level effort
+	// made of the budget would be read first by the next magpie, and by
+	// parseAnthropicRequest, over it (a High asked as 31999 went on as max;
+	// DIYgod on X)
+	if gjson.GetBytes(body, "output_config.effort").String() == "" && turnEffort(body) == "" {
 		if e := effortOfBudget(int(th.Get("budget_tokens").Int())); e != "" {
 			if e == "xhigh" {
 				e = "max" // a budget can't tell xhigh from max (budgetOf), and 4.6 has no xhigh
@@ -553,7 +592,7 @@ func adaptiveThinking(body []byte) []byte {
 // spells it: claude-sonnet-5-5, claude-sonnet-5.5, a relay's sonnet-5.5,
 // Bedrock's anthropic.claude-sonnet-5-5-v1:0, Vertex's
 // claude-sonnet-5-5@20261001, claude-fable-5-1.
-var claudeLine = regexp.MustCompile(`(?:^|[^a-z0-9])(?:claude-)?(opus|sonnet|haiku|fable|mythos)-(\d{1,2})(?:[-.](\d{1,2}))?(?:[^0-9]|$)`)
+var claudeLine = lazyre.New(`(?:^|[^a-z0-9])(?:claude-)?(opus|sonnet|haiku|fable|mythos)-(\d{1,2})(?:[-.](\d{1,2}))?(?:[^0-9]|$)`)
 
 // thinkingOff is how a Claude model takes thinking turned off.
 type thinkingOff int
@@ -633,7 +672,7 @@ func thinkingOffAsTaken(body []byte, path string) []byte {
 		model = path
 	}
 	rule := thinkingOffOf(model)
-	effort := gjson.GetBytes(body, "output_config.effort").String()
+	effort := outputConfigEffort(body) // a turn's own level counts too
 	aboveHigh := effort == "xhigh" || effort == "max"
 	var thinking map[string]any // nil: left out
 	effortTo := ""
@@ -703,12 +742,12 @@ func thinkingOffAsTaken(body []byte, path string) []byte {
 // {"type": "between_tools"} instead of {"type": "disabled"}" as relays
 // pass it on (#1454), or the API's "Use "thinking.type.between_tools" for
 // the lowest thinking setting".
-var asksBetweenTools = regexp.MustCompile(`(?i)between_tools\W+instead of|use\W+thinking\.type\.between_tools`)
+var asksBetweenTools = lazyre.New(`(?i)between_tools\W+instead of|use\W+thinking\.type\.between_tools`)
 
 // thinkingOffRefused is a Claude refusing thinking turned off at any
 // effort, as Opus 5.5 does: ""thinking.type.disabled" is not supported for
 // this model. Use "thinking.type.adaptive"…".
-var thinkingOffRefused = regexp.MustCompile(`(?i)thinking\.type\.disabled\W+is not supported`)
+var thinkingOffRefused = lazyre.New(`(?i)thinking\.type\.disabled\W+is not supported`)
 
 // withBetweenTools is body with its thinking turned off as Sonnet 5.5
 // asks it, at effort high at most; false when body doesn't turn it off.
@@ -717,8 +756,11 @@ func withBetweenTools(body []byte) ([]byte, bool) {
 		return nil, false
 	}
 	fields := map[string]any{"thinking": map[string]any{"type": "between_tools"}}
-	if e := gjson.GetBytes(body, "output_config.effort").String(); e == "xhigh" || e == "max" {
+	if e := outputConfigEffort(body); e == "xhigh" || e == "max" {
 		oc, _ := gjson.GetBytes(body, "output_config").Value().(map[string]any)
+		if oc == nil {
+			oc = map[string]any{}
+		}
 		oc["effort"] = "high"
 		fields["output_config"] = oc
 	}
@@ -781,7 +823,7 @@ func hasSampling(body []byte) bool {
 // samplingDeprecated is a Claude refusing a sampling parameter, as Haiku
 // 5.5 does: "`temperature` is deprecated for this model." (and `top_p`,
 // `top_k`).
-var samplingDeprecated = regexp.MustCompile("(?i)\\b(?:temperature|top_p|top_k)`?\\W+is (?:deprecated|not supported) for this model")
+var samplingDeprecated = lazyre.New("(?i)\\b(?:temperature|top_p|top_k)`?\\W+is (?:deprecated|not supported) for this model")
 
 // withoutSampling is body without temperature, top_p and top_k; false
 // when it has none of them.
@@ -804,11 +846,24 @@ func AdaptiveThinking(model string) bool { return adaptiveOnly(model) }
 // are asked the same way as MiniMax Code asks them: a budget alone gave
 // medium to max one budget under an 8192 cap, so the level was lost
 // (shin4 on plugins#316).
-var effortInOutputConfig = regexp.MustCompile(`(?i)glm-5\.[23](?:$|[-.:/\[])|minimax-m3\.1-flash(?:$|[-.:/\[])`)
+//
+// GPT models are asked so too, on whatever Messages endpoint serves them (a
+// relay the user set up): a relay that maps Messages onto OpenAI reads the
+// level from output_config.effort, and a budget alone left every request at
+// its default, medium (zxz8009195489 on Discord, 2026-11-04).
+var effortInOutputConfig = lazyre.New(`(?i)glm-5\.[23](?:$|[-.:/\[])|minimax-m3\.1-flash(?:$|[-.:/\[])|(?:^|[^a-z0-9])gpt-\d`)
 
 // deepseekHost is DeepSeek's own API, whose Anthropic endpoint
 // (api.deepseek.com/anthropic) takes the effort in output_config.
-const deepseekHost = "api.deepseek.com"
+const deepseekHost = provider.DeepSeekHost
+
+// isDeepSeekAnthropic is whether the request goes to DeepSeek's own
+// Anthropic endpoint, whose shape is checked against the host, not the
+// preset: a "deepseek" provider pointed at another host is that host's
+// shape, and it learns from that endpoint's refusals as any other does.
+func isDeepSeekAnthropic(p provider.Provider, to provider.Protocol) bool {
+	return provider.HostOf(p.Base(to)) == deepseekHost
+}
 
 // deepseekEfforts are the levels DeepSeek's models think at: its thinking
 // guide maps minimal to low, medium and xhigh to high, and ultra to max.
@@ -839,7 +894,7 @@ func outputEffortAt(host, model string) bool {
 func AdaptiveWithEffort(model string) bool { return glmOutputEffort.MatchString(model) }
 
 // glmOutputEffort is effortInOutputConfig's Z.ai half.
-var glmOutputEffort = regexp.MustCompile(`(?i)glm-5\.[23](?:$|[-.:/\[])`)
+var glmOutputEffort = lazyre.New(`(?i)glm-5\.[23](?:$|[-.:/\[])`)
 
 // withOutputEffort is body asking, in output_config.effort, for the level
 // of levels nearest the reasoning it asks for; body when it asks for none.
@@ -924,6 +979,12 @@ func anthropicBody(r *Request, model, host string, replay bool) []byte {
 					rest = append(rest, aBlock{Type: "text", Text: p.Text, CacheControl: partMark(p.cache)})
 				}
 			case File:
+				if isVideo(p) && !r.videoOff {
+					b := videoBlock(p)
+					b.CacheControl = partMark(p.cache)
+					rest = append(rest, b)
+					break
+				}
 				rest = append(rest, aBlock{Type: "text", Text: attachmentText(p)})
 			case Image:
 				b := imageBlock(p)
@@ -1297,12 +1358,13 @@ func decodeAnthropic(data string, emit func(Event)) error {
 			Signature string `json:"signature"`
 		} `json:"content_block"`
 		Delta struct {
-			Type        string `json:"type"`
-			Text        string `json:"text"`
-			PartialJSON string `json:"partial_json"`
-			Thinking    string `json:"thinking"`
-			Signature   string `json:"signature"`
-			StopReason  string `json:"stop_reason"`
+			Type            string `json:"type"`
+			Text            string `json:"text"`
+			PartialJSON     string `json:"partial_json"`
+			Thinking        string `json:"thinking"`
+			EstimatedTokens *int   `json:"estimated_tokens"`
+			Signature       string `json:"signature"`
+			StopReason      string `json:"stop_reason"`
 			// auto mode's review of the reply's calls (automode.go)
 			SafeguardResults json.RawMessage `json:"safeguard_results"`
 			StopDetails      json.RawMessage `json:"stop_details"`
@@ -1358,7 +1420,7 @@ func decodeAnthropic(data string, emit func(Event)) error {
 		case "input_json_delta":
 			emit(Event{Kind: KToolArgs, Text: ev.Delta.PartialJSON})
 		case "thinking_delta":
-			emit(Event{Kind: KThink, Text: ev.Delta.Thinking})
+			emit(Event{Kind: KThink, Text: ev.Delta.Thinking, Estimated: ev.Delta.EstimatedTokens})
 		case "signature_delta":
 			emit(Event{Kind: KSig, Name: sealAnthropic, Text: ev.Delta.Signature})
 		}
@@ -1392,11 +1454,22 @@ type aUsage struct {
 	// Kiro caches but tells only credits, never tokens (zeewell on X).
 	// It is read, never told: anthropic() leaves it false.
 	CacheUnknown bool `json:"magpie_cache_unknown,omitempty"`
+	// OutputTokensDetails says how many of the output tokens were
+	// thinking, as Copilot counts them on a message_delta: the reasoning
+	// count the other protocols' usage carries (completion_tokens_details,
+	// Gemini's thoughtsTokenCount) and the Claude subscription's cliUsage
+	// reads from Claude Code. A vendor that leaves it out is told by its
+	// stream (hidesReasoning, #4545)
+	OutputTokensDetails *aOutputDetails `json:"output_tokens_details,omitempty"`
 }
 
 type aCacheCreation struct {
 	Ephemeral5m int `json:"ephemeral_5m_input_tokens"`
 	Ephemeral1h int `json:"ephemeral_1h_input_tokens"`
+}
+
+type aOutputDetails struct {
+	ThinkingTokens int `json:"thinking_tokens"`
 }
 
 func (u aUsage) usage() Usage {
@@ -1407,15 +1480,23 @@ func (u aUsage) usage() Usage {
 		out.CacheWrite = max(out.CacheWrite, c.Ephemeral5m+c.Ephemeral1h)
 		out.CacheWrite1h = c.Ephemeral1h
 	}
+	if d := u.OutputTokensDetails; d != nil {
+		out.Reasoning = d.ThinkingTokens
+	}
 	return out
 }
 
 // anthropic is the usage as Anthropic says it, the cache writes split by
-// how long they are kept when upstream reported TTLs or some were for an hour.
+// how long they are kept when upstream reported TTLs or some were for an
+// hour, and the thinking among the output tokens when the upstream counted
+// its reasoning.
 func (u Usage) anthropic() aUsage {
 	out := aUsage{InputTokens: u.Input, OutputTokens: u.Output, CacheReadInputTokens: u.CacheRead, CacheCreationInputTokens: u.CacheWrite}
 	if h := min(u.CacheWrite1h, u.CacheWrite); u.cacheCreationReported || h > 0 {
 		out.CacheCreation = &aCacheCreation{Ephemeral5m: u.CacheWrite - h, Ephemeral1h: h}
+	}
+	if u.Reasoning > 0 {
+		out.OutputTokensDetails = &aOutputDetails{ThinkingTokens: u.Reasoning}
 	}
 	return out
 }
@@ -1504,7 +1585,15 @@ func anthropicOutID(id string) string {
 	return safeCallID(anthropicIDMark, id)
 }
 
-func anthropicInID(id string) string { return rawCallID(anthropicIDMark, id) }
+func anthropicInID(id string) string {
+	// an id a relayed reply's was salted to (saltCallID, #4910) goes to a
+	// translated upstream as the client holds it: unique, and safe as it
+	// is, where decoding it would hand the upstream the salt's NUL
+	if _, salted := unsaltCallID(id); salted {
+		return id
+	}
+	return rawCallID(anthropicIDMark, id)
+}
 
 // safeCallID is id as one of [A-Za-z0-9_-] only: an id with another
 // character, or one beginning with mark, is mark and its base64url, which
@@ -1530,7 +1619,7 @@ func rawCallID(mark, id string) string {
 	return string(raw)
 }
 
-var safeIDChars = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+var safeIDChars = lazyre.New(`^[A-Za-z0-9_-]+$`)
 
 func (e *anthropicEncoder) start(ev Event) {
 	if e.started {
@@ -1645,10 +1734,22 @@ func (e *anthropicEncoder) event(ev Event) {
 		return
 	case KThink:
 		if ev.Text == "" {
+			if ev.Estimated == nil {
+				return
+			}
+			// an empty thinking delta that carries the vendor's progress
+			// count goes to the client as it came: the live beat that says
+			// the think is moving, not silence (#5390)
+			e.thinking()
+			e.delta(map[string]any{"type": "thinking_delta", "thinking": "", "estimated_tokens": *ev.Estimated})
 			return
 		}
 		e.thinking()
-		e.delta(map[string]any{"type": "thinking_delta", "thinking": ev.Text})
+		d := map[string]any{"type": "thinking_delta", "thinking": ev.Text}
+		if ev.Estimated != nil {
+			d["estimated_tokens"] = *ev.Estimated
+		}
+		e.delta(d)
 	case KSig:
 		// a block signed with no text goes as it came, signed (#1445)
 		if e.open == Thinking || e.fresh {

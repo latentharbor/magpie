@@ -66,10 +66,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
   for (const lang of ["en", "zh"]) {
     test(`${engine} ${lang}: today's bar keeps its tooltip`, async (t) => {
       const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
-      // The English expectation below is US month-day order. The app
-      // correctly keeps a host's en-GB day-month order; do not inherit it
-      // into a fixture whose expected dates use Node's plain "en".
-      const context = await browser.newContext({ viewport: { width: 1100, height: 760 }, reducedMotion: "reduce", timezoneId: TZ, locale: "en-US" });
+      const context = await browser.newContext({ viewport: { width: 1100, height: 760 }, reducedMotion: "reduce", timezoneId: TZ });
       const page = await context.newPage();
       page.setDefaultTimeout(5000);
       page.setDefaultNavigationTimeout(60000);
@@ -80,7 +77,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await page.addInitScript(() => { localStorage.setItem("magpie.usageTab", "sessions"); localStorage.setItem("magpie.sessRange", "30d"); });
       t.after(() => browser.close());
       await page.goto("http://magpie.test/?view=usage");
-      await page.waitForLoadState("networkidle");
       const bars = page.locator("#sessChart .bars > .bar");
       await page.waitForFunction(() => document.querySelectorAll("#sessChart .bars > .bar").length === 30);
       const last = bars.last();

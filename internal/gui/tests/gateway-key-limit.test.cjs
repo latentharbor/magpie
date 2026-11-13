@@ -4,7 +4,6 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
 const { fixture } = require("./fixtures/caller-keys.cjs");
-const { scrollSettled } = require("./reader.cjs");
 
 const day = 864e5;
 const limits = () => ({
@@ -56,7 +55,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const scrolled = async () => [await view.evaluate((v) => v.scrollTop), await page.evaluate(() => window.scrollY)];
       await page.mouse.move(500, 300);
       await page.mouse.wheel(0, 120);
-      await scrollSettled(page);
+      await page.waitForTimeout(100);
       const at = await scrolled();
       // open Work's editor: staged, nothing sent
       await row("work").getByRole("button", { name: w.limit, exact: true }).click();
@@ -119,8 +118,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await row("server").getByRole("button", { name: w.change, exact: true }).click();
       await row("server").locator(".key-limit-ed").waitFor();
       await page.setViewportSize({ width: 560, height: 740 });
-      await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+      // the header's tabs are fitted by a ResizeObserver a moment after the
+      // resize, so wait for the state rather than reading it at once
+      await page.waitForFunction(() => document.documentElement.scrollWidth <= window.innerWidth, null, { timeout: 3000 }).catch(async () => {
+        assert.fail(`sideways scroll at 560px: ${await page.evaluate(() => document.documentElement.scrollWidth)}`);
+      });
       assert.deepEqual(errors, []);
     });
   }

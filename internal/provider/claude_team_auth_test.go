@@ -101,7 +101,7 @@ func TestClaudeTeamSignedOutPremiumHandsOffWithoutExhaustion(t *testing.T) {
 				NoteClaudeSignInFailure(user, ClaudeLoginVersion(user), "OAuth token revoked")
 			}
 			tm.mu.Lock()
-			closed, pending := tm.closed[teamID(2)], tm.requested
+			closed, pending := tm.admissions.Closed(teamID(2)), tm.requested
 			tm.mu.Unlock()
 			if !closed || !pending {
 				t.Fatal("confirmed sign-out did not close admissions and request handoff")
@@ -171,7 +171,7 @@ func TestClaudeTeamTemporaryAndStaleAuthErrorsDoNotRotate(t *testing.T) {
 				t.Fatalf("temporary/stale failure moved healthy seat: %q %v", from, err)
 			}
 			tm.mu.Lock()
-			closed, requested := tm.closed[teamID(2)], tm.requested
+			closed, requested := tm.admissions.Closed(teamID(2)), tm.requested
 			tm.mu.Unlock()
 			if closed || requested {
 				t.Fatal("temporary/stale failure closed healthy account")

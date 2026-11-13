@@ -148,14 +148,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.locator('.pq-card[data-card="relay"] .pq-amt', { hasText: "$3.00" }).waitFor();
         assert.deepEqual(data.posts.slice(-2), ["?provider=kimi", "?provider=relay"]);
 
-        const overflow = await page.evaluate(() => ({
-          width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
-          outside: [...document.querySelectorAll("body *")].filter(e => {
-            const r = e.getBoundingClientRect(); return r.width && (r.right > innerWidth + 1 || r.left < -1);
-          }).map(e => ({ tag: e.tagName, id: e.id, class: e.className, text: e.textContent.slice(0, 80),
-            rect: e.getBoundingClientRect().toJSON() })).slice(0, 12),
-        }));
-        assert.ok(overflow.scrollWidth <= overflow.width, "nothing wider than the panel: " + JSON.stringify(overflow));
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "nothing wider than the panel");
         if (process.env.ARTIFACT_DIR) {
           await fs.mkdir(process.env.ARTIFACT_DIR, { recursive: true });
           await card.hover();

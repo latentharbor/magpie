@@ -63,9 +63,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       };
       const addNew = async (name) => {
         await page.goto("http://magpie.test/?view=providers");
-        await page.waitForFunction(() => load.done);
         await page.locator("#addProvider").click();
-        await page.locator("#addSheet .custom-foot .custom").click();
+        await page.locator("#addSheet .row-head .custom").click();
         await baseURL.waitFor();
         await ed.locator('input[placeholder]').first().fill(name);
       };
@@ -97,7 +96,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
       // saved: a new chat URL typed, then Anthropic's typed after it
       await page.goto("http://magpie.test/?view=providers");
-      await page.waitForFunction(() => load.done);
       await page.locator('#providers .row[data-id="plain"]').click();
       await baseURL.waitFor();
       await baseURL.fill(ROOT + "/v2");

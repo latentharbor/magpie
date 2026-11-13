@@ -11,7 +11,6 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { reach, scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(process.env.ASSETS || path.join(__dirname, "../assets"));
 const models = [
@@ -72,7 +71,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const errors = [], posts = [];
       page.on("pageerror", (e) => errors.push(e.message));
       await page.route("**/*", serve(lang, posts));
-      await page.goto("http://magpie.test/?view=routing");
+      await page.goto("http://magpie.test/?view=groups");
       const card = page.locator(".rt-group").first();
       await card.waitFor();
       await card.locator("button", { hasText: w.edit }).click();
@@ -89,13 +88,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // the grip shows on the rule under the pointer only
       await page.mouse.move(1, 1);
       await page.waitForFunction(() => [...document.querySelectorAll(".rt-rhandle")].map((h) => getComputedStyle(h, "::before").opacity).join() === "0,0,0");
-      await reach(page, rule("two").locator(".rt-then"));
       await rule("two").locator(".rt-then").hover();
       await page.waitForFunction(() => [...document.querySelectorAll(".rt-rhandle")].map((h) => getComputedStyle(h, "::before").opacity).join() === "0,1,0");
 
       // wheeled to the rules, as the reader would (a scroll no reader asked
       // for is put back)
-      const v = await page.locator("#view-routing").boundingBox();
+      const v = await page.locator("#view-groups").boundingBox();
       await page.mouse.move(v.x + 10, 300);
       for (let n = 0; n < 40; n++) {
         const b = await ed.locator(".rt-rules").boundingBox();
@@ -104,7 +102,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.mouse.wheel(0, Math.sign(d) * Math.min(Math.abs(d), 300));
         await page.waitForTimeout(60);
       }
-      await scrollSettled(page);
+      await page.waitForTimeout(200);
       const at = () => page.evaluate(() => [...document.querySelectorAll("*")].filter((e) => e.scrollTop).map((e) => [e.id || e.className, e.scrollTop]).join(";") + "|" + Math.round(document.querySelector(".rt-gedit").getBoundingClientRect().top));
       const before = await at();
       // drag "three" above "one"

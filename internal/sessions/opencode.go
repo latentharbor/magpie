@@ -117,6 +117,14 @@ type ocMessage struct {
 	// OpenCode 2: the tools a reply called and the skills a message
 	// brought in, as ocV2DB.messages reads them
 	Calls []ocUse `json:"calls,omitempty"`
+	// ZCode: where a message copied into another session came from
+	// (zcDB.copied)
+	Metadata *struct {
+		ForkOrigin *struct {
+			SessionID string `json:"sessionId"`
+			MessageID string `json:"messageId"`
+		} `json:"forkOrigin"`
+	} `json:"metadata,omitempty"`
 }
 
 // ocUse is a tool called, or a skill brought in with no tool (Name "").
@@ -342,7 +350,12 @@ func ocDBRows(db *sql.DB, query, agent, path string, store ocStore, parent map[s
 			continue
 		}
 		parent[id] = par
-		out = append(out, file{agent: agent, path: path + "#" + id, size: n, mod: ms(max(updated, last)), more: &fileMore{sid: id, oc: store}})
+		if agent == "zcode" { // a rename in the app is no change to the CLI's rows
+			if t, ok := zcodeTaskOf(id); ok {
+				updated = max(updated, t.updated)
+			}
+		}
+		out = append(out, file{agent: agent, path: path + "#" + id, size: n, mod: modOf(ms(max(updated, last))), more: &fileMore{sid: id, oc: store}})
 	}
 	return out
 }
@@ -499,8 +512,8 @@ func openCodeJSONFiles(root string) []file {
 			for _, e := range es {
 				if fi, err := e.Info(); err == nil && fi.Mode().IsRegular() {
 					f.size += fi.Size()
-					if fi.ModTime().After(f.mod) {
-						f.mod = fi.ModTime()
+					if fi.ModTime().After(f.mod.Time()) {
+						f.mod = modOf(fi.ModTime())
 					}
 				}
 			}
@@ -552,7 +565,7 @@ func parseOpenCode(f file) *state {
 	}
 	s.ID, s.Cwd = info.ID, info.Directory
 	if t := title(info.Title); t != "" && !ocDefaultTitle(t) {
-		s.Named = t
+		s.own().Named = t
 	}
 	var msgs []ocMessage
 	for _, b := range f.m().oc.messages(f.m().sid) {
@@ -576,7 +589,7 @@ func parseOpenCode(f file) *state {
 		}
 		switch m.Role {
 		case "user":
-			if typed := m.Semantics == nil || m.Semantics.Origin == "" || m.Semantics.Origin == "real_user"; typed && f.main && s.Title == "" && s.First == "" {
+			if typed := m.Semantics == nil || m.Semantics.Origin == "" || m.Semantics.Origin == "real_user"; typed && f.main && s.Title == "" && s.more().First == "" {
 				ocTitle(s, f.m().oc.parts(m.ID))
 			}
 		case "assistant":
@@ -586,6 +599,9 @@ func parseOpenCode(f file) *state {
 			}
 			if s.Cwd == "" && m.Path != nil {
 				s.Cwd = m.Path.Cwd
+			}
+			if z, ok := f.m().oc.(zcDB); ok && z.copied(m) {
+				continue // the original's session counts it
 			}
 			if t := m.Tokens; t != nil && m.ModelID != "" {
 				u := Tokens{Input: t.Input, Output: t.Output + t.Reasoning, CacheRead: t.Cache.Read, CacheWrite: t.Cache.Write}
@@ -616,12 +632,12 @@ func ocTitle(s *state, parts [][]byte) {
 		}
 	}
 	if t := strings.Join(typed, " "); strings.HasPrefix(strings.TrimSpace(t), "<") {
-		s.First = untagged(t)
+		s.own().First = untagged(t)
 	} else {
 		s.Title = title(t)
 	}
-	if s.Title == "" && s.First == "" {
-		s.First = untagged(strings.Join(other, " "))
+	if s.Title == "" && s.more().First == "" {
+		s.own().First = untagged(strings.Join(other, " "))
 	}
 }
 

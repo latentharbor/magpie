@@ -12,7 +12,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { openPart, reach, scrollSettled } = require("./reader.cjs"); // reach: wheeled to as a reader would, rows taller since their lines wrap whole (arculongus on Discord); a Playwright scroll is undone
+const { openPart, reach } = require("./reader.cjs"); // reach: wheeled to as a reader would, rows taller since their lines wrap whole (arculongus on Discord); a Playwright scroll is undone
 
 const assets = path.resolve(__dirname, "../assets");
 
@@ -113,7 +113,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           await pill.waitFor();
           await pillIs(page, w.off);
           await reach(page, pill);
-          await scrollSettled(page);
           const before = await view(page);
           const pillY = (await pill.boundingBox()).y;
 
@@ -204,14 +203,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         page.on("pageerror", (e) => errors.push(e.message));
         await page.route("**/*", server(lang, [], asked, true));
         await page.goto("http://magpie.test/?mode=panel");
-        await page.waitForFunction(() => load.done);
         await page.locator('[data-ptab="agents"].on').waitFor();
         await page.evaluate(() => panelUseFocus("7d"));
         await page.waitForFunction(() => document.body.dataset.ptab === "stats");
         for (let i = 0; i < 60 && !asked.some((a) => a.includes("period=7d")); i++) await page.waitForTimeout(40);
         assert(asked.some((a) => a.startsWith("/api/usage/requests?") && a.includes("period=7d")), "asked: " + asked.join(" "));
         await shot(page, "panel");
-        await page.waitForLoadState("networkidle");
         // a period that isn't the panel's does nothing
         const n = asked.length;
         await page.evaluate(() => panelUseFocus("3d"));

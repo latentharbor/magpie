@@ -19,13 +19,14 @@ function page(m = "window") {
   const context = vm.createContext({ Date, performance, setTimeout });
   vm.runInContext(`
     let quotas = [], quotasAt = 0, quotasKept = false, quotaHist = [], quotasAskedAt = 0, view = "usage";
+    const mode = ${JSON.stringify(m)}; // the tray panel ("panel") also keeps each reading (#3160)
+    const saved = [], localStorage = { setItem: (k, v) => saved.push([k, v]), getItem: () => null };
     const requests = [], errors = [];
     const usageAcctKey = q => q.provider + "\\n" + (q.user || "").toLowerCase();
     const quotaCycleHolds = new Map(); // past cycles' estimates (#2009), cleared by a refresh
     const t = x => x;
     const quotaError = err => err;
     const calm = () => true;
-    const mode = "window";
     const document = { querySelectorAll: () => [] };
     const el = () => ({ dataset: {}, classList: { add() {}, remove() {}, toggle() {} }, setAttribute() {} });
     function renderQuotas() {}

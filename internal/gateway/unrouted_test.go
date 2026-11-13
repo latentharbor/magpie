@@ -1,15 +1,17 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"slices"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"weak"
 
 	"github.com/yetone/magpie/internal/gwmw"
 	"github.com/yetone/magpie/internal/settings"
@@ -50,12 +52,31 @@ func watchedHold(t *testing.T, s *Server) *unroutedHold {
 		}
 		s.active.mu.Unlock()
 		if u != nil {
+			// a hold magpie answered writes its report after the answer,
+			// from its timer: the test's temp HOME stays until it has
+			t.Cleanup(func() { holdReported(t, u) })
 			return u
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("no request was held before routing")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// holdReported waits for u's report when magpie answered it.
+func holdReported(t *testing.T, u *unroutedHold) {
+	t.Helper()
+	u.f.mu.Lock()
+	ended := u.ended
+	u.f.mu.Unlock()
+	if !ended {
+		return
+	}
+	select {
+	case <-u.saved:
+	case <-time.After(30 * time.Second):
+		t.Error("a held request's report was never written")
 	}
 }
 
@@ -327,25 +348,6 @@ func routesOf(s *Server, model string) []Route {
 	return out
 }
 
-// A timeout's response can reach the client before its final trace update.
-// Observe trace events, not HTTP completion or a fixed sleep, for that update.
-func completedRoutesOf(t *testing.T, s *Server, model string) []Route {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	var seq int64
-	for {
-		rs := routesOf(s, model)
-		if len(rs) > 0 && !slices.ContainsFunc(rs, func(r Route) bool { return !r.Done }) {
-			return rs
-		}
-		if ctx.Err() != nil {
-			t.Fatalf("the request's trace never completed: %+v", rs)
-		}
-		seq = s.Trace(ctx, seq, time.Second).Seq
-	}
-}
-
 // heyusaku6 on X: Codex thought for over ten minutes on a model served
 // through magpie, the Routing page showed nothing, and only restarting
 // both ended it. A request held before any route is begun for it shows on
@@ -357,6 +359,21 @@ func TestUnroutedRequestShownThenAnswered(t *testing.T) {
 	heldSight(t, s)
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
+	// #4200: giveUp is held once its 504 is out until the test has read
+	// the route, so a route ended only after the answer is seen undone
+	// every time, not when the client happens to be quick.
+	looked := make(chan struct{})
+	var lookedOnce sync.Once
+	look := func() { lookedOnce.Do(func() { close(looked) }) }
+	t.Cleanup(look)
+	hook := func(*unroutedHold) {
+		select {
+		case <-looked:
+		case <-time.After(10 * time.Second):
+		}
+	}
+	heldAnswered.Store(&hook)
+	t.Cleanup(func() { heldAnswered.Store(nil) })
 
 	type reply struct {
 		code int
@@ -398,10 +415,14 @@ func TestUnroutedRequestShownThenAnswered(t *testing.T) {
 	if r.err != nil || r.code != http.StatusGatewayTimeout || !strings.Contains(r.body, "without routing it to any provider") {
 		t.Fatalf("held request answered %d %q %v", r.code, r.body, r.err)
 	}
-	rs := completedRoutesOf(t, s, "probe/text")
+	rs := routesOf(s, "probe/text")
 	if len(rs) != 1 || !rs[0].Done || rs[0].Status != http.StatusGatewayTimeout || !strings.Contains(rs[0].Error, "without routing") {
 		t.Fatalf("the held request's route: %+v", rs)
 	}
+	if rs[0].Held == "" {
+		t.Fatalf("the held request's route names no report as it is answered: %+v", rs)
+	}
+	look()
 	heldSaved(t, s)
 }
 
@@ -458,25 +479,208 @@ func TestUnroutedQuickRequestLeavesNoTrace(t *testing.T) {
 	}
 }
 
-// The watcher keeps the caller that arrived, independent of request headers
-// subsequently rewritten by body decoding or middleware on the handler.
-func TestUnroutedWatcherKeepsRequestSnapshot(t *testing.T) {
-	unroutedLimits(t, time.Hour, 2*time.Hour)
-	s := &Server{}
-	r := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}"))
-	r.Header.Set("Authorization", "Bearer "+TokenFor("codex"))
-	f := &inflight{start: time.Now()}
-	_, r, done := s.watchUnrouted(httptest.NewRecorder(), r, f)
-	defer done()
-	u := r.Context().Value(unroutedKey{}).(*unroutedHold)
-	r.Header.Set("Authorization", "Bearer "+TokenFor("claude-code"))
-	r.Header.Del("Content-Encoding")
-	r.URL.Path = "/v1/responses"
-	u.show()
-	if u.shown == nil || u.shown.Agent != "codex" {
-		t.Fatalf("watcher changed caller with the handler: %+v", u.shown)
+// #3682: masking's time counts toward unroutedMost no more, while what
+// comes after it still does. A request masked for well past unroutedMost
+// isn't answered; then held by an image's description that never ends,
+// it is answered 504 once that wait has had unroutedMost.
+func TestUnroutedMostLeavesOutMasking(t *testing.T) {
+	unroutedLimits(t, 20*time.Millisecond, 300*time.Millisecond)
+	s, _ := slowEyed(t, 0)
+	heldSight(t, s)
+	if err := settings.Save(settings.Settings{Redact: true}); err != nil {
+		t.Fatal(err)
 	}
-	if u.r.URL.Path != "/v1/messages" {
-		t.Fatalf("watcher changed path with the handler: %s", u.r.URL.Path)
+	withoutMasker(t)
+	m := gatedMasker{gate: make(chan struct{})}
+	var once sync.Once
+	open := func() { once.Do(func() { close(m.gate) }) }
+	t.Cleanup(open)
+	t.Cleanup(gwmw.Mask(m))
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+	got := posted(srv, strings.NewReader(pastedImage))
+	u := watchedHold(t, s)
+	if r := heldPast(t, u, 3*unroutedMost, got); r != nil {
+		t.Fatalf("answered %d %q %v while it was masked", r.code, r.body, r.err)
 	}
+	if u.masking.Load() == 0 {
+		t.Fatal("held past unroutedMost, but not while masking")
+	}
+	open()
+	select {
+	case r := <-got:
+		if r.code != http.StatusGatewayTimeout || !strings.Contains(r.body, "without routing") {
+			t.Fatalf("held after masking: %d %q %v", r.code, r.body, r.err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("a request held after masking was never answered")
+	}
+	heldSaved(t, s)
+}
+
+// A request another magpie passed on is shown, while it waits to be
+// routed, as the agent that made it there (callerFrom), read once as it
+// comes: the show's timer never reads its headers, which withCaller and
+// decodedBody change meanwhile (#3956's ubuntu race run).
+func TestUnroutedShownAsItsCaller(t *testing.T) {
+	unroutedLimits(t, 20*time.Millisecond, time.Hour)
+	s, _ := slowEyed(t, 0)
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { pw.Close() })
+	got := make(chan unroutedReply, 1)
+	go func() {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", pr)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "magpie/0.1.0")
+		req.Header.Set(AgentHeader, "pi")
+		resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+		if err != nil {
+			got <- unroutedReply{err: err}
+			return
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		got <- unroutedReply{resp.StatusCode, string(b), nil}
+	}()
+	if _, err := pw.Write([]byte(unroutedHi[:10])); err != nil {
+		t.Fatal(err)
+	}
+	u := watchedHold(t, s)
+	var agent string
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		u.f.mu.Lock()
+		if u.shown != nil {
+			agent = u.shown.Agent
+		}
+		shown := u.shown != nil
+		u.f.mu.Unlock()
+		if shown {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the held request was never shown")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if agent != "pi" {
+		t.Errorf("shown as %q while held, want pi, the agent another magpie passed it on for", agent)
+	}
+	if _, err := pw.Write([]byte(unroutedHi[10:])); err != nil {
+		t.Fatal(err)
+	}
+	pw.Close()
+	if r := <-got; r.err != nil || r.code != http.StatusOK {
+		t.Fatalf("answered %d %q %v", r.code, r.body, r.err)
+	}
+}
+
+// Jason on Discord: a Codex turn on ChatGPT Pro accounts, held while it
+// was masked, showed on the Routing page as "magpie · 0 on" over "Nothing
+// could take ." — the route that shows a held request had no model,
+// because Codex's own path never told the watch what it asked for, as
+// the Chat, Responses, Messages and Gemini paths do. It names it.
+func TestUnroutedCodexPathShowsItsModel(t *testing.T) {
+	unroutedLimits(t, 20*time.Millisecond, time.Hour)
+	s, _ := slowEyed(t, 0)
+	if err := settings.Save(settings.Settings{Redact: true}); err != nil {
+		t.Fatal(err)
+	}
+	withoutMasker(t)
+	m := gatedMasker{gate: make(chan struct{})}
+	var once sync.Once
+	open := func() { once.Do(func() { close(m.gate) }) }
+	t.Cleanup(open)
+	t.Cleanup(gwmw.Mask(m))
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+	t.Cleanup(open) // before srv.Close, which waits on the held request
+	got := make(chan int, 1)
+	go func() {
+		c := &http.Client{Timeout: 30 * time.Second}
+		resp, err := c.Post(srv.URL+CodexPath+"/responses", "application/json", strings.NewReader(`{"model":"probe/text","input":"hi"}`))
+		if err != nil {
+			got <- 0
+			return
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		got <- resp.StatusCode
+	}()
+	u := watchedHold(t, s)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		u.f.mu.Lock()
+		shown := u.shown
+		u.f.mu.Unlock()
+		if shown != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the held Codex request never showed on the Routing page")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if rs := routesOf(s, "probe/text"); len(rs) != 1 || rs[0].Done || rs[0].Provider != "magpie" {
+		t.Fatalf("the held Codex request is shown without the model it asked for: %+v", s.Trace(context.Background(), 0, 0).Routes)
+	}
+	open()
+	select {
+	case <-got:
+	case <-time.After(15 * time.Second):
+		t.Fatal("never answered once masked")
+	}
+}
+
+// TestUnroutedTimersLetGoOfRequest: a stopped timer is not gone. The
+// runtime keeps it, and its func, in the timer heap of the P that set it
+// until its time comes or that P tidies its heap, so a timer that reached
+// the request kept its body up to unroutedMost after the handler returned
+// (#5250). The test holds the stopped timers as that heap does.
+func TestUnroutedTimersLetGoOfRequest(t *testing.T) {
+	body := make([]byte, 64<<10)
+	gone := weak.Make(&body[0])
+	f := &inflight{}
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	body = nil
+	_, r, unwatch := (&Server{}).watchUnrouted(httptest.NewRecorder(), r, f)
+	f.mu.Lock()
+	u := f.unrouted
+	f.mu.Unlock()
+	u.wmu.Lock()
+	timers := []*time.Timer{u.unknown, u.most}
+	u.wmu.Unlock()
+	unwatch()
+	u, r, f = nil, nil, nil
+	runtime.GC()
+	if gone.Value() != nil {
+		t.Fatal("a stopped unrouted timer still reaches its request's body")
+	}
+	runtime.KeepAlive(timers)
+}
+
+// TestUnroutedContextLetsGoOfRequest: the same for a context timer. A
+// WithTimeout under the request's context, stopped as its call ended,
+// keeps that context, and its values, in the timer heap as long, and
+// through the watch's value or the inflight's one kept the request's
+// body (#5250 again: a socket's turn bodies on ubuntu CI). The test
+// holds the context as that heap does.
+func TestUnroutedContextLetsGoOfRequest(t *testing.T) {
+	body := make([]byte, 64<<10)
+	gone := weak.Make(&body[0])
+	f := &inflight{}
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	body = nil
+	r = r.WithContext(context.WithValue(r.Context(), inflightKey{}, f))
+	_, r, unwatch := (&Server{}).watchUnrouted(httptest.NewRecorder(), r, f)
+	ctx, cancel := context.WithTimeout(r.Context(), time.Hour)
+	cancel()
+	unwatch()
+	r, f = nil, nil
+	runtime.GC()
+	if gone.Value() != nil {
+		t.Fatal("a context kept after its handler returned still reaches its request's body")
+	}
+	runtime.KeepAlive(ctx)
 }

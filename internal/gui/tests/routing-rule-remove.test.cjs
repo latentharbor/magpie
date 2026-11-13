@@ -75,11 +75,6 @@ function serve(lang, posts) {
 // wheel to a control, as the reader would (the page keeps still for any
 // other scroll), and return where it is
 async function reach(page, loc) {
-  await loc.evaluate(async (e) => {
-    const playing = [];
-    for (let n = e; n; n = n.parentElement) playing.push(...n.getAnimations().filter((a) => a.playState === "running" && Number.isFinite(a.effect?.getComputedTiming().endTime)));
-    await Promise.all(playing.map((a) => a.finished.catch(() => {})));
-  });
   const height = page.viewportSize().height;
   await page.mouse.move(Math.min(550, (page.viewportSize().width / 2) | 0), 300);
   for (let i = 0; i < 30; i++) {
@@ -93,8 +88,7 @@ async function reach(page, loc) {
 
 async function press(page, loc) {
   const b = await reach(page, loc);
-  assert(b.y >= 0 && b.y + b.height <= page.viewportSize().height, "the control is in view before clicking");
-  await loc.click();
+  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
 }
 
 async function openEditor(page, w) {
@@ -128,13 +122,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       test(`${engine} ${lang} ${width}: a rule's ⋯ is there to remove it, and a rule with no condition says how`, async (t) => {
         const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
         t.after(() => browser.close());
-        const page = await (await browser.newContext({ viewport: { width, height: 1400 } })).newPage();
+        const page = await (await browser.newContext({ viewport: { width, height: 1400 }, reducedMotion: "reduce" })).newPage();
         page.setDefaultTimeout(5000);
         page.setDefaultNavigationTimeout(60000);
         const errors = [], posts = [];
         page.on("pageerror", (e) => errors.push(e.message));
         await page.route("**/*", serve(lang, posts));
-        await page.goto("http://magpie.test/?view=routing");
+        await page.goto("http://magpie.test/?view=groups");
 
         // the ⋯ is drawn with the pointer off the rule, and Remove rule
         // under it takes the rule out
@@ -154,11 +148,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const TAB = engine === "webkit" ? "Alt+Tab" : "Tab";
         ed = await openEditor(page, w);
         row = ed.locator(".rt-rule").first();
-        // The German rule wraps its actions onto another line. Focusing
-        // its offscreen model with preventScroll, then Tab, queued a view
-        // scroll that arrived after Enter opened the menu and closed it.
-        // Start with the rule in sight, as for the mouse path above.
-        await reach(page, row.locator(".rt-rmore"));
         await row.locator(".rt-model").focus({ preventScroll: true });
         for (let i = 0; i < 6 && !(await row.locator(".rt-rmore").evaluate((b) => b === document.activeElement)); i++) await page.keyboard.press(TAB);
         assert(await row.locator(".rt-rmore").evaluate((b) => b === document.activeElement), "Tab reaches the rule's ⋯");

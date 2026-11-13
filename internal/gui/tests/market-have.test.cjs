@@ -96,7 +96,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       });
       t.after(() => browser.close());
       await page.goto("http://magpie.test/?view=library");
-      await page.waitForFunction(() => load.done);
       const view = page.locator("#view-library");
       const card = (kind, id) => view.locator(`.mk[data-market="${kind}"] .mk-card[data-id="${id}"]`);
       await card("mcp", "playwright").locator(".mk-have").waitFor();
@@ -129,7 +128,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await view.getByRole("button", { name: words[lang].addServer, exact: true }).click();
         const ed = page.locator(".lib-editor");
         await ed.locator('input[placeholder="e.g. github"], input[placeholder="例如 github"]').fill("fetch");
-        await ed.locator('input[placeholder="npx -y @modelcontextprotocol/server-github"]').fill("uvx mcp-server-fetch");
+        await ed.locator("textarea.lib-cmd").fill("uvx mcp-server-fetch");
         const market = answered("servers");
         await ed.getByRole("button", { name: words[lang].add, exact: true }).click();
         await market;
@@ -137,7 +136,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       });
 
       await t.test("a skill removed is no longer marked added", async () => {
-        await view.page().locator(":is(.lib-tabs .opt, .nav-s):visible").nth(2).click();
+        await view.page().locator(":is(.lib-tabs .opt, .nav-s):visible").nth(3).click();
         await card("skills", "acme/skills/pdf").locator(".mk-have").waitFor();
         await view.locator(".lib-row", { hasText: "pdf" }).locator(".lib-icon.danger").click();
         const market = answered("skills");

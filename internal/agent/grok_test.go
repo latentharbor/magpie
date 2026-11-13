@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -231,9 +232,39 @@ func TestGrokFoldsItsOwnAccount(t *testing.T) {
 	if err := provider.Save(provider.Provider{ID: "deepseek", Name: "DeepSeek", Chat: "https://api.deepseek.com/v1", Key: "k", Models: []string{"pro"}}); err != nil {
 		t.Fatal(err)
 	}
+	// models_cache.json as Grok Build writes it, a few hundred models
+	var cache strings.Builder
+	cache.WriteString(`{"models":{"grok-x":{"info":{"name":"Grok X"}},"grok-h":{"info":{"hidden":true}}`)
+	for i := range 300 {
+		fmt.Fprintf(&cache, `,"old-%d":{"info":{"hidden":true,"name":"Old %d","description":"a model Grok Build no longer shows"}}`, i, i)
+	}
+	cache.WriteString(`}}`)
+	os.WriteFile(filepath.Join(home, "grok", "models_cache.json"), []byte(cache.String()), 0o600)
 	a := grok(home)
 	var same, others []string
-	for _, o := range a.Field("model").Options(a.Values()) {
+	opts := a.Field("model").Options(a.Values())
+	var cached []string
+	for _, o := range opts {
+		if o.Value == "grok-x" || o.Value == "grok-h" {
+			cached = append(cached, o.Value+"="+o.Label)
+		}
+	}
+	if !slices.Equal(cached, []string{"grok-x=Grok X"}) {
+		t.Errorf("models_cache.json's shown models: %v, want grok-x alone", cached)
+	}
+	// a look again within a request reads nothing again and marks no copy
+	// of magpie's rows (the window's state looked at every field each time)
+	release := provider.Hold()
+	vals := a.Values()
+	first := a.Field("model").Options(vals)
+	if again := a.Field("model").Options(vals); len(again) == 0 || &again[0] != &first[0] {
+		t.Error("a look again made the list again, want the one kept")
+	}
+	if n := testing.AllocsPerRun(20, func() { a.Field("model").Options(vals) }); n > 40 {
+		t.Errorf("a look again allocates %v times, want at most 40", n)
+	}
+	release()
+	for _, o := range opts {
 		if o.Same {
 			same = append(same, o.Value)
 		} else if strings.HasPrefix(o.Value, "magpie/") {
@@ -431,5 +462,22 @@ func TestGrokWindowFollowsLongConversations(t *testing.T) {
 	})
 	if pro, flash := grokWindows(t, path); pro != 400000 || flash != 200000 {
 		t.Fatalf("pro's own threshold: pro %d, flash %d", pro, flash)
+	}
+	// Grok Build's own Long conversations (molianyin4227) over every
+	// agent's, a model's own still first; another agent's is not Grok's
+	set(func(s *settings.Settings) {
+		s.ModelCompacts, s.CompactAt = nil, 300000
+		s.AgentCompacts = map[string]settings.AgentCompact{"grok": {At: 500000}, "codex": {At: 250000}}
+	})
+	if pro, flash := grokWindows(t, path); pro != 500000 || flash != 200000 {
+		t.Fatalf("grok's own 500K: pro %d, flash %d", pro, flash)
+	}
+	set(func(s *settings.Settings) { s.AgentCompacts = map[string]settings.AgentCompact{"grok": {Full: true}} })
+	if pro, flash := grokWindows(t, path); pro != 1000000 || flash != 200000 {
+		t.Fatalf("grok's own full window: pro %d, flash %d", pro, flash)
+	}
+	set(func(s *settings.Settings) { s.AgentCompacts = map[string]settings.AgentCompact{"codex": {Full: true}} })
+	if pro, flash := grokWindows(t, path); pro != 300000 || flash != 200000 {
+		t.Fatalf("codex's full window reached grok: pro %d, flash %d", pro, flash)
 	}
 }

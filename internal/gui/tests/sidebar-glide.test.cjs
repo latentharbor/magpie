@@ -2,9 +2,10 @@
 // Beside the sidebar the open page's row is marked by one shape (app.js
 // navTopGo) that moves to the row picked on a spring, as iOS moves a
 // selection, the way the sub-rows' selection slides: it sets off as the row
-// is pressed, goes back when the press is let go off the row, follows its
-// row while the list of the page left folds away above it, and lands on
-// it. The rows have no ground of their own under it, hovered or not.
+// is pressed, goes back when the press is let go off the row, and lands on
+// it. Down from the Library, whose list folds away above the row picked, it
+// goes to where that row comes to rest and stays there, never past it and
+// back up (小李 on Discord: a white block bounced up). The rows have no ground of their own under it, hovered or not.
 // Settings, at the foot, has its own; the shape is away while it is open.
 // With reduced motion it is put there at once. In the header's tabs it
 // isn't drawn. Both engines, two languages, two widths.
@@ -15,6 +16,14 @@ const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
 
 const assets = path.resolve(__dirname, "../assets");
+const HOME = "/Users/aimer";
+const library = {
+  dir: `${HOME}/.magpie/library`, backups: `${HOME}/.magpie/backups`, home: HOME,
+  agents: [{ id: "codex", name: "Codex", icon: "", skills: `${HOME}/.codex/skills`, mcp: `${HOME}/.codex/config.toml` }],
+  instructions: { agents: [], sets: [] }, foundServers: [], projects: [], foundSkills: [],
+  skills: [{ name: "grilling", description: "Grill a plan", kind: "folder", agents: ["codex"], source: `${HOME}/skills/grilling` }],
+  servers: [{ name: "fs", transport: "stdio", command: "npx", args: ["fs-mcp"], agents: ["codex"] }],
+};
 
 function serve(lang) {
   return async (route) => {
@@ -25,6 +34,7 @@ function serve(lang) {
     if (url.pathname === "/api/state") return json({ agents: [], profiles: [], settings: { lang, theme: "light" } });
     if (url.pathname === "/api/providers") return json({ providers: [], presets: [], excluded: [], gateway: { url: "http://127.0.0.1:3425", running: true, window: true }, plugins: [] });
     if (url.pathname === "/api/groups") return json({ groups: [], pools: [] });
+    if (url.pathname === "/api/library") return json(library);
     if (url.pathname.startsWith("/api/")) return json({});
     if (!/^\/[\w./-]*$/.test(url.pathname) || url.host !== "magpie.test") return route.fulfill({ status: 404, body: "" });
     const file = path.join(assets, url.pathname === "/" ? "index.html" : url.pathname);
@@ -48,20 +58,7 @@ const rowOf = (page, v) => page.evaluate((v) => {
 const watch = (page) => page.evaluate(() => { window.__tops = []; const f = () => { const hl = document.querySelector("#nav > .nav-top-hl"); window.__tops.push(hl.getBoundingClientRect().top); const t = window.__tops; if (t.length < 400 && !(t.length > 20 && t.slice(-20).every((y) => y === t[t.length - 1]))) requestAnimationFrame(f); else window.__still = true; }; window.__still = false; requestAnimationFrame(f); });
 const settled = async (page) => { await page.waitForFunction(() => window.__still); return page.evaluate(() => window.__tops); };
 const on = async (page, v) => {
-  // A late page/tab draw can move the row after an earlier spring has
-  // settled. Read the row and highlight in the same frame and wait for
-  // their final alignment, rather than comparing two different frames.
-  await page.waitForFunction(v => {
-    const h = document.querySelector("#nav > .nav-top-hl");
-    const row = document.querySelector(`#nav button[data-view="${v}"]`);
-    if (!h || h.hidden || !row) return false;
-    const a = h.getBoundingClientRect(), b = row.getBoundingClientRect();
-    return Math.abs(a.top - b.top) < .5 && Math.abs(a.height - b.height) < .5;
-  }, v);
-  const [s, r] = await page.evaluate(v => [
-    document.querySelector("#nav > .nav-top-hl"),
-    document.querySelector(`#nav button[data-view="${v}"]`),
-  ].map(e => { const b = e.getBoundingClientRect(); return {top:b.top,h:b.height}; }), v);
+  const [s, r] = [await shape(page), await rowOf(page, v)];
   assert(s, `the shape is drawn for ${v}`);
   assert(Math.abs(s.top - r.top) < 0.5 && Math.abs(s.h - r.h) < 0.5, `the shape on ${v}'s row: ${JSON.stringify(s)} vs ${JSON.stringify(r)}`);
 };
@@ -106,9 +103,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.equal(await page.locator("#nav button.on").getAttribute("data-view"), "providers");
       await on(page, "providers");
 
-      // to Usage, then up to Agents while Usage's tabs fold away under it:
-      // it moves by frames, never at once, and lands on its row
-      for (const v of ["usage", "agents"]) {
+      // to Usage, then up to Agents while Usage's tabs fold away under it,
+      // then the Library and down to Providers while the Library's fold away
+      // above it: it moves by frames, never at once, and lands on its row
+      for (const v of ["usage", "agents", "library", "providers"]) {
+        if (v === "providers") assert(await page.locator("#nav .nav-sub:not(.leaving)").count(), "the Library's list is open above Providers");
         const from = (await shape(page)).top, to = (await rowOf(page, v)).top;
         await watch(page);
         await page.locator(`#nav button[data-view="${v}"]`).click();

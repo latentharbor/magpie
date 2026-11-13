@@ -4,6 +4,12 @@ This distribution retains the application name `magpie`, bundle identifier
 `com.yetone.magpie`, file locations and user settings. Releases and the update
 feed belong to `latentharbor/magpie`, not upstream's release repository.
 
+That update routing is enabled by the release workflow's explicit distribution
+linker flags and pinned signing key. Builds without those flags retain upstream
+update behavior; ordinary source builds use the development version and do not
+auto-update. A pinned distribution never falls back to an unsigned or upstream
+feed when its own verification fails.
+
 ## Trust boundary
 
 The release workflow publishes **ad-hoc signed, unnotarized macOS apps**.
@@ -109,6 +115,12 @@ account data, local validation logs or machine configurations. A complete
 draft becomes Latest only after all builds, signature generation and final
 main/CI checks succeed. Notes describe maintenance generically and are not
 generated from commit messages or private configuration.
+
+After publication, a separate job verifies the release's target SHA and
+dispatches the Docker workflow at that exact version tag. This is explicit
+because a tag created by `GITHUB_TOKEN` does not trigger a push workflow.
+The container job can be retried independently of the published app assets;
+Docker only advances its stable tags after both image architectures succeed.
 
 On macOS, the post-exit relaunch requests a new LaunchServices instance
 (`open -n`) rather than a reopen event that may target the exited process.

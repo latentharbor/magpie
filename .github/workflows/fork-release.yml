@@ -63,9 +63,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15
+          - runner: macos-26-intel
             arch: arm64
-          - runner: macos-15-intel
+          - runner: macos-26-intel
             arch: amd64
     runs-on: ${{ matrix.runner }}
     steps:
@@ -80,11 +80,16 @@ jobs:
         env:
           VERSION: ${{ needs.gate.outputs.version }}
           ARCH: ${{ matrix.arch }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 1
         run: |
           set -euo pipefail
           test "$(go env GOARCH)" = "$ARCH"
           FLAGS="$(python3 build/fork_release.py flags "$VERSION")"
           make app VERSION="$VERSION" LDFLAGS="$FLAGS"
+          expected="$ARCH"
+          if [ "$ARCH" = amd64 ]; then expected=x86_64; fi
+          test "$(lipo -archs magpie.app/Contents/MacOS/magpie)" = "$expected"
           codesign --force --deep --sign - magpie.app
           codesign --verify --deep --strict magpie.app
           codesign -dv magpie.app 2>&1 | grep -Fx 'Signature=adhoc'
@@ -202,3 +207,26 @@ jobs:
           test "$(gh release view "$TAG" --json assets --jq '.assets | length')" = 17
           python3 build/fork_release.py gate "$SHA" --version "$VERSION"
           gh release edit "$TAG" --draft=false --latest
+
+  container:
+    needs: [gate, publish]
+    if: needs.gate.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SHA: ${{ needs.gate.outputs.sha }}
+      VERSION: ${{ needs.gate.outputs.version }}
+    steps:
+      - name: Build the container for the verified published tag
+        run: |
+          set -euo pipefail
+          TAG="v$VERSION"
+          gh release view "$TAG" --json isDraft,targetCommitish |
+            jq -e --arg sha "$SHA" '.isDraft == false and .targetCommitish == $sha'
+          # Tags made by GITHUB_TOKEN do not trigger push workflows. Dispatch
+          # explicitly; this separate job can be retried after publication.
+          gh workflow run docker.yml --ref "$TAG"

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/settings"
 )
 
@@ -54,6 +55,13 @@ type Managed struct {
 	Messages  int   `json:"messages"`
 	Files     int   `json:"files"`
 	Deletable bool  `json:"deletable"`
+	// Forget: Delete takes it off the list, its agent's files untouched
+	Forget bool `json:"forget,omitempty"`
+	// Undeletable: why a session of an agent whose sessions can be deleted
+	// can't be: "cursor-editor", a chat Cursor's editor keeps in its own
+	// database, or "read-only" (rowDeletable). The page says it on the
+	// row's delete, never by leaving the control out (ysm119 on Discord).
+	Undeletable string `json:"undeletable,omitempty"`
 	// Pending: a file of it is still being read for the first time, and
 	// what it spent and its messages aren't counted yet (the Sessions page
 	// answers before such a read, manage_quick.go)
@@ -75,10 +83,32 @@ type AgentCount struct {
 // those kept as files of their own, in a layout magpie knows whole.
 func Deletable(agent string) bool {
 	switch agent {
-	case "claude", "qoder", "qoder-cn", "workbuddy", "codebuddy", "codex", "pi", "raft", "cindy", "omp", "cursor", "dsh", "droid", "agy":
+	case "claude", "qoder", "qoder-cn", "workbuddy", "workbuddy-ai", "codebuddy", "codex", "pi", "raft", "cindy", "omp", "cursor", "dsh", "droid", "agy":
 		return true
 	}
 	return false
+}
+
+// rowDeletable says whether one session of an agent can be moved to the
+// trash, and, for one that can't of an agent whose sessions can, why. A
+// read-only session can't, except a Cursor editor transcript whose chat
+// the editor keeps no longer (fileMore.loose): it is files of its own.
+func rowDeletable(agent string, s Session, fs []file) (bool, string) {
+	if !Deletable(agent) {
+		return false, ""
+	}
+	if !s.ReadOnly {
+		return true, ""
+	}
+	if agent != "cursor" {
+		return false, "read-only"
+	}
+	for _, f := range fs {
+		if f.readOnly && !f.m().loose {
+			return false, "cursor-editor"
+		}
+	}
+	return true, ""
 }
 
 // ActiveWindow is how recently a session's file may have been written for
@@ -114,7 +144,7 @@ func agentCounts(all []file) []AgentCount {
 	}
 	out := []AgentCount{}
 	for a, keys := range n {
-		out = append(out, AgentCount{Agent: a, Count: len(keys), Deletable: Deletable(a)})
+		out = append(out, AgentCount{Agent: a, Count: len(keys), Deletable: Removable(a)})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Count != out[j].Count {
@@ -128,13 +158,16 @@ func agentCounts(all []file) []AgentCount {
 // ListAgent is every session of one agent, the most recently active first,
 // with no limit; one nothing was said in is listed too, to be cleared away.
 func ListAgent(agent string) []Managed {
+	alias := provider.UsageAlias()
 	storeMu.RLock()
 	defer storeMu.RUnlock()
 	mu.Lock()
 	defer mu.Unlock()
 	loadCache()
 	defer useDBs()()
-	return listAgent(agent, allFiles())
+	out := listAgent(agent, allFiles())
+	aliasManaged(out, alias)
+	return out
 }
 
 // NativeIDs are the ids of every session the agents named keep themselves,
@@ -169,6 +202,7 @@ type ManageView struct {
 // Only native's agents and the one picked are read: a change to another
 // agent's sessions waits for a page that shows it (#2776).
 func Manage(native map[string]bool, pick func([]AgentCount, map[string]map[string]bool) string) ManageView {
+	alias := provider.UsageAlias()
 	storeMu.RLock()
 	defer storeMu.RUnlock()
 	mu.Lock()
@@ -180,6 +214,7 @@ func Manage(native map[string]bool, pick func([]AgentCount, map[string]map[strin
 	v.Agent = pick(v.Agents, v.Native)
 	if v.Agent != "" {
 		v.Sessions = listAgentWith(v.Agent, all, true)
+		aliasManaged(v.Sessions, alias)
 	}
 	return v
 }
@@ -195,10 +230,13 @@ func readFor(want, all []file, quick bool) (pending map[string]bool, done func()
 }
 
 // idInFile says which agents' session ids are read from inside the
-// session's file, not taken from its name (as assemble does).
+// session's file, not taken from its name (as assemble does). ZCode's are:
+// its database rows are the files, a fork's and a subagent's filed under
+// the session they ran in (ocRoots), which a request names by their own ids
+// (subIDs, zcodeBareID).
 func idInFile(agent string) bool {
 	switch agent {
-	case "codex", "pi", "raft", "cindy", "omp", "dsh", "grok", "droid":
+	case "codex", "pi", "raft", "cindy", "omp", "dsh", "grok", "droid", "zcode":
 		return true
 	}
 	return false
@@ -230,10 +268,13 @@ func nativeIDsWith(agents map[string]bool, all []file, quick bool) map[string]ma
 	for _, fs := range groups {
 		id := sessionID(fs)
 		if a := fs[0].agent; agents[a] {
-			out[a][id] = true
-			// its subagents' calls are counted in it (subIDs)
-			for _, sub := range subIDs(fs, id) {
-				out[a][sub] = true
+			// by every id a request can name it (requestIDs, as
+			// GatewayKeys), its subagents' too: their calls are counted in
+			// it (subIDs)
+			for _, sid := range append([]string{id}, subIDs(fs, id)...) {
+				for _, rid := range requestIDs(a, sid) {
+					out[a][rid] = true
+				}
 			}
 		}
 		if fs[0].agent == "raft" && agents["pi"] {
@@ -278,7 +319,10 @@ func listAgentWith(agent string, all []file, quick bool) []Managed {
 		setSessionCodexTaskTitle(&s, taskTitles)
 		listed(&s)
 		// a WSL distro's too (TJHHHH): moved out over \\wsl.localhost
-		m := Managed{Session: s, Files: len(fs), Deletable: Deletable(agent) && !s.ReadOnly}
+		m := Managed{Session: s, Files: len(fs)}
+		m.Deletable, m.Undeletable = rowDeletable(agent, s, fs)
+		m.Forget = !Deletable(agent) && Forgettable(agent)
+		m.Deletable = m.Deletable || m.Forget
 		for _, f := range fs {
 			m.Size += f.size
 			m.Pending = m.Pending || pending[f.path]
@@ -292,6 +336,7 @@ func listAgentWith(agent string, all []file, quick bool) []Managed {
 	}
 	if agent == "codex" {
 		codexProviders(out, groups)
+		out = keptSubagents(out)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if !out[i].Last.Equal(out[j].Last) {
@@ -302,12 +347,41 @@ func listAgentWith(agent string, all []file, quick bool) []Managed {
 	return out
 }
 
+// keptSubagents drops a Codex subagent thread whose parent thread is not
+// listed: deleting a thread in Codex leaves its review, title and other
+// subagent rollouts behind, and each was a row of its own, titled by the
+// prompt Codex asked it (the guardian's "The following is the Codex agent
+// history whose request action you are assessing…", flandern). Their calls
+// are still counted by Usage.
+func keptSubagents(out []Managed) []Managed {
+	ids := make(map[string]bool, len(out))
+	for _, m := range out {
+		ids[m.ID] = true
+	}
+	for {
+		kept := make([]Managed, 0, len(out))
+		dropped := false
+		for _, m := range out {
+			if m.Role == codexRoleSubagent && !ids[m.ParentSession] {
+				delete(ids, m.ID)
+				dropped = true
+				continue
+			}
+			kept = append(kept, m)
+		}
+		out = kept
+		if !dropped {
+			return out
+		}
+	}
+}
+
 // listed fills in what assemble leaves out of a session nothing was said
 // in, as ListAgent lists it and Find finds it: how to resume it, and
 // whether its conversation can be read.
 func listed(s *Session) {
 	if s.Resume == "" && !s.ReadOnly {
-		s.Resume = resumeCommand(s.WSL, s.Agent, s.ID, s.Cwd, s.Path)
+		s.Resume = resumeFor(s.WSL, s.Agent, s.ID, s.Cwd, s.Path)
 	}
 	if s.Carry == nil {
 		s.Carry = carries(*s)
@@ -332,6 +406,9 @@ type Trashed struct {
 	// Gateway: a session seen only through magpie's gateway, whose items
 	// are the conversation text magpie recorded of it (gateway_delete.go)
 	Gateway bool `json:"gateway,omitempty"`
+	// Forgot: a session of an agent that is gone, taken off the list
+	// (Forget); nothing of it was moved, Restore lists it again
+	Forgot bool `json:"forgot,omitempty"`
 	// CodexCatalog: a Codex thread's rows in the Codex app's catalog,
 	// taken out with it and put back on Restore (codex_catalog.go)
 	CodexCatalog []codexCatalogRow `json:"codex_catalog,omitempty"`
@@ -391,7 +468,10 @@ func Delete(agent, id string) (Trashed, error) {
 	if len(fs) == 0 {
 		return Trashed{}, errors.New("no such session")
 	}
-	if s.ReadOnly {
+	if ok, why := rowDeletable(agent, s, fs); !ok {
+		if why == "cursor-editor" {
+			return Trashed{}, errors.New("Cursor's editor keeps this chat in its own database: delete it in Cursor")
+		}
 		return Trashed{}, errors.New("this session is read only")
 	}
 	paths := sessionPaths(agent, id, fs)
@@ -482,6 +562,13 @@ func sessionPaths(agent, id string, fs []file) []string {
 		// transcripts Cursor wrote of it
 		cwd := ""
 		for _, f := range fs {
+			if f.readOnly {
+				// an editor transcript, never the folder it is in
+				for _, p := range cursorEditorPaths(f, id) {
+					add(p)
+				}
+				continue
+			}
 			add(filepath.Dir(f.path))
 			if st := cache[f.path]; st != nil && f.main {
 				cwd = st.Cwd
@@ -555,7 +642,7 @@ func sessionPaths(agent, id string, fs []file) []string {
 		}
 	}
 	if agent == "claude" {
-		dir := ClaudeDir()
+		dir := claudeDirOf(fs[0].path)
 		if fs[0].m().wsl != "" {
 			// the distro's own ~/.claude
 			if dir = wslHomeOf(fs[0].m().wsl); dir == "" {
@@ -698,6 +785,11 @@ func Trash() []Trashed {
 		if err != nil || json.Unmarshal(b, &t) != nil {
 			continue
 		}
+		// gateway mode lists what the gateway kept, not this computer's
+		// agents' sessions (OwnOff)
+		if !t.Gateway && ownOff() {
+			continue
+		}
 		dir := filepath.Dir(p)
 		t.Key = filepath.Base(filepath.Dir(dir)) + "/" + filepath.Base(dir)
 		if t.Gateway {
@@ -728,6 +820,9 @@ func Purge(key string) error {
 	if dir == "" {
 		return errors.New("no such deleted session")
 	}
+	if !isGatewayKey(key) && ownOff() {
+		return ErrNotRead
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	for _, p := range []string{filepath.Dir(dir), dir} {
@@ -754,6 +849,9 @@ func Restore(key string) (Trashed, error) {
 		return Trashed{}, errors.New("no such deleted session")
 	}
 	t.Key = key
+	if !isGatewayKey(key) && ownOff() {
+		return Trashed{}, ErrNotRead
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if isGatewayKey(key) {
@@ -798,4 +896,13 @@ func Restore(key string) (Trashed, error) {
 	os.RemoveAll(dir)
 	wslRelistNow(t.Items)
 	return t, nil
+}
+
+// claudeDirOf is the Claude Code folder a session file at path is kept in
+// (<dir>/projects/<project>/<id>.jsonl), ClaudeDir for one elsewhere.
+func claudeDirOf(path string) string {
+	if p := filepath.Dir(filepath.Dir(path)); filepath.Base(p) == "projects" {
+		return filepath.Dir(p)
+	}
+	return ClaudeDir()
 }

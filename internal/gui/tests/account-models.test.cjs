@@ -16,7 +16,6 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const fresh = () => ({
@@ -118,17 +117,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     // a click that leaves the row where it was and scrolls nothing
     const still = async (page, id, b) => {
       await b.scrollIntoViewIfNeeded();
-      await scrollSettled(page);
-      const geometry = () => row(page, id).evaluate(e => {
-        const d = document.querySelector("#modal").firstElementChild, body = e.closest(".ebody");
-        const box = n => { const r = n?.getBoundingClientRect(); return r && { top: r.top, height: r.height }; };
-        return { row: box(e), pill: box(e.querySelector(".amodels")), dialog: box(d), body: box(body), scroll: body?.scrollTop, hold: { off: modalHold.off, y: modalHold.y, touched: modalHold.touched } };
-      });
-      const was = await geometry();
+      await page.waitForTimeout(150);
       const before = await row(page, id).evaluate((e) => Math.round(e.getBoundingClientRect().top)), sc = await scrolled(page);
       await b.click();
       await page.waitForTimeout(200);
-      assert.equal(await row(page, id).evaluate((e) => Math.round(e.getBoundingClientRect().top)), before, `${id}'s row moved: ${JSON.stringify({ before: was, after: await geometry() })}`);
+      // the redraw's soft refresh starts 2px low; WebKit can hold it there past 200ms
+      await page.evaluate(() => Promise.all(document.querySelector("#modal .dialog").getAnimations().map((a) => a.finished)));
+      assert.equal(await row(page, id).evaluate((e) => Math.round(e.getBoundingClientRect().top)), before, `${id}'s row moved`);
       assert.equal(await scrolled(page), sc, "a click scrolled");
     };
     // an unset badge waits under its row's ⋯
@@ -172,7 +167,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await still(page, "Spare@Example.com", pill(page, "Spare@Example.com"));
       assert.deepEqual(await chips(page, "Spare@Example.com"), ["gpt-6", "gpt-6-mini*"]);
       n = posts.length;
-      await panel(page, "Spare@Example.com").locator("button.action").click();
+      await panel(page, "Spare@Example.com").getByRole("button", { name: w.all, exact: true }).click();
       assert.deepEqual(await posted(posts, n), { id: "codex", account: "Spare@Example.com", allow: [] });
       await page.locator(".editor .acct-models").waitFor({ state: "detached" });
       assert.equal(await pill(page, "Spare@Example.com").textContent(), w.all);

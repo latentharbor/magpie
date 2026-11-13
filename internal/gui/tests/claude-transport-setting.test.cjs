@@ -5,7 +5,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { watchSettingsReads, settingsDrawn, reach } = require("./reader.cjs");
+const { watchSettingsReads, settingsDrawn, reach, provPrefsProviders, openProvPrefs, inEditor, settled, pickItem } = require("./reader.cjs");
 const assets = process.env.MAGPIE_TRANSPORT_ASSETS || path.resolve(__dirname, "../assets");
 const words = {
   en: ["Claude subscription transport", "Claude Code HTTP (experimental)", "restriction or suspension", "not guaranteed", "requests already running"],
@@ -30,7 +30,7 @@ function serve(lang, settings, saved) {
       return json(settings);
     }
     if (url.pathname === "/api/groups") return json({ models: [], groups: [], pools: [] });
-    if (url.pathname === "/api/providers") return json({ providers: [], presets: [], excluded: [], gateway: { running: true, window: true, url: "http://127.0.0.1:3999" } });
+    if (url.pathname === "/api/providers") return json(provPrefsProviders(["claude"]));
     if (url.pathname.startsWith("/api/")) return json({});
     const file = path.join(assets, url.pathname === "/" ? "index.html" : url.pathname);
     const contentType = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png" }[path.extname(file)];
@@ -39,7 +39,10 @@ function serve(lang, settings, saved) {
 }
 
 async function reveal(page, row) {
-  await reach(page, row.locator(".pick, .segs button").first());
+  const control = row.locator(".pick, .segs button").first();
+  if (await row.evaluate(e => !!e.closest(".editor"))) await inEditor(page, control);
+  else await reach(page, control);
+  await settled(page);
 }
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
@@ -51,12 +54,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       page.setDefaultTimeout(5000);
       const choose = async name => {
         const item = page.getByRole("menuitemradio", { name, exact: true });
-        await item.click().catch(async error => {
-          const detail = await item.evaluate(e => {
-            const box = e => { const r = e.getBoundingClientRect(); return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,height:r.height}; };
-            return {item:box(e),menu:box(e.closest(".proto-menu")),anchor:box(document.querySelector("#claudeTransportPick")),viewport:[innerWidth,innerHeight],view:box(document.querySelector("#view-settings")),scroll:document.querySelector("#view-settings").scrollTop};
-          });
-          throw new Error(error.message + " menu: " + JSON.stringify(detail));
+        await pickItem(page,item).catch(async error => {
+          const detail = await page.evaluate(() => ({menus:[...document.querySelectorAll('.proto-menu')].map(e=>e.textContent),anchor:document.querySelector('#claudeTransportPick')?.outerHTML}));
+          throw new Error(error.message + " menu: " + JSON.stringify(detail) + " errors: " + JSON.stringify(errors));
         });
       };
       const errors = [];
@@ -65,15 +65,15 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const settings = { lang, theme: "light", redact: true, claudeLeanPrompt: true };
       await page.route("**/*", serve(lang, settings, saved));
       await watchSettingsReads(page);
-      await page.goto("http://magpie.test/?view=settings&tab=models");
+      await openProvPrefs(page, "claude");
       await settingsDrawn(page);
-      const row = page.locator("#replyList #claudeTransportRow");
+      const row = page.locator("#claudeRunList #claudeTransportRow");
       await row.waitFor();
       await reveal(page, row, width);
       assert.equal(await row.locator(".name").textContent(), words[lang][0]);
       const sub = await row.locator(".sub").textContent();
       for (const warning of words[lang].slice(2)) assert(sub.includes(warning), sub);
-      assert.equal(await page.locator("#claudeTransportPick").textContent(), "Claude Code CLI (claude -p)");
+      assert.equal(await page.locator("#claudeTransportPick").textContent(), "Claude Code");
       assert.equal(await page.locator("#claudeTransportPick").getAttribute("data-value"), "cli");
       assert.equal(await page.locator("#claudeLeanRow").isVisible(), true);
       assert.equal(await row.locator("select").count(), 0);
@@ -93,10 +93,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.equal(saved[0].claudeLeanPrompt, true, "CLI choice kept while hidden");
       assert.equal(await page.locator("#claudeLeanRow").isVisible(), false);
       assert.deepEqual(await page.evaluate(() => [scrollX, scrollY, document.scrollingElement.scrollTop]), before, "click does not scroll");
-      await page.reload();
+      await openProvPrefs(page, "claude");
       await settingsDrawn(page);
       assert.equal(await page.locator("#claudeTransportPick").getAttribute("data-value"), "http");
-      // A neighboring preference save keeps HTTP selected.
+      // A save elsewhere keeps HTTP selected.
+      await page.goto("http://magpie.test/?view=settings&tab=models");
+      await settingsDrawn(page);
       await reveal(page, page.locator("#loopGuardRow"), width);
       await page.locator("#loopGuardRow .segs button").first().click();
       // The segment paints immediately; its save redraws the settings later.
@@ -104,9 +106,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // pending save can replace and move its anchor while the menu opens.
       await page.waitForFunction(() => prefsQueued === 0 && document.querySelector("#loopGuardRow .segs button")?.getAttribute("aria-pressed") === "true");
       assert.equal(saved.at(-1).claudeTransport, "http");
+      await openProvPrefs(page, "claude");
       await reveal(page, row, width);
       await page.locator("#claudeTransportPick").click();
-      await choose("Claude Code CLI (claude -p)");
+      await choose("Claude Code");
       await page.waitForFunction(() => document.querySelector("#claudeTransportPick")?.dataset.value === "cli");
       assert.equal(saved.at(-1).claudeTransport, "cli");
       assert.equal(await page.locator("#claudeLeanRow").isVisible(), true);

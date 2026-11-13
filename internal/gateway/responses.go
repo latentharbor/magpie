@@ -77,6 +77,9 @@ type rTool struct {
 	Tools       []rTool         `json:"tools,omitempty"` // a namespace's
 	Execution   string          `json:"execution,omitempty"`
 	Format      *rFormat        `json:"format,omitempty"` // a custom tool's
+	// ExternalWebAccess is a web_search tool's mode: false is Codex's
+	// "cached", true its "live"
+	ExternalWebAccess json.RawMessage `json:"external_web_access,omitempty"`
 }
 
 // rFormat is what a custom (freeform) tool's input is: "text", or a
@@ -343,6 +346,9 @@ func readResponsesFor(body []byte, facts, keepInstructions bool) (*Request, erro
 		TopP: q.TopP, Stream: q.Stream, Parallel: q.ParallelToolCalls, Fast: q.ServiceTier == "priority" || q.ServiceTier == "ultrafast", Ultrafast: q.ServiceTier == "ultrafast", Tier: q.ServiceTier, CacheKey: q.PromptCacheKey, Include: q.Include,
 		ClientMetadata: sentRaw(q.ClientMetadata), AccessPrograms: q.AccessPrograms}
 	r.Text, r.Format = textFormat(sentRaw(q.Text))
+	if q.Instructions != "" {
+		r.systemParts = []string{q.Instructions}
+	}
 	// a Responses client's turns go to Claude with hour-long cache marks,
 	// unless it asked for its prompt to be kept in memory only
 	r.hourMarks = q.PromptCacheRetention != "in_memory"
@@ -384,6 +390,13 @@ func readResponsesFor(body []byte, facts, keepInstructions bool) (*Request, erro
 				var parts []Part
 				if !facts || role != "assistant" {
 					parts = responsesParts(it.Content)
+				}
+				if it.Role == "system" || it.Role == "developer" {
+					for _, p := range parts {
+						if p.Kind == Text && p.Text != "" {
+							r.systemParts = append(r.systemParts, p.Text)
+						}
+					}
 				}
 				if keepInstructions && (it.Role == "system" || it.Role == "developer") {
 					r.Messages = append(r.Messages, Message{Role: it.Role, Parts: parts})
@@ -523,6 +536,9 @@ func readResponsesFor(body []byte, facts, keepInstructions bool) (*Request, erro
 	for i, t := range append(q.Tools, found...) {
 		if strings.HasPrefix(t.Type, "web_search") {
 			r.WebSearch = true
+			if len(t.ExternalWebAccess) > 0 {
+				r.WebAccess = t.ExternalWebAccess
+			}
 		}
 		switch t.Type {
 		case "function":
@@ -1089,6 +1105,9 @@ func responsesParts(raw json.RawMessage) []Part {
 		Text     string `json:"text"`
 		ImageURL string `json:"image_url"`
 		Detail   string `json:"detail"`
+		FileData string `json:"file_data"`
+		FileURL  string `json:"file_url"`
+		Filename string `json:"filename"`
 	}
 	decodeJSON(raw, &items)
 	var out []Part
@@ -1101,6 +1120,14 @@ func responsesParts(raw json.RawMessage) []Part {
 				im := imagePart(it.ImageURL)
 				im.Detail = it.Detail
 				out = append(out, im)
+			}
+		case "input_file":
+			// a video alone (#6135); another file is still left out (#5452)
+			src := cmp.Or(it.FileData, it.FileURL)
+			if mt := videoFileType(src, it.Filename); mt != "" {
+				if v, ok := videoPart(src, mt, it.Filename); ok {
+					out = append(out, v)
+				}
 			}
 		}
 	}

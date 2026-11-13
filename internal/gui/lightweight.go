@@ -137,6 +137,7 @@ func (h *host) makePanel() *application.WebviewWindow {
 	trayOwnClicks()
 	w.OnWindowEvent(events.Mac.WindowShow, func(*application.WindowEvent) { trayHighlight(true) })
 	w.OnWindowEvent(events.Mac.WindowHide, func(*application.WindowEvent) { trayHighlight(false) })
+	sayWailsHides(w)
 	// The system's close hides the panel, as Escape does: a title bar's X
 	// (KWin's, #1283), Alt+F4 or the window manager's close key. Closed, it
 	// was gone while the tray still opened it, and the icon did nothing
@@ -215,7 +216,10 @@ func (h *host) lighten() {
 	<-h.ready
 	var ticks [2]int // the main window's, the panel's
 	for range time.Tick(lightEvery) {
-		on := settings.Load().LightweightOn()
+		// a magpie that handed the gateway to the new version lets its
+		// hidden pages go as lightweight mode does: their polls kept it
+		// asking for usage beside the new one while it drained (#4938)
+		on := settings.Load().LightweightOn() || handedOver.Load()
 		var let []*application.WebviewWindow
 		h.winMu.Lock()
 		application.InvokeSync(func() {
@@ -278,6 +282,8 @@ func (h *host) openMain(url string) {
 	hideWebview(h.panel)
 	// the window a restart by itself brings back: up, not in front
 	quiet := quietShow.Swap(false)
+	// and minimised, on the taskbar, if it was (#3495)
+	minimised := quietMinimised.Swap(false) && quiet
 	h.dockFront(settings.Load(), true, !quiet)
 	if h.main == nil {
 		w := h.makeMain(cmp.Or(url, "/?"+h.query))
@@ -285,8 +291,7 @@ func (h *host) openMain(url string) {
 		h.madeAgain(w)
 		h.whenLoaded(w, func() {
 			if h.main == w {
-				h.placeMain(w)
-				showHere(w, !quiet)
+				h.reveal(w, quiet, minimised)
 			}
 		})
 		return
@@ -297,8 +302,24 @@ func (h *host) openMain(url string) {
 	if h.loading[h.main] {
 		return // made again, it is shown once its page has come
 	}
-	h.placeMain(h.main)
-	showHere(h.main, !quiet)
+	h.reveal(h.main, quiet, minimised)
+}
+
+// reveal places the main window and shows it; on the main thread. One a
+// restart by itself brings back minimised goes onto the taskbar as it was,
+// to restore at its place and size, maximised if it was, where the system
+// can do that without showing it first (showsMinimised); elsewhere it is
+// shown quietly, as any window a restart by itself brings back.
+func (h *host) reveal(w *application.WebviewWindow, quiet, minimised bool) {
+	if runtime.GOOS == "darwin" {
+		plainTitlebar(w) // the Mac's, not shown yet; not at start (app.go)
+	}
+	if minimised && showsMinimised {
+		showMinimised(w, h.placeAt(w))
+		return
+	}
+	h.placeMain(w)
+	showHere(w, !quiet)
 }
 
 // reopenMain answers a click on magpie's Dock icon (#1252). A window that is
@@ -359,13 +380,23 @@ func showHere(w *application.WebviewWindow, focus bool) {
 // to its own size, which the Mac fits to the screen again, so it couldn't
 // be restored at all.
 func (h *host) placeMain(w *application.WebviewWindow) {
+	if h.placeAt(w) {
+		w.EnableSizeConstraints()
+		w.Maximise()
+		w.EnableSizeConstraints()
+	}
+}
+
+// placeAt is placeMain short of maximising: it puts the window where and at
+// the size it was left, and says whether it is to be maximised.
+func (h *host) placeAt(w *application.WebviewWindow) (maximise bool) {
 	if h.placed.Swap(w) == w {
-		return
+		return false
 	}
 	// where it was left, on a screen there now (putBack)
 	put := h.putBack(w)
 	if runtime.GOOS == "linux" || w.IsMaximised() {
-		return
+		return false
 	}
 	wd, ht := w.Size()
 	sw, sh := h.mainRoom(w)
@@ -377,11 +408,7 @@ func (h *host) placeMain(w *application.WebviewWindow) {
 		}
 		fitted = false
 	}
-	if settings.Load().WindowMaximised && !fitted {
-		w.EnableSizeConstraints()
-		w.Maximise()
-		w.EnableSizeConstraints()
-	}
+	return settings.Load().WindowMaximised && !fitted
 }
 
 // putBack moves the main window, not shown yet, to where it was last left

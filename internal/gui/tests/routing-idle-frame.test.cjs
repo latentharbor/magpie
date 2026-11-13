@@ -96,7 +96,7 @@ const init = () => {
     return n;
   };
   // the live dot's pulse, running or not
-  window.__pulses = () => [...document.querySelectorAll(".rt-livedot")].filter((d) => d.getAnimations().some((a) => a.playState === "running")).length;
+  window.__pulses = () => [...document.querySelectorAll(".rt-livedot")].filter((d) => d.getAnimations({ subtree: true }).some((a) => a.playState === "running")).length;
   window.requestAnimationFrame = (cb) => {
     // a loop of the core's (app.js's sidebar spring, navTopStep) is a
     // global; the Routing plugin's is in its own scope
@@ -147,8 +147,8 @@ for (const engine of engines) for (const lang of ["en", "zh"]) {
     // a request comes in, still being answered: it flies, and the dot pulses
     next.push(live(2));
     await page.evaluate(() => window.__mark());
-    // Count the loop's progress, not a minimum display frame rate on CI.
-    await page.waitForFunction(() => window.__frames > 10);
+    const flying = await page.evaluate(() => window.__count(600));
+    assert(flying > 10, `a request coming in must wake the loop (${flying} frames in 600ms)`);
     await page.waitForFunction(() => window.__pulses() > 0);
     assert(errors.length === 0, errors.join("\n"));
 
@@ -167,7 +167,8 @@ for (const engine of engines) for (const lang of ["en", "zh"]) {
     // Routing picked again: the loop resumes, and the page is drawn
     await page.locator('#nav button[data-view="routing"]').click();
     await page.evaluate(() => window.__mark());
-    await page.waitForFunction(() => window.__frames > 10);
+    const again = await page.evaluate(() => window.__count(600));
+    assert(again > 10, `picking Routing again must resume the loop, and fly the request under way (${again} frames in 600ms)`);
     assert.equal(await page.evaluate(() => document.querySelectorAll(".rt-req").length >= 1), true, "the page is drawn again");
     assert(errors.length === 0, errors.join("\n"));
     // A document visibility event must stop the loop even when the engine
@@ -177,7 +178,7 @@ for (const engine of engines) for (const lang of ["en", "zh"]) {
     assert.equal(await page.evaluate(() => window.__count(600)), 0);
     await page.evaluate(() => window.__visibility(false));
     await page.evaluate(() => window.__mark());
-    await page.waitForFunction(() => window.__frames > 10);
+    assert(await page.evaluate(() => window.__count(600)) > 10);
     // the request answered: the stage settles, the loop and the dot rest
     const done = req(2);
     done.seq = 3;

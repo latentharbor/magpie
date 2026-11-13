@@ -18,7 +18,7 @@ import (
 // gateway at once; otherwise it restarts the gateway this one serves, or
 // starts it when none does. The page said only "quit that magpie", and the
 // user couldn't find which one it was. Only a process whose program is a
-// magpie (proc.IsMagpie, by the pid listening on the port and its path) is
+// magpie (proc.RunsMagpie, by the pid listening on the port and its program) is
 // ever ended; anything else is said, never touched.
 
 // gatewayFixJSON is how a take-over or a restart went: what stood in the
@@ -40,15 +40,33 @@ type gatewayFixJSON struct {
 	Port    string `json:"port,omitempty"`
 	Version string `json:"version,omitempty"`
 	Error   string `json:"error,omitempty"` // the system's own words
+	// Name, Tailscale and Alt: for "taken", the program that has the port
+	// and whether it is Tailscale's serve or funnel, with another port to
+	// give that (gateway.PortHeld); left out when the holder isn't read
+	Name      string `json:"name,omitempty"`
+	Tailscale bool   `json:"tailscale,omitempty"`
+	Alt       string `json:"alt,omitempty"`
 }
 
 func gatewayFixRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/gateway/take-over", func(rw http.ResponseWriter, r *http.Request) {
-		writeJSON(rw, takeOverGateway())
+		writeJSON(rw, orResume(takeOverGateway))
 	})
 	mux.HandleFunc("POST /api/gateway/restart", func(rw http.ResponseWriter, r *http.Request) {
-		writeJSON(rw, restartGateway())
+		writeJSON(rw, orResume(restartGateway))
 	})
+}
+
+// orResume is fix, or with the gateway paused (gatewaypause.go) its
+// resume: a Start while paused brings back the agents the pause took off.
+func orResume(fix func() gatewayFixJSON) gatewayFixJSON {
+	if !pausedNow() {
+		return fix()
+	}
+	if r := resumeGateway(); r.Fix != nil {
+		return *r.Fix
+	}
+	return gatewayFixJSON{OK: true}
 }
 
 // How long a magpie asked to quit is given before it is ended at once,
@@ -120,13 +138,28 @@ func startHere() gatewayFixJSON {
 			}
 			out.PID = pid
 			out.Path, _ = proc.Executable(pid)
-			if proc.IsMagpie(out.Path) {
+			if proc.RunsMagpie(pid, out.Path) {
 				// a magpie took it back as soon as the other quit
 				out.Reason = "respawned"
 			} else if proc.IsForwarder(out.Path) {
 				out.Reason = "container"
 			}
 			break
+		}
+	}
+	if out.Reason == "taken" {
+		if h := gateway.LastHeld(); h != nil || out.PID == 0 {
+			if h == nil {
+				if n, ok := gateway.NoteHeld(); ok {
+					h = &n
+				}
+			}
+			if h != nil {
+				out.Name, out.Tailscale, out.Alt = h.Name, h.Tailscale, h.Alt
+				if out.PID == 0 {
+					out.PID, out.Path = h.PID, h.Path
+				}
+			}
 		}
 	}
 	return out
@@ -159,7 +192,7 @@ func quitMagpieOnPort(version string) gatewayFixJSON {
 			out.Reason, out.Error = "unseen", err.Error()
 			return out
 		}
-		if !proc.IsMagpie(path) {
+		if !proc.RunsMagpie(pid, path) {
 			out.Reason = "not-magpie"
 			if proc.IsForwarder(path) {
 				out.Reason = "container"

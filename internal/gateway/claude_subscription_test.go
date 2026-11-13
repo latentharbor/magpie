@@ -38,7 +38,12 @@ func TestClaudeSubscriptionPromptKeepsForeignHarnessOutOfSystem(t *testing.T) {
 	if strings.Contains(args, "system-prompt") {
 		t.Fatal("Claude bridge must retain the genuine Claude Code preset")
 	}
-	for _, want := range []string{"--input-format stream-json", "--include-partial-messages", "--strict-mcp-config", "--effort medium"} {
+	// A headless run registers no OS URL handler: --setting-sources "" keeps
+	// the user's own disableDeepLinkRegistration from loading (#4928), so
+	// the setting is passed as flag settings, which --setting-sources does
+	// not control.
+	for _, want := range []string{"--input-format stream-json", "--include-partial-messages", "--strict-mcp-config", "--effort medium",
+		`--settings {"disableDeepLinkRegistration":"disable","showThinkingSummaries":true}`} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("missing CLI contract %q in %q", want, args)
 		}
@@ -318,7 +323,8 @@ func TestClaudeOwnWebSearchStaysInside(t *testing.T) {
 	if s := strings.Join(got, "|"); s != "start:m1|text:Let me look. |text:Go 1.27.1|stop:stop" {
 		t.Fatalf("events: %s", s)
 	}
-	if usage.Input != 40 || usage.Output != 12 {
+	// the prompt told is the answering message's, both billed
+	if usage.Input != 30 || usage.Output != 12 || usage.billed().Input != 40 {
 		t.Fatalf("usage: %+v", usage)
 	}
 }
@@ -340,40 +346,6 @@ func TestClaudeLimits(t *testing.T) {
 	}
 	if got := claudeLimits(json.RawMessage(`{"status":"allowed"}`)); len(got) != 0 {
 		t.Fatalf("nothing said: %+v", got)
-	}
-}
-
-func TestClaudeRejectedLimitOverridesLaggingUtilization(t *testing.T) {
-	for _, raw := range []string{
-		`{"status":"rejected","rateLimitType":"five_hour","utilization":0.97,"resetsAt":7}`,
-		`{"status":"rejected","rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.97,"resetsAt":7}}}`,
-	} {
-		if got := claudeLimits(json.RawMessage(raw)); !slices.Equal(got, []provider.ClaudeLimit{{Kind: "five_hour", Used: 1, ResetsAt: 7}}) {
-			t.Fatalf("rejection ignored: %+v", got)
-		}
-	}
-}
-
-func TestClaudeRefusalLimitIsNarrow(t *testing.T) {
-	now := time.Unix(100, 0)
-	kept := []provider.ClaudeLimit{{Kind: "five_hour", Used: 0.97, ResetsAt: 200}, {Kind: "seven_day", Used: 0.6, ResetsAt: 300}}
-	for _, tc := range []struct{ kind, text, window string }{
-		{"rate_limit", "You've hit your session limit · resets 3:40am (Australia/Perth)", "five_hour"},
-		{"rate_limit", "You've hit your weekly limit · resets Friday", "seven_day"},
-		{"rate_limit", "Too many requests per minute", ""},
-		{"rate_limit", "You've hit your Opus limit · resets Friday", ""},
-		{"authentication_failed", "You've hit your session limit · resets Friday", ""},
-	} {
-		got, ok := claudeRefusalLimit(tc.kind, tc.text, kept, now)
-		if ok != (tc.window != "") || got.Kind != tc.window || ok && (got.Used != 1 || got.ResetsAt <= now.Unix()) {
-			t.Fatalf("%s/%s: %+v %v", tc.kind, tc.text, got, ok)
-		}
-	}
-	for _, prior := range [][]provider.ClaudeLimit{nil, {{Kind: "five_hour", ResetsAt: 99}}} {
-		got, ok := claudeRefusalLimit("rate_limit", "You've hit your session limit · resets tomorrow", prior, now)
-		if !ok || got.ResetsAt != 0 {
-			t.Fatal("invented reset for an unknown or expired window")
-		}
 	}
 }
 

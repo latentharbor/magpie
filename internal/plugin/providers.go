@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,12 +28,23 @@ import (
 type Method struct {
 	Type  string `json:"type"`
 	Label string `json:"label"`
+	// Labels is Label by the window's language ("zh", "zh-TW", "ja",
+	// "de"), magpie's own field beside OpenCode's (host.js byLang)
+	Labels map[string]string `json:"labels,omitempty"`
 	// Placeholder is the hint an "api" method gives in its key's field
 	// (magpie's own field: OpenCode's says "API key")
 	Placeholder string `json:"placeholder,omitempty"`
 	// Keyless skips personal-key entry; authorize supplies the credential.
 	Keyless bool `json:"keyless,omitempty"`
+	// KeyAsked is an "api" method whose own prompts ask its key: its
+	// authorize turns their answers into it (host.js keyAsked), so no key
+	// is asked beside them.
+	KeyAsked bool `json:"keyAsked,omitempty"`
 }
+
+// NoKey is whether an "api" method is signed in to with no key of
+// magpie's asking: keyless, or its prompts ask the key.
+func (m Method) NoKey() bool { return m.Keyless || m.KeyAsked }
 
 // KeyTitle is what an "api" method's key is asked as: its label, as
 // OpenCode's dialog titles it, unless that only says "API key" (or
@@ -141,6 +154,22 @@ type Provider struct {
 	// Checkin says the plugin presses its vendor's daily check-in for each
 	// account (auth.checkin)
 	Checkin bool `json:"checkin,omitempty"`
+	// Calls says the plugin lists each account's calls made outside
+	// magpie, for the Usage page (auth.calls)
+	Calls bool `json:"calls,omitempty"`
+	// Renews says the plugin renews its accounts' sign-ins through magpie
+	// (auth.refresh) and lets the gateway's magpie do it in the background
+	// as each comes due (auth.keepAlive not false); RenewLead is how long
+	// before a token expires it is due, in milliseconds (auth.refreshLead,
+	// 5 minutes when not said), as the host reckons it (RenewAt).
+	Renews    bool  `json:"renews,omitempty"`
+	RenewLead int64 `json:"renewLead,omitempty"`
+	// Rotating is the auth hook declaring that the vendor spends a refresh
+	// token once (auth.rotating): renewed, the old one is refused
+	// (invalid_grant). Two computers holding a copy would race to renew it
+	// and the loser is signed out for good, so its sign-ins are never
+	// carried by a backup or a sync (provider.CollectSignIns, #5583).
+	Rotating bool `json:"rotating,omitempty"`
 	// Options are the switches the plugin declares for the provider
 	// (auth.options, #2038), as the host checked them
 	Options []Option `json:"options,omitempty"`
@@ -205,6 +234,10 @@ type Option struct {
 	// the switch is on (WorkBuddy's "Free models only"): the editor says
 	// so by the models
 	FiltersModels bool `json:"filtersModels,omitempty"`
+	// Placement is where the editor draws the switch: "top" under the
+	// accounts, above Routing, for a switch about the whole plugin
+	// (#5269); "" under the models
+	Placement string `json:"placement,omitempty"`
 }
 
 // OptionOn is option o of a provider as it stands with the user's values
@@ -659,9 +692,7 @@ func Cached() []Provider {
 	good := provGood
 	provMu.Unlock()
 	if ps == nil {
-		if b, err := steady.ReadFile(providersPath()); err == nil {
-			_ = json.Unmarshal(b, &ps)
-		}
+		ps = savedProviders()
 	}
 	if len(l.Plugins) == 0 {
 		return nil
@@ -716,14 +747,88 @@ func Cached() []Provider {
 	return out
 }
 
+// savedProviders is plugin-providers.json, what the plugins last listed,
+// parsed once for each version of the file: while the host hasn't
+// listed them (just started, or it can't start, offline or a plugin that
+// fails), every Cached read and decoded the whole file again, a few
+// hundred KB for each look at a model of a plugin. What it gives is
+// shared: the caller must not change it.
+func savedProviders() []Provider {
+	ps, _ := filememo.Read("plugin-providers", providersPath(), func(b []byte) ([]Provider, error) {
+		var ps []Provider
+		_ = json.Unmarshal(b, &ps) // what decodes is kept, as it always was
+		return ps, nil
+	})
+	return ps
+}
+
 type storedAuth struct {
-	Type      string `json:"type"`
-	AccountID string `json:"accountId"`
-	Email     string `json:"email"`
-	Key       string `json:"key"`
+	Type string `json:"type"`
+	// Expires is when an OAuth sign-in's token ends, in epoch
+	// milliseconds, as the host reads it (a number, or a string of one)
+	Expires   json.RawMessage `json:"expires"`
+	AccountID string          `json:"accountId"`
+	Email     string          `json:"email"`
+	Key       string          `json:"key"`
 	Metadata  struct {
 		Email string `json:"email"`
 	} `json:"metadata"`
+}
+
+// RenewAt is when the sign-in kept under key, an account of p, comes due
+// to be renewed in the background, as host.js's renewAt reckons it: an
+// OAuth sign-in's expires less p.RenewLead. False when it never does: p
+// doesn't renew in the background, the sign-in isn't OAuth, has no
+// expiry or isn't kept.
+func RenewAt(p Provider, key string) (time.Time, bool) {
+	if !p.Renews {
+		return time.Time{}, false
+	}
+	a, ok := readAuth()[key]
+	if !ok || a.Type != "oauth" {
+		return time.Time{}, false
+	}
+	exp, ok := expiresOf(a.Expires)
+	if !ok {
+		return time.Time{}, false
+	}
+	return time.UnixMilli(max(1, exp-p.RenewLead)), true
+}
+
+// expiresOf is a sign-in's expires as JavaScript's Number reads it, when
+// it is a time after the epoch.
+func expiresOf(raw json.RawMessage) (int64, bool) {
+	v := strings.TrimSpace(string(raw))
+	if s, err := strconv.Unquote(v); err == nil {
+		v = strings.TrimSpace(s)
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f <= 0 || f > math.MaxInt64/2 {
+		return 0, false
+	}
+	return int64(f), true
+}
+
+// KeptSignedIn is what came of KeepSignedIn: Due false, the sign-in
+// wasn't due (renewed meanwhile); Renewed, it is a new one; else Err is
+// why it couldn't be, Gone whether the vendor turned it away for good
+// (the host marks the account, as OnSignIn tells), and Waiting that a
+// renewal failed lately and isn't tried again yet.
+type KeptSignedIn struct {
+	Due     bool   `json:"due"`
+	Renewed bool   `json:"renewed"`
+	Waiting bool   `json:"waiting"`
+	Gone    bool   `json:"gone"`
+	Err     string `json:"error"`
+}
+
+// KeepSignedIn renews account's sign-in of provider if it is due, as a
+// request on it would, under the same once-at-a-time renewal and lock,
+// and waits for it.
+func KeepSignedIn(ctx context.Context, provider, account string) (KeptSignedIn, error) {
+	var k KeptSignedIn
+	err := Call(ctx, "keepSignedIn", map[string]any{"provider": provider, "account": account, "proxy": proxyOf(ctx)}, &k)
+	return k, err
 }
 
 // ProviderOf is the provider an account key is one of.
@@ -830,14 +935,19 @@ func SignedIn(provider string) bool {
 
 // Prompt is a question a sign-in method asks before it starts.
 type Prompt struct {
-	Type        string `json:"type"` // text, select, password (text typed unseen, #1982)
-	Key         string `json:"key"`
-	Message     string `json:"message"`
-	Placeholder string `json:"placeholder,omitempty"`
+	Type    string `json:"type"` // text, select, password (text typed unseen, #1982)
+	Key     string `json:"key"`
+	Message string `json:"message"`
+	// Messages, an option's Labels and Hints are those words by the
+	// window's language, as Method.Labels
+	Messages    map[string]string `json:"messages,omitempty"`
+	Placeholder string            `json:"placeholder,omitempty"`
 	Options     []struct {
-		Label string `json:"label"`
-		Value string `json:"value"`
-		Hint  string `json:"hint,omitempty"`
+		Label  string            `json:"label"`
+		Value  string            `json:"value"`
+		Hint   string            `json:"hint,omitempty"`
+		Labels map[string]string `json:"labels,omitempty"`
+		Hints  map[string]string `json:"hints,omitempty"`
 	} `json:"options,omitempty"`
 }
 
@@ -887,10 +997,21 @@ const NewAccount = "new"
 // Authorize begins an OAuth sign-in to account (a key, or NewAccount),
 // through the proxy ctx names (netproxy.With): the plugin's requests for
 // it, there and in Finish, go through that one (#1663).
+// A plugin that can't start one says why ({ type: "failed", error }), and
+// that is the error (plugins#658).
 func Authorize(ctx context.Context, provider string, method int, inputs map[string]string, account string) (Authorization, error) {
-	var a Authorization
-	err := Call(ctx, "authorize", map[string]any{"provider": provider, "method": method, "inputs": inputs, "account": account, "proxy": proxyOf(ctx)}, &a)
-	return a, err
+	var r struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+		Authorization
+	}
+	if err := Call(ctx, "authorize", map[string]any{"provider": provider, "method": method, "inputs": inputs, "account": account, "proxy": proxyOf(ctx)}, &r); err != nil {
+		return Authorization{}, err
+	}
+	if !r.OK {
+		return Authorization{}, failure(r.Error)
+	}
+	return r.Authorization, nil
 }
 
 // Saved is where a sign-in was kept: the provider (a plugin may sign in
@@ -1140,6 +1261,11 @@ type UsageWindow struct {
 	Models    []string `json:"models"`
 	NotModels []string `json:"notModels"`
 	Aside     bool     `json:"aside"`
+	// Pool is the group of models that share one allowance, and Family the
+	// model family a per-model window belongs to, as Antigravity's quota
+	// says them (QuotaWindow.Pool, QuotaWindow.Family)
+	Pool   string `json:"pool"`
+	Family string `json:"family"`
 	// RunsOutAt (RFC 3339) is when the soonest credits left in the window
 	// are lost, and RunsOut how many, when the vendor's credits expire
 	// apart from the window's reset (WorkBuddy's packages)
@@ -1169,6 +1295,32 @@ func AccountCheckin(ctx context.Context, provider, account string) (Checkin, err
 	var c Checkin
 	err := Call(ctx, "checkin", map[string]any{"provider": provider, "account": account, "proxy": proxyOf(ctx)}, &c)
 	return c, err
+}
+
+// OutsideCall is one call an account made outside magpie, as the plugin's
+// auth.calls said it: RID is the vendor's id of it, T its time (epoch ms),
+// In the input tokens with the cache apart, Cost its USD price as the
+// vendor gave it (nil when not said), Session the conversation it was in.
+type OutsideCall struct {
+	RID        string   `json:"rid"`
+	T          int64    `json:"t"`
+	Model      string   `json:"model"`
+	In         int64    `json:"in"`
+	Out        int64    `json:"out"`
+	CacheRead  int64    `json:"cache_read"`
+	CacheWrite int64    `json:"cache_write"`
+	Cost       *float64 `json:"cost"`
+	Session    string   `json:"session"`
+}
+
+// AccountCalls asks the plugin for account's calls of provider made
+// outside magpie, from since on.
+func AccountCalls(ctx context.Context, provider, account string, since time.Time) ([]OutsideCall, error) {
+	var r struct {
+		Calls []OutsideCall `json:"calls"`
+	}
+	err := Call(ctx, "calls", map[string]any{"provider": provider, "account": account, "proxy": proxyOf(ctx), "since": since.UnixMilli()}, &r)
+	return r.Calls, err
 }
 
 // AccountUsage asks the plugin for account's usage of provider.

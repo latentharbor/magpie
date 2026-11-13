@@ -14,6 +14,7 @@ import (
 	"golang.org/x/net/publicsuffix"
 
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/settings"
 )
 
@@ -119,7 +120,7 @@ func Rename(from, to string) error {
 }
 
 // mapModelRefs gives every model ref the file keeps for routing — the
-// providers' fallbacks, and the routing groups' members, rules, fast and
+// providers' fallbacks, and the routing groups' members, rules, fast, seen and
 // placed members, those turned off, weights, classifiers and picks — as
 // to has it: what a provider's rename (Rename) and a model given another
 // id at its provider (SetModelID) both rewrite.
@@ -140,13 +141,20 @@ func mapModelRefs(f *file, to func(string) string) {
 		for k, m := range g.Fast {
 			g.Fast[k] = to(m)
 		}
+		for k, m := range g.Ultra {
+			g.Ultra[k] = to(m)
+		}
 		for k, m := range g.Placed {
 			g.Placed[k] = to(m)
+		}
+		for k, m := range g.Seen {
+			g.Seen[k] = to(m)
 		}
 		for k, m := range g.Off {
 			g.Off[k] = to(m)
 		}
 		g.Weights = renamedWeights(g.Weights, to)
+		g.EffortMaps = renamedEffortMaps(g.EffortMaps, to)
 		g.Classifier = to(g.Classifier)
 		g.Pick = to(g.Pick)
 	}
@@ -403,8 +411,23 @@ func (r Renames) Key() string {
 // every renamed provider would be shown split until it read again.
 var lastRenames atomic.Pointer[Renames]
 
-// UsageRenames are the renames of providers.json as it is now.
+// UsageRenames are the renames of providers.json as it is now, worked
+// out once each time the file changes and shared, so read only: each
+// profile's in-use check on every state poll parsed the whole file again
+// for them, 5 MB of forty polls with real accounts.
 func UsageRenames() Renames {
+	if r, err := filememo.Read("provider renames", Path(), func(b []byte) (Renames, error) {
+		f, err := parseProviders(b)
+		if err != nil {
+			return Renames{}, err
+		}
+		return renamesOf(f.Providers, f.Deleted), nil
+	}); err == nil {
+		lastRenames.Store(&r)
+		return r
+	}
+	// missing, or a file that doesn't decode: read's own way, its last
+	// good generation
 	f, err := read()
 	if err != nil {
 		if r := lastRenames.Load(); r != nil {

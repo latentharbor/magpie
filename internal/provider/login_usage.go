@@ -100,6 +100,36 @@ func LoginUsage(ctx context.Context, agent string) map[string]SubscriptionQuota 
 	return out
 }
 
+// errLeftAlone is what a card says of an account whose provider is switched
+// off or removed: nothing is read for it in the background, and it is no
+// failed read. keepLast gives the reading kept from before ("not read yet").
+var errLeftAlone = errors.New("not read yet: this subscription is switched off in magpie, so nothing is read for it")
+
+// LoginUsageShown is LoginUsage for the account lists (the editor's cards,
+// `magpie accounts`): a provider magpie leaves alone (switched off or
+// removed) makes no request, and its accounts show what was last known of
+// them, as leftAlone promises, not an empty card ("No allowance reported",
+// Kunlin03 on X: a Claude Pro account with the Claude Code switch off).
+// LoginUsage itself stays empty for it: warm-ups and switching read it and
+// must not take a kept reading for a fresh one.
+func LoginUsageShown(ctx context.Context, agent string) map[string]SubscriptionQuota {
+	if !settings.AccountDiscoveryOff() && leftAlone(agent) {
+		if logins, ok := usageLogins(agent); ok {
+			return keptLoginUsage(logins)
+		}
+	}
+	return LoginUsage(ctx, agent)
+}
+
+// keptLoginUsage is each of logins' last reading, asking no one.
+func keptLoginUsage(logins []Login) map[string]SubscriptionQuota {
+	out := map[string]SubscriptionQuota{}
+	for _, l := range logins {
+		out[l.User] = keepLast(SubscriptionQuota{Provider: loginProvider(l), Plan: l.Plan, Windows: []QuotaWindow{}, Error: errLeftAlone.Error()}, l.User)
+	}
+	return out
+}
+
 // loginUsageAt is LoginUsage and when the oldest of its readings was made:
 // one taken from the cache is up to a minute old already, and Allowances
 // counts its own minute from then, not from when it asked (#1295). And
@@ -386,6 +416,18 @@ func loginQuota(ctx context.Context, l Login) SubscriptionQuota {
 	if l.Agent == "gemini" || l.Agent == "antigravity" {
 		return googleLoginQuota(ctx, l)
 	}
+	if l.Agent == ChatGPTAPIID {
+		// a ChatGPT plan through OpenAI's API (chatgpt_api.go): OpenAI
+		// tells its usage nowhere magpie can ask, only at SIWCUsageURL, so
+		// its row says so and what does show it, the account added as
+		// ChatGPT (danzi002 on Discord: accounts added through the API
+		// show no allowance, ones signed in as ChatGPT do). It used to be
+		// read below as a Codex account: a saved one said "chatgpt-api
+		// accounts can't be used side by side", the one in use read
+		// Codex's own sign-in ("Codex is signed out; run codex login", or
+		// another account's allowance under its name).
+		return SubscriptionQuota{Provider: l.Agent, Plan: l.Plan, Windows: []QuotaWindow{}, Error: siwcNoUsage, SeeAt: SIWCUsageURL}
+	}
 	if l.Agent == "copilot" {
 		for _, c := range copilotLogins(copilotConfigDir()) {
 			if strings.EqualFold(c.User, l.User) {
@@ -584,6 +626,14 @@ func codexReadingHeld(u map[string]SubscriptionQuota) bool {
 		}
 	}
 	return false
+}
+
+// codexHeldKnown is whether user's ChatGPT account was held by the Codex
+// app (codexReadingHeld's held) at its last reading, asking no one; false
+// when it was never read or the read failed.
+func codexHeldKnown(user string) bool {
+	e, ok := loginReadingKnown(Login{Agent: "codex", User: user})
+	return ok && e.q.Error == "" && e.q.Held
 }
 
 // knownLoginUsage is LoginUsage over the readings already in hand, with

@@ -162,7 +162,12 @@ type Record struct {
 	RequestID string `json:"rid,omitempty"`
 	// ResponseID is the response object ID actually sent to the client.
 	ResponseID string `json:"response_id,omitempty"`
-	Endpoint   string `json:"ep,omitempty"`
+	// MessageID is the id the agent's own session file gives the call's
+	// message (Claude Code's msg_…), on a call read from such a file. Not
+	// persisted: it is read back with the file, and told by the request
+	// feed (FeedOriginals).
+	MessageID string `json:"-"`
+	Endpoint  string `json:"ep,omitempty"`
 	// Stop is why the upstream said its reply ended, in its own words
 	// (stop_reason, finish_reason …): "" when it said none, a stream that
 	// just stopped. Told apart by it, a reply that ended too soon is the
@@ -195,6 +200,40 @@ type Record struct {
 	// index tells HandedOn from such a record's route (handedOn).
 	Tries    int  `json:"tries,omitempty"`
 	HandedOn bool `json:"handed_on,omitempty"`
+	// UpBytes is how many bytes of this call's request actually went up to
+	// the vendor on the wire, its tries summed: the plain body where it
+	// goes as read, less where it went compressed (zstd to a ChatGPT
+	// backend, provider.CodexCompressed). A try gone over a connection
+	// that then failed still counts, as a connection's own counter would,
+	// and so does a single ask's second request (RetryOneAuth …). A
+	// record from before it was kept has none (#4456).
+	UpBytes int `json:"up_bytes,omitempty"`
+	// PlainBytes is the request's last try as it went into that ask,
+	// before compression, what UpBytes would have been without one: beside
+	// it, a compressed turn's discount and a retried request's re-sends
+	// both read off the row. None when no try went out.
+	PlainBytes int `json:"plain_bytes,omitempty"`
+	// DownBytes is how many bytes of the vendor's replies to this call's
+	// tries magpie read, tries summed as UpBytes is: a reply's body as it
+	// came, after the HTTP client undid a gzip the vendor sent it in, so
+	// more than the wire's for a gzipped reply. A record from before it was
+	// kept has none.
+	DownBytes int `json:"down_bytes,omitempty"`
+	// ImageFilesSaved is how many fewer bytes went up because DeepSeek's
+	// image files named the request's inline images by file id (#5407):
+	// the inline base64 its tries left out, less the images this request
+	// uploaded for it. Below 0 when an upload cost more than it saved this
+	// time. None where no image went by file.
+	ImageFilesSaved int `json:"image_files_saved,omitempty"`
+	// ImageFiles is how many of the request's inline images went by file
+	// instead, the most of any one try (a retry sends the same ones again):
+	// what ImageFilesSaved was saved on (matrix0487 on Discord). None in a
+	// row from before it was kept.
+	ImageFiles int `json:"image_files,omitempty"`
+	// Socket says the request went over the Responses WebSocket, its
+	// last try (provider.Socket, matrix0487 on Discord): UpBytes is then
+	// what the socket was sent, a delta on a kept socket.
+	Socket bool `json:"ws,omitempty"`
 	// Kind is what the agent made the call for when it isn't a turn of
 	// the conversation: a Codex subagent's (review, compact, guardian…)
 	Kind string `json:"kind,omitempty"`
@@ -227,6 +266,13 @@ type Record struct {
 	// has the request's attempts already, so it can pass the row over.
 	// Never persisted.
 	Watched bool `json:"-"`
+	// ClientIP is the address the request came to the gateway from, as the
+	// connection gave it (the gateway trusts no forwarding header, so behind
+	// a proxy it is the proxy's): a loopback address for this computer. It
+	// stays on this computer: sync (SharedCalls) and the gateway's
+	// /v1/magpie/usage/requests leave it out. "" for a row kept before it
+	// was recorded, a call a client reported, or magpie's own.
+	ClientIP string `json:"client_ip,omitempty"`
 	// Local is true only for verified loopback gateway requests. It is used
 	// for local-session deduplication, never persisted or exported.
 	Local bool `json:"-"`
@@ -280,6 +326,7 @@ func Append(r Record) {
 		observeLedger(r)
 	}
 	defer codexUsedNew(r)
+	defer spentNew(r)
 	b, err := json.Marshal(r)
 	if err != nil {
 		return
@@ -510,10 +557,13 @@ func (r Record) CostAt(p catalog.Price) float64 {
 type Totals struct {
 	// Calls are the requests, Errors those the agent got an error for, and
 	// Retried those answered after a try that failed first (Record.Tries):
-	// a try handed on is in neither count, but its tokens are in the sums
-	Calls   int `json:"calls"`
-	Errors  int `json:"errors"`
-	Retried int `json:"retried,omitempty"`
+	// a try handed on is in neither count, but its tokens are in the sums.
+	// Canceled are those the agent canceled before they were answered
+	// (Record.Canceled): neither an error nor answered
+	Calls    int `json:"calls"`
+	Errors   int `json:"errors"`
+	Retried  int `json:"retried,omitempty"`
+	Canceled int `json:"canceled,omitempty"`
 	// Loops are those of Errors magpie ended for looping (LoopErrType):
 	// a model's count of them says how often it got stuck (#1858)
 	Loops      int `json:"loops,omitempty"`
@@ -557,6 +607,19 @@ type Totals struct {
 	FloorOut int   `json:"floor_out,omitempty"`
 	FloorMs  int64 `json:"floor_ms,omitempty"`
 	FloorN   int   `json:"floor_n,omitempty"`
+	// UpBytes, DownBytes and ImageFilesSaved are the rows' own summed
+	// (Record.UpBytes …): what went up to the vendors and came back, of
+	// the rows that kept it; none when no row did
+	UpBytes         int64 `json:"up_bytes,omitempty"`
+	DownBytes       int64 `json:"down_bytes,omitempty"`
+	ImageFilesSaved int64 `json:"image_files_saved,omitempty"`
+}
+
+// addBytes adds r's bytes on the wire (Totals.UpBytes …).
+func (t *Totals) addBytes(r *Record) {
+	t.UpBytes += int64(r.UpBytes)
+	t.DownBytes += int64(r.DownBytes)
+	t.ImageFilesSaved += int64(r.ImageFilesSaved)
 }
 
 // Tokens is what went in and out, excluding cache traffic.
@@ -652,6 +715,16 @@ func DecodeWindow(out int, ms, ttft int64) int64 {
 //     reasoning hidden from the stream (OpenAI's, Claude's omitted) comes
 //     before the first content and leaves this time short; one that
 //     streams comes at the pace its answer does.
+//   - a window under HeldWindowMs after a wait HeldShare times longer: the
+//     reply came whole in a moment after a long silence, and what it was
+//     written over is not seen (pluviophile714 on Discord: gpt-6.1-sol,
+//     392 tokens 0.25 s after an 8.2 s first token, read 1,539 tok/s where
+//     the vendor writes ~70). Its content can come spread over that moment
+//     (a relay replaying a held reply, OpenAI's answer let go after its
+//     hidden reasoning), so flow doesn't tell it. A stream as it is written
+//     takes a second or more to write a few hundred tokens; one that takes
+//     under a second is too short a sample to tell a speed by against such
+//     a wait, so a short answer after a long think tells none either.
 func DecodeOf(out, reasoning int, ms, ttft, firstText, flow int64, firstReasoning ...int64) (tokens int, w int64) {
 	start := ttft
 	if reasoning > 0 {
@@ -672,19 +745,24 @@ func DecodeOf(out, reasoning int, ms, ttft, firstText, flow int64, firstReasonin
 	if flow > 0 && flow*HeldShare < w {
 		return 0, 0
 	}
+	if w < HeldWindowMs && start > HeldShare*w {
+		return 0, 0
+	}
 	if reasoning > 0 && firstText > 0 && int64(out)*(firstText-ttft) > ThinkPace*int64(reasoning)*w {
 		return 0, 0
 	}
 	return out, w
 }
 
-// HeldShare and ThinkPace tell a reply held back and let go in a burst
-// (DecodeOf): its content came in under a quarter of its window, or its
-// answer at over 20 times the pace its reasoning came. routing/client.js's
-// decodeOf and app.js's ledDecode have the same.
+// HeldShare, ThinkPace and HeldWindowMs tell a reply held back and let go
+// in a burst (DecodeOf): its content came in under a quarter of its window,
+// its answer at over 20 times the pace its reasoning came, or its window
+// was under a second and under a quarter of the wait before it.
+// routing/client.js's decodeOf and usage/page.js's ledDecode have the same.
 const (
-	HeldShare = 4
-	ThinkPace = 20
+	HeldShare    = 4
+	ThinkPace    = 20
+	HeldWindowMs = 1000
 )
 
 // Decode is the record's DecodeOf.
@@ -772,6 +850,26 @@ func (t Totals) HitRate() (float64, bool) {
 	return float64(t.CacheRead) / float64(p), true
 }
 
+// HitPct is a hit rate (0 to 1) as a percent, whole unless rounding would
+// say 100% or 0% of a prompt not all or none cached, then to one or two
+// decimals (ZhangXiaof48473 on X); the GUI's hitPct says it the same way.
+func HitPct(h float64) string {
+	s, v := "", 0.0
+	for d := 0; d <= 2; d++ {
+		s = strconv.FormatFloat(100*h, 'f', d, 64)
+		if v, _ = strconv.ParseFloat(s, 64); h <= 0 || h >= 1 || (v > 0 && v < 100) {
+			break
+		}
+	}
+	switch {
+	case h < 1 && v >= 100:
+		s = "99.99"
+	case h > 0 && v <= 0:
+		s = "0.01"
+	}
+	return s + "%"
+}
+
 func (t *Totals) add(r Record, price *catalog.Price) { t.addFrom(Row{Record: r}, price) }
 
 // addFrom is add for a ledger row, whose speed is told as Row.Decode tells
@@ -786,7 +884,8 @@ func (t *Totals) addFrom(row Row, price *catalog.Price) {
 	t.CacheWrite1h += r.CacheWrite1h
 	t.countCache(r)
 	t.Reasoning += r.Reasoning
-	if r.TTFT > 0 && !r.Failed() {
+	t.addBytes(&r)
+	if r.TTFT > 0 && r.Answered() {
 		t.Timed++
 		t.TTFT += r.TTFT
 		if n, w := row.Decode(); w > 0 {
@@ -810,8 +909,9 @@ func (t *Totals) addFrom(row Row, price *catalog.Price) {
 // their errors.
 const LoopErrType = "reply_loop"
 
-// count counts r as the request it ends: failed, answered on a retry, or
-// answered; a try handed on to another is no request of its own.
+// count counts r as the request it ends: failed, canceled by its agent,
+// answered on a retry, or answered; a try handed on to another is no
+// request of its own.
 func (t *Totals) count(r Record) {
 	// a try handed on is billed its credits too, though it is no request
 	if r.Credits != nil {
@@ -823,6 +923,8 @@ func (t *Totals) count(r Record) {
 	}
 	t.Calls++
 	switch {
+	case r.Canceled():
+		t.Canceled++
 	case r.Failed():
 		t.Errors++
 		if r.ErrType == LoopErrType {
@@ -838,8 +940,8 @@ func (t *Totals) count(r Record) {
 func (r Record) LostRequest() bool { return r.Failed() && !r.HandedOn }
 
 // RetriedRequest is whether r ends a request that was answered after a try
-// that failed first.
-func (r Record) RetriedRequest() bool { return !r.HandedOn && !r.Failed() && r.Tries > 1 }
+// that failed first (not one its agent canceled after a failed try).
+func (r Record) RetriedRequest() bool { return !r.HandedOn && r.Answered() && r.Tries > 1 }
 
 // Group is the share of one agent or model.
 type Group struct {
@@ -957,7 +1059,7 @@ type Summary struct {
 // Summarize caches the four periods over an indexed log snapshot. Callers
 // receive their own result slices, without retaining historical Records.
 func Summarize(p Period) Summary {
-	return indexedSummary(p, Clock())
+	return indexedSummary(p, localNow())
 }
 
 func summarize(p Period, now time.Time, recs []Record) Summary {

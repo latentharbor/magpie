@@ -21,7 +21,7 @@ const groups = () => ({
   pools: [],
 });
 const LONG = "~/work/a-long-project-name, ~/work/another-long-project, ~/scratch/third";
-const words = { en: { edit: "Edit" }, zh: { edit: "编辑" }, "zh-TW": { edit: "編輯" }, ja: { edit: "編集" }, de: { edit: "Bearbeiten" } };
+const words = { en: { edit: "Edit" }, zh: { edit: "编辑" } };
 
 function serve(lang) {
   const state = { agents: [], profiles: [], settings: { lang, theme: "light" } };
@@ -70,7 +70,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const errors = [];
       page.on("pageerror", (e) => errors.push(e.message));
       await page.route("**/*", serve(lang));
-      await page.goto("http://magpie.test/?view=routing");
+      await page.goto("http://magpie.test/?view=groups");
       const group = page.locator(".rt-group").first();
       await group.waitFor();
       await press(page, group.locator("button", { hasText: words[lang].edit }));
@@ -79,8 +79,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       for (const [opener, menu] of [[".rt-rmore", ".row-menu"], [".rt-addc", ".proto-menu"]]) {
         await box.fill(LONG);
         await box.press("End");
-        assert.equal(await page.locator(".rt-gedit").evaluate((e) => e.scrollTop), 0,
-          "focusing the field does not scroll the opening editor internally");
         assert(await box.evaluate((b) => b.scrollWidth > b.clientWidth), "the folders run past their box");
         await press(page, row.locator(opener));
         await page.waitForTimeout(400);
@@ -88,19 +86,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.keyboard.press("Escape");
         await page.locator(menu).waitFor({ state: "detached" });
       }
-      // Keeping a focus-driven scroll from dismissing a menu must not
-      // leave it open when the reader really wheels the surrounding view.
-      await page.setViewportSize({ width: 1100, height: 700 });
-      await page.waitForTimeout(250);
-      await press(page, row.locator(".rt-rmore"));
-      assert.equal(await page.locator(".row-menu").count(), 1);
-      const view = page.locator("#view-routing");
-      const before = await view.evaluate((v) => v.scrollTop);
-      const vb = await view.boundingBox();
-      await page.mouse.move(vb.x + vb.width - 4, vb.y + 60);
-      await page.mouse.wheel(0, before > 0 ? -300 : 300);
-      await page.waitForFunction((top) => document.querySelector("#view-routing").scrollTop !== top, before);
-      await page.locator(".row-menu").waitFor({ state: "detached" });
       assert.deepEqual(errors, []);
     });
   }

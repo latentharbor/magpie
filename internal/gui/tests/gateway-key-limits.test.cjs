@@ -9,7 +9,6 @@ const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
 const { fixture } = require("./fixtures/caller-keys.cjs");
-const { reach } = require("./reader.cjs");
 
 const src = fs.readFileSync(path.resolve(__dirname, "../assets/i18n.js"), "utf8");
 const I18N = new Function(src.slice(0, src.indexOf("\n};") + 3) + "; return I18N;")();
@@ -56,7 +55,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // tap clicks what may be below the fold on a narrow window, after
         // scrolling to it with the wheel as a person would, above the footer
         const tap = async (loc) => {
-          await reach(page, loc);
+          await page.mouse.move(width / 2, 400);
+          for (let i = 0; i < 20 && !(await loc.evaluate((e) => { const r = e.getBoundingClientRect(); return r.top >= 0 && r.bottom <= (document.querySelector("footer.foot")?.getBoundingClientRect().top ?? innerHeight); })); i++) {
+            await page.mouse.wheel(0, 120);
+            await page.waitForTimeout(50);
+          }
           await loc.click();
         };
 
@@ -75,7 +78,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await fits("the rows");
 
         // the editor opens on the limit holding it, each limit a tab
-        await tap(badge);
+        await badge.click();
         const ed = row("laptop").locator(".key-limit-ed");
         await ed.waitFor();
         const tabs = ed.getByRole("tablist", { name: tr("This key's limits"), exact: true }).getByRole("tab");
@@ -110,7 +113,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.deepEqual(sent("limit-key").map((e) => e.body), [{ key: "laptop", limit: { period: "hours", hours: 5, tokens: 0, cost: 12, cacheReads: false }, index: 0 }]);
 
         // Add a limit: a window it has none in, nothing to save until a cap
-        await tap(badge);
+        await badge.click();
         await ed.waitFor();
         await tap(ed.getByRole("button", { name: tr("Add a limit"), exact: true }));
         assert.equal(await ed.getByRole("tab", { name: tr("New limit"), exact: true }).getAttribute("aria-selected"), "true");
@@ -126,7 +129,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await fits("three limits");
 
         // Remove this limit takes off that one only
-        await tap(badge);
+        await badge.click();
         await ed.waitFor();
         await ed.getByRole("tab", { name: tr("per day"), exact: true }).click();
         await tap(ed.getByRole("button", { name: tr("Remove this limit"), exact: true }));

@@ -17,7 +17,9 @@ const ymd = (d) => [d.getFullYear(), d.getMonth() + 1, d.getDate()].map((n) => S
 const allDays = Array.from({ length: 30 }, (_, i) => ({ day: ymd(new Date(now.getTime() - i * 864e5)), requests: 100 + i }));
 const at = (i) => new Date(now.getTime() - (i + 1) * 60e3).toISOString();
 const who = { id: "fixture-key", provider: "fixture", name: "Fixture", who: "key-1", kind: "key", model: "model-a", routing: "", used: 0 };
-const routes = Array.from({ length: 4 }, (_, i) => ({
+// a day's requests fill the window, as a day of 100 or more does: the bar
+// held when a day comes in needs the room under it to scroll into
+const routes = Array.from({ length: 12 }, (_, i) => ({
   id: 100 - i, seq: 100 - i, time: at(i), agent: "fixture", model: "model-a", provider: "fixture",
   order: [who], tries: [{ id: who.id, model: "model-a", start: at(i), done: true, status: 200, ms: 1200 }],
   done: true, status: 200, ms: 1200, tokens: 3000,
@@ -101,7 +103,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const pill = pills.find((p) => p.more);
         assert(pill.on, `${width}px: the pill holding the day looked at is pressed`);
         assert.match(pill.text, new RegExp(String(allDays.at(-1).requests)), `${width}px: the pill is named by the day: ${pill.text}`);
-        assert(!pills.some((p) => p.cut), `${width}px: picking a day cut a pill off: ${JSON.stringify(pills)}`);
+        assert(!pills.some((p) => p.cut), `${width}px: picking a day cut a pill off`);
         assert(Math.abs(await page.locator(".rt-days").evaluate((e) => e.getBoundingClientRect().top) - was.bar) <= 1, `${width}px: picking a day moved the bar`);
 
         // Live, back in the bar: the pill no longer pressed

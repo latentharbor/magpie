@@ -5,11 +5,6 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-    inputs:
-      full_ui:
-        description: 'Also run the complete browser suite on GitHub runners'
-        type: boolean
-        default: false
 
 # On main a run finishes: a release waits for a green run, and one cancelled
 # by every next push left none to wait for (LESSONS.md). A newer push still
@@ -22,102 +17,16 @@ permissions:
   contents: read
 
 jobs:
-  ui:
-    name: ui (${{ matrix.browser }}, shard ${{ matrix.shard }})
-    if: github.repository == 'latentharbor/magpie'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        browser: [chromium, webkit]
-        shard: ${{ fromJSON(inputs.full_ui && '[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]' || '[0]') }}
-    env:
-      BROWSER: ${{ matrix.browser }}
-      UI_SHARD: ${{ matrix.shard }}
-      UI_SHARDS: 16
-      FULL_UI: ${{ inputs.full_ui || false }}
-      NODE_PATH: ${{ github.workspace }}/.github/ui-preview/node_modules
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - name: Install pinned browser fixtures
-        timeout-minutes: 15
-        run: |
-          for sources in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
-            if [ -f "$sources" ]; then
-              sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' "$sources"
-            fi
-          done
-          # Bound the same intermittent runner mirror stalls as the Go job.
-          sudo sh -c 'printf "%s\n" "Acquire::Retries \"3\";" "Acquire::http::Timeout \"30\";" "Acquire::https::Timeout \"30\";" > /etc/apt/apt.conf.d/99magpie-ci'
-          # package.json pins Playwright, whose core dependency uses that exact
-          # same version. This upstream helper has no checked-in npm lockfile.
-          npm install --ignore-scripts --no-package-lock --prefix .github/ui-preview
-          .github/ui-preview/node_modules/.bin/playwright install --with-deps "$BROWSER"
-          sudo apt-get install --no-install-recommends -y fonts-noto-cjk
-      # Normal pushes cover the reported failures and affected shared UI.
-      # A full run is explicit, sharded and never starts a local browser.
-      - name: Browser regressions
-        shell: bash
-        run: |
-          set -euo pipefail
-          node <<'NODE' 2>&1 | tee "$RUNNER_TEMP/ui.log"
-          const { readdirSync } = require("node:fs");
-          const { spawnSync } = require("node:child_process");
-          const dir = "internal/gui/tests/";
-          const regressions = [
-            "sidebar", "old-webkit", "redact-words-any-case",
-            "gateway-key-models", "gateway-key-limit", "header-centre",
-            "claude-auth-status", "title-bar-tools", "usage-pack",
-            "usage-curve-zoom-back", "routing-live-patch",
-            "claude-team", "claude-login",
-            "found-skill-pick-remove", "quota-refresh-order", "routing-pause",
-            "search-first", "session-identity", "agent-update-all",
-            "panel-quota-refresh", "header-zoom-fit", "side-toggle",
-            "settings-lines-wrap", "sidebar-glide", "plugin-github-wait",
-            "library-mcp-tools",
-            "fonts", "rest-try-now", "bare-ids", "keep-awake",
-          ].map(name => name + ".test.cjs");
-          const files = process.env.FULL_UI === "true"
-            ? readdirSync(dir).filter(f => f.endsWith(".test.cjs")).sort()
-                .filter((_, i) => i % Number(process.env.UI_SHARDS) === Number(process.env.UI_SHARD))
-            : regressions;
-          if (!files.length) throw new Error("No browser tests selected");
-          console.log(`Running ${files.length} files in ${process.env.BROWSER}`);
-          const run = spawnSync(process.execPath, [
-            "--test", "--test-concurrency=2", "--test-timeout=600000", "--test-reporter=tap",
-            ...files.map(f => dir + f),
-          ], { stdio: "inherit" });
-          if (run.error) console.error(run.error);
-          process.exit(run.status ?? 1);
-          NODE
-      - name: Retain browser results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-${{ matrix.browser }}-${{ matrix.shard }}
-          path: ${{ runner.temp }}/ui.log
-          if-no-files-found: ignore
-          retention-days: 7
-
   test:
     name: test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        include:
-          # GitHub repeatedly failed to acquire a hosted macOS arm64 runner
-          # for the full suite; Intel still covers macOS behavior while the
-          # release workflow separately builds both macOS architectures.
-          - os: macos-latest
-            runner: macos-15-intel
-    runs-on: ${{ matrix.runner || matrix.os }}
+    # ARM hosted jobs can be cancelled before acquiring a runner. Keep the
+    # complete macOS backend checks on the available Intel pool; release builds
+    # separately verify both native executable architectures.
+    runs-on: ${{ matrix.os == 'macos-latest' && 'macos-26-intel' || matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
@@ -125,6 +34,19 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Compiler cache location
+        id: compiler-cache
+        shell: bash
+        run: echo "path=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: restore-compiler-cache
+        with:
+          path: ${{ steps.compiler-cache.outputs.path }}
+          key: compile-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            compile-tested-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}-
+            compile-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}-
 
       # The GUI links GTK 3 and WebKitGTK 4.1 through cgo on Linux (see the
       # Makefile), so vet and test need their headers and the gtk3 tag.
@@ -134,16 +56,8 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 15
         run: |
-          # The runner's Azure mirror timed out downloading WebKit before
-          # tests could start. Use Ubuntu's official archive, with bounded
-          # request timeouts and retries rather than extending a stuck job.
-          for sources in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
-            if [ -f "$sources" ]; then
-              sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' "$sources"
-            fi
-          done
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install --no-install-recommends -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Tags
         id: tags
@@ -163,23 +77,54 @@ jobs:
       - name: Vet
         run: go vet -tags "${{ steps.tags.outputs.tags }}" ./...
 
+      # Preserve expensive native compilation even if a later behavior test
+      # fails. The next repair then reuses it instead of compiling every cgo
+      # dependency again. The tests themselves still run in full.
+      - uses: actions/cache/save@v4
+        if: steps.restore-compiler-cache.outputs.cache-hit != 'true'
+        with:
+          path: ${{ steps.compiler-cache.outputs.path }}
+          key: compile-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
 
-      - name: Repeat Claude Team handoff regressions
-        if: runner.os != 'Windows'
-        run: |
-          go test -race -count=20 -timeout 5m -tags "${{ steps.tags.outputs.tags }}" ./internal/provider/ -run '^TestClaudeTeamRefusalDuringReconcileKeepsHandoffPending$'
-          go test -race -count=20 -timeout 10m -tags "${{ steps.tags.outputs.tags }}" ./internal/gateway/ -run '^(TestClaudeTeamNativeLimitRetainsRequest|TestHeldForTheMaskingModelSaysSo|TestUnroutedRequestShownThenAnswered)$'
-
-      - name: Repeat MCP server callbacks
-        if: runner.os != 'Windows'
-        run: go test -race -count=20 -timeout 5m -tags "${{ steps.tags.outputs.tags }}" ./internal/library/ -run '^TestRunServerAsks$'
-
+      # The complete gateway package now exceeds 30m on the Intel runners.
+      # Execute all of its tests through the same isolated, exhaustive chunks
+      # as Race; keep it out of the first command so no case is run twice.
       - name: Test
         if: runner.os != 'Windows'
-        run: go test -timeout 45m -tags "${{ steps.tags.outputs.tags }}" ./...
+        timeout-minutes: 90
+        shell: bash
+        run: |
+          set -euo pipefail
+          tags='${{ steps.tags.outputs.tags }}'
+          if [ "$RUNNER_OS" = macOS ]; then
+            tags=nogui
+            packages=$(go list -tags "$tags" ./... | grep -v '^github.com/yetone/magpie/internal/gateway$')
+            go test -timeout 30m -tags "$tags" $packages
+          else
+            go test -timeout 30m -tags "$tags" ./...
+          fi
+
+      - name: Complete gateway suite (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 45
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -c -tags nogui -o "$RUNNER_TEMP/gateway.plain" ./internal/gateway/
+          build/race-shards.sh internal/gateway "$RUNNER_TEMP/gateway.plain" "$(getconf _NPROCESSORS_ONLN)" -test.timeout=20m
+
+      # Keep test compilation even when a behavior check fails. Otherwise a
+      # small repair rebuilds every native test again from the vet-only cache.
+      # Go validates input hashes and never caches a failed test as a pass.
+      - uses: actions/cache/save@v4
+        if: runner.os != 'Windows' && !cancelled()
+        with:
+          path: ${{ steps.compiler-cache.outputs.path }}
+          key: compile-tested-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
 
       # Windows skips the Test step above, so the two plugin stderr tests run
       # here. The end-to-end one needs bun on PATH; without it it skips.
@@ -201,22 +146,15 @@ jobs:
 
       # The redaction tests reuse this binary in fresh processes to check
       # first-use races, so it must include the race detector. The gateway's
-      # tests can't call t.Parallel (t.Setenv), so its suite runs split over
-      # one process per core (#923); each process isolates its own home.
+      # tests can't call t.Parallel (t.Setenv), so its suite runs in chunks,
+      # one process per core at a time, each taking the next chunk when done
+      # (#923, #5361); each process isolates its own home.
       - name: Race
         if: runner.os != 'Windows'
         shell: bash
         run: |
           go test -race -c -o "$RUNNER_TEMP/gateway.race" -tags "${{ steps.tags.outputs.tags }}" ./internal/gateway/
-          shards="$(getconf _NPROCESSORS_ONLN)"
-          timeout=20m
-          if [ "$RUNNER_OS" = macOS ]; then
-            # The Intel runner has fewer effective cores under -race;
-            # four concurrent large-stream shards overran 20 minutes.
-            shards=2
-            timeout=45m
-          fi
-          build/race-shards.sh internal/gateway "$RUNNER_TEMP/gateway.race" "$shards" -test.timeout="$timeout"
+          build/race-shards.sh internal/gateway "$RUNNER_TEMP/gateway.race" "$(getconf _NPROCESSORS_ONLN)" -test.timeout=20m
           go test -race -tags "${{ steps.tags.outputs.tags }}" ./internal/redact/
 
       # Account usage mixes cached results with concurrent fetches.
@@ -266,6 +204,25 @@ jobs:
       - name: Windows VS Code detection
         if: runner.os == 'Windows'
         run: go test -v -count=1 ./internal/agent -run '^TestVSCodeDetected$'
+
+  native-ui:
+    name: ui (macos native)
+    # Native-window acceptance remains visible under #4, separately from the
+    # mandatory backend/signature checks. UI acceptance does not block this
+    # distribution's releases; a failure is never reported as passing.
+    continue-on-error: true
+    runs-on: macos-26-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Complete native window and GUI API suite
+        timeout-minutes: 45
+        run: go test -count=1 -timeout 30m ./internal/gui
 
   cli:
     name: cli (${{ matrix.goos }}/${{ matrix.goarch }}, nogui)

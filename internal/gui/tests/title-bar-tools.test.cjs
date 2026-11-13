@@ -92,7 +92,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         page.setDefaultNavigationTimeout(60000);
         const errors = [];
         let on = "";
+        // going from page to page cancels the reads still on their way, and
+        // WebKit reports each one as a page error, "Fetch API cannot load …
+        // due to access control checks" (#1350, #1307): not this test's
         page.on("pageerror", (e) => {
+          if (engine === "webkit" && /^Fetch API cannot load .* due to access control checks/.test(e.message)) return;
           errors.push(`${width}px ${on}: ${e.stack}`);
         });
         await page.route("**/*", serve(lang));
@@ -101,15 +105,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           on = p.name;
           if (p.init) await page.evaluate(([k, v]) => localStorage.setItem(k, v), p.init).catch(() => {});
           await page.goto("http://magpie.test/" + p.url);
-          await page.waitForLoadState("networkidle");
-          if (p.init) {
-            await page.evaluate(([k, v]) => localStorage.setItem(k, v), p.init);
-            await page.reload();
-            await page.waitForLoadState("networkidle");
-          }
-          // Built-in has no tools. When its title fills the bar its empty
-          // head has zero width, so presence, not visibility, is correct.
-          await page.locator(p.head).waitFor({ state: p.name === "plugins builtin" ? "attached" : "visible" });
+          if (p.init) { await page.evaluate(([k, v]) => localStorage.setItem(k, v), p.init); await page.reload(); }
+          await page.locator(p.head).waitFor();
           await page.locator("#crumb b").waitFor();
           // the Library's buttons have their tooltips once it has loaded
           if (p.name.startsWith("library")) await page.locator("#view-library .lib-more:not([disabled])").waitFor();
@@ -148,8 +145,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           // where the tools have their icons alone, nothing more of them
           // can give way: the title shows whole wherever it fits beside them
           if (width >= 650) assert(!title.cut, `the title is cut at ${at}`);
-          // Finish this document's startup reads before navigating away.
-          await page.waitForLoadState("networkidle");
         }
         assert.deepEqual(errors, []);
         await context.close();

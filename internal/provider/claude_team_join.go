@@ -109,7 +109,7 @@ func (t *claudeTeamController) joinLogin(l savedLogin, id string) error {
 		if c.Enabled {
 			t.mu.Lock()
 			t.disk.Original[id] = claudeTeamFlags{l.On, l.Paused, l.TeamOff}
-			t.closed[id] = true
+			t.admissions.SetClosed(id, true)
 			t.mu.Unlock()
 			if err := t.persist(); err != nil {
 				return err

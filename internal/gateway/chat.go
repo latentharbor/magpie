@@ -10,12 +10,12 @@ import (
 	"net"
 	"net/http"
 	"path"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/provider"
 )
 
@@ -63,14 +63,48 @@ type cRequest struct {
 	Stop                json.RawMessage `json:"stop,omitempty"`
 	Stream              bool            `json:"stream,omitempty"`
 	ReasoningEffort     string          `json:"reasoning_effort,omitempty"`
-	ParallelToolCalls   *bool           `json:"parallel_tool_calls,omitempty"`
-	ServiceTier         string          `json:"service_tier,omitempty"`
-	PromptCacheKey      string          `json:"prompt_cache_key,omitempty"`
-	ResponseFormat      json.RawMessage `json:"response_format,omitempty"`
+	// the level in the other places a relay or a client puts it: new-api
+	// and OpenRouter's reasoning object, a Claude client's output_config
+	// and thinking budget (chatEffort)
+	Reasoning         json.RawMessage `json:"reasoning,omitempty"`
+	OutputConfig      json.RawMessage `json:"output_config,omitempty"`
+	Thinking          json.RawMessage `json:"thinking,omitempty"`
+	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
+	ServiceTier       string          `json:"service_tier,omitempty"`
+	PromptCacheKey    string          `json:"prompt_cache_key,omitempty"`
+	ResponseFormat    json.RawMessage `json:"response_format,omitempty"`
 	// not a Chat field: OpenCode merges a model's options into its body
 	// whichever API it speaks, and a Codex model it asks on Chat is asked
 	// on Responses (Request.AccessPrograms)
 	AccessPrograms json.RawMessage `json:"access_programs,omitempty"`
+}
+
+// chatEffort is the level a Chat request asks: reasoning_effort, and when
+// it names none, the places a relay puts the level of a Claude client's
+// request it turned into Chat (reasoning.effort, output_config.effort, a
+// thinking budget). reasoning_effort, when there, is the client's word.
+func chatEffort(c *cRequest) string {
+	if e := effortOf(c.ReasoningEffort); e != "" || strings.TrimSpace(c.ReasoningEffort) != "" {
+		return e
+	}
+	var o struct {
+		Effort string `json:"effort"`
+	}
+	for _, raw := range []json.RawMessage{c.Reasoning, c.OutputConfig} {
+		if len(raw) > 0 && decodeJSON(raw, &o) == nil {
+			if e := effortOf(o.Effort); e != "" {
+				return e
+			}
+		}
+	}
+	var th struct {
+		Type   string `json:"type"`
+		Budget int    `json:"budget_tokens"`
+	}
+	if len(c.Thinking) > 0 && decodeJSON(c.Thinking, &th) == nil && th.Type == "enabled" {
+		return effortOfBudget(th.Budget)
+	}
+	return ""
 }
 
 func parseChat(body []byte) (*Request, error) { return readChat(body, false) }
@@ -92,7 +126,7 @@ func readChat(body []byte, facts bool) (*Request, error) {
 		return nil, fmt.Errorf("invalid request: %v", err)
 	}
 	r := &Request{Model: c.Model, MaxTokens: c.MaxCompletionTokens, Temp: c.Temperature, TopP: c.TopP,
-		Stream: c.Stream, Effort: effortOf(c.ReasoningEffort), Parallel: c.ParallelToolCalls, Fast: c.ServiceTier == "priority" || c.ServiceTier == "ultrafast", Ultrafast: c.ServiceTier == "ultrafast", Tier: c.ServiceTier,
+		Stream: c.Stream, Effort: chatEffort(&c), Parallel: c.ParallelToolCalls, Fast: c.ServiceTier == "priority" || c.ServiceTier == "ultrafast", Ultrafast: c.ServiceTier == "ultrafast", Tier: c.ServiceTier,
 		CacheKey: c.PromptCacheKey, Format: openAIFormat(c.ResponseFormat), AccessPrograms: c.AccessPrograms}
 	if r.MaxTokens == 0 {
 		r.MaxTokens = c.MaxTokens
@@ -112,6 +146,7 @@ func readChat(body []byte, facts bool) (*Request, error) {
 		switch m.Role {
 		case "system", "developer":
 			sys = append(sys, stringOrText(m.Content))
+			r.systemRaw = append(r.systemRaw, m.Content)
 		case "user":
 			r.Messages = append(r.Messages, Message{Role: "user", Parts: chatParts(m.Content)})
 		case "assistant":
@@ -194,6 +229,14 @@ func chatParts(raw json.RawMessage) []Part {
 			FileID   string `json:"file_id"`
 			Filename string `json:"filename"`
 		} `json:"file"`
+		VideoURL struct {
+			URL string `json:"url"`
+		} `json:"video_url"`
+		// the AI SDK's file part, flat (#4101: ZCode's), whose video
+		// alone is read here
+		Data      string `json:"data"`
+		MediaType string `json:"mediaType"`
+		Filename  string `json:"filename"`
 	}
 	decodeJSON(raw, &items)
 	var out []Part
@@ -208,6 +251,17 @@ func chatParts(raw json.RawMessage) []Part {
 		case "file":
 			if p, ok := chatFile(it.File.FileData, it.File.FileID, it.File.Filename); ok {
 				out = append(out, p)
+			} else if strings.HasPrefix(strings.ToLower(it.MediaType), "video/") {
+				if v, ok := videoPart(it.Data, it.MediaType, it.Filename); ok {
+					out = append(out, v)
+				}
+			}
+		case "video_url":
+			// a video, as DashScope's, Kimi's and OpenRouter's Chat take
+			// one (#4101, #6135): left out before, and the model answered
+			// for the words alone
+			if v, ok := videoPart(it.VideoURL.URL, "", ""); ok {
+				out = append(out, v)
 			}
 		}
 	}
@@ -301,7 +355,7 @@ func buildHost(p provider.Provider) string {
 			return id
 		}
 	}
-	return p.Host()
+	return p.VendorHost()
 }
 
 // failedAsText are the plugins whose vendor has no failed mark on a tool
@@ -489,6 +543,11 @@ func buildChat(r *Request, model, host string, rejectTemp bool) []byte {
 			case Text:
 				content = append(content, map[string]any{"type": "text", "text": p.Text})
 			case File:
+				if isVideo(p) && !r.videoOff {
+					plain = false
+					content = append(content, chatVideo(p))
+					break
+				}
 				content = append(content, map[string]any{"type": "text", "text": attachmentText(p)})
 			case Image:
 				plain = false
@@ -939,6 +998,38 @@ func thinkingEffort(body []byte) []byte {
 	return withFields(body, map[string]any{"reasoning_effort": effort, "thinking": v.Thinking})
 }
 
+// cacheKeyCamel names OpenCode 1's camelCase promptCacheKey, which it
+// writes into a Chat body when its provider sets setCacheKey (#5468), as
+// the prompt_cache_key every Chat API reads: a key of the request's own,
+// for every route, and no field an upstream doesn't know. A
+// prompt_cache_key the body has already is the one kept.
+func cacheKeyCamel(body []byte) []byte {
+	if !bytes.Contains(body, []byte(`"promptCacheKey"`)) {
+		return body
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	var m map[string]any
+	if dec.Decode(&m) != nil {
+		return body
+	}
+	key, ok := m["promptCacheKey"]
+	if !ok {
+		return body
+	}
+	delete(m, "promptCacheKey")
+	if _, has := m["prompt_cache_key"]; !has && key != nil {
+		m["prompt_cache_key"] = key
+	}
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false) // <, > and & as the agent wrote them
+	if enc.Encode(m) != nil {
+		return body
+	}
+	return bytes.TrimSuffix(out.Bytes(), []byte("\n"))
+}
+
 // thinkingConfigField is Gemini's thinking_config as unfit remembers a
 // provider that refused it.
 const thinkingConfigField = "thinking_config"
@@ -957,7 +1048,7 @@ var gemini3Levels = []string{"minimal", "low", "medium", "high"}
 // thinking_level minimal alike; and gemini-3.1-pro-preview's
 // "thinking_level MINIMAL is not supported by this model" at its
 // generateContent.
-var geminiLevelRefused = regexp.MustCompile(`(?i)thinking[ _]level\W+(?:(minimal|low|medium|high)\W+is not supported|is unsupported\W+thinking_level_(minimal|low|medium|high))`)
+var geminiLevelRefused = lazyre.New(`(?i)thinking[ _]level\W+(?:(minimal|low|medium|high)\W+is not supported|is unsupported\W+thinking_level_(minimal|low|medium|high))`)
 
 // geminiRefusedLevel is the thinking level Gemini turned away in body
 // (geminiLevelRefused), or "".
@@ -1126,10 +1217,10 @@ const leadSpace = " \t\r\n"
 
 // thoughtTags are the tags a leading block of thinking comes between in a
 // Chat reply's text, by its opening tag.
-var thoughtTags = map[string]string{"<thought>": "</thought>", "<think>": "</think>"}
+var thoughtTags = map[string]string{"<thought>": "</thought>", "<thinking>": "</thinking>", "<think>": "</think>"}
 
-// text sends a piece of the reply's text, a leading <thought> or <think>
-// block of it as thinking.
+// text sends a piece of the reply's text, a leading <thought>, <thinking> or
+// <think> block of it as thinking.
 func (d *chatDecoder) text(s string, emit func(Event)) {
 	if !d.past && !d.thought {
 		d.lead += s
@@ -1244,16 +1335,22 @@ func (m *mdCode) find(s, close string, last bool) (at, hold int) {
 	return -1, 0
 }
 
-// afterThought is t without a leading <think>…</think> block, a whole
-// reply's thinking where its API leaves it in the text; t when it has none.
+// afterThought is t without a leading thinking block (any of thoughtTags,
+// as a streamed reply's is read), a whole reply's thinking where its API
+// leaves it in the text; t when it has none. No opening tag is a prefix of
+// another's whole tag, so at most one matches.
 func afterThought(t string) string {
-	rest, ok := strings.CutPrefix(strings.TrimLeft(t, leadSpace), "<think>")
-	if !ok {
+	lead := strings.TrimLeft(t, leadSpace)
+	for open, end := range thoughtTags {
+		rest, ok := strings.CutPrefix(lead, open)
+		if !ok {
+			continue
+		}
+		var m mdCode
+		if i, _ := m.find(rest, end, true); i >= 0 {
+			return strings.TrimSpace(rest[i+len(end):])
+		}
 		return t
-	}
-	var m mdCode
-	if i, _ := m.find(rest, "</think>", true); i >= 0 {
-		return strings.TrimSpace(rest[i+len("</think>"):])
 	}
 	return t
 }

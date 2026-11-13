@@ -22,6 +22,7 @@ window.ciNowFill = function (row, s, by) {
     const said = checkinNowSaid[by];
     sub.textContent = said ? said.text : t("Checks one account in once now; the daily check-in's switches stay as they are");
     sub.classList.toggle("err", !!said?.bad);
+    sub.classList.toggle("say", !!said); // what came of it: a state, kept in sight
     const b = el("button", "text ci-now-go", t(accts.length > 1 ? "Check in…" : "Check in"));
     b.type = "button";
     b.disabled = !!said?.busy;
@@ -39,6 +40,27 @@ window.ciNowFill = function (row, s, by) {
   const send = (a) => ciNowSend(a, by, (o) => { checkinNowSaid[by] = o; if (row.isConnected) draw(); });
   draw();
   row.hidden = false;
+};
+
+// ciAcctFill puts an account's own Check in now in slot, on its row in
+// the provider editor (xwoffice_91592): q is its reading, which carries
+// its check-in (checkinBy, checkinKey). The press is Settings' one,
+// said the same way, and the row's reading is asked again after.
+window.ciAcctFill = function (slot, q, agent, user) {
+  const b = el("button", "text ci-acct", t("Check in now"));
+  b.type = "button";
+  b.title = t("Checks one account in once now; the daily check-in's switches stay as they are");
+  b.onclick = (e) => {
+    e.stopPropagation();
+    ciNowSend({ key: q.checkinKey, user }, q.checkinBy || "", (o) => {
+      b.disabled = !!o.busy;
+      b.classList.toggle("busy", !!o.busy);
+      if (o.busy) return;
+      if (loginUsage[agent]) loginUsage[agent].at = 0;
+      loginUsageOf(agent);
+    });
+  };
+  slot.replaceWith(b);
 };
 
 // ciNowSend checks account a of vendor by in once now and says, through
@@ -87,3 +109,30 @@ function checkinNowLine(r, who) {
       return { bad: true, text: t("Couldn't check in {who}: {why}", { who, why: r?.msg || t("Check-in failed") }) };
   }
 }
+
+// ciAtFill draws the check-in's time of day into row (checkinAt; times_ang
+// on X): Off asks as each vendor's day starts, On at 09:00 or the time typed.
+window.ciAtFill = function (row, s) {
+  const at = s.checkinAt || "";
+  const save = (v) => savePrefs({ ...prefsKeep(s), checkinAt: v });
+  const who = el("div", "who");
+  const sub = el("div", "sub", at ? t("From {at} each day, for every vendor's check-in", { at }) : t("As soon as each vendor's day starts"));
+  sub.title = t("A computer asleep then checks in when it wakes.");
+  who.append(el("div", "name", t("Check-in time")), sub);
+  const box = el("div", "warm-at" + (at ? " times" : ""));
+  if (at) {
+    const i = input(at, "09:00", "time");
+    i.className = "at";
+    i.setAttribute("aria-label", t("Time of day"));
+    blurOnEnter(i);
+    i.onchange = () => { if (i.value && i.value !== at) save(i.value); };
+    const one = el("span", "warm-time");
+    one.append(i);
+    const list = el("span", "warm-times");
+    list.append(one);
+    box.append(list);
+  }
+  box.append(segs([["off", t("Off")], ["on", t("On")]], at ? "on" : "off", (v) => save(v === "on" ? at || "09:00" : "")));
+  row.hidden = false;
+  row.append(who, box);
+};

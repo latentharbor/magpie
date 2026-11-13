@@ -15,6 +15,16 @@ package agent
 // in settings.json or its /model picker with no model name ("model is
 // empty"); only one given on the command line resolves.
 //
+// None of that is written to settings.json any more (baysonfox on X: with
+// "modelProvider": "gemini" in it every agy runs on an API key, with no
+// Google account, and remote control, which needs the sign-in, was gone;
+// a plain agy asked for GEMINI_API_KEY too). The model, the provider and
+// the custom models (the user's own and magpie's, since agy takes the key
+// whole) are in a file of magpie's beside it, magpie-settings.json, which
+// the launch hands agy as --settings for that one session. settings.json
+// stays the user's, and a plain agy, and `agy remote-control` or
+// --remote-control through the function, run on their Google sign-in.
+//
 // So that typing agy just works (bestony on Discord: the command was
 // copied at each start), magpie puts a function named agy in the profile
 // of each shell the user has, between "# >>> magpie agy >>>" and
@@ -40,6 +50,7 @@ import (
 
 	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/gateway"
+	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/update"
 )
 
@@ -52,28 +63,30 @@ const agyModels = "customModelsConfig.customModels"
 // (x-goog-api-key) alone. A command copied before, with the plain token,
 // still reaches magpie.
 func AgyLaunch(model string) string {
-	return agyLaunchAt(gateway.URL(), agentKey("agy"), model, runtime.GOOS == "windows")
+	return agyLaunchAt(gateway.URL(), agentKey("agy"), agySettingsFile(), model, runtime.GOOS == "windows")
 }
 
-// agyLaunchAt is AgyLaunch for agy reaching the gateway at gw with key, in
-// PowerShell or a POSIX shell.
-func agyLaunchAt(gw, key, model string, powershell bool) string {
-	if powershell {
-		return `$env:GEMINI_API_KEY="` + key + `"; $env:GOOGLE_GEMINI_BASE_URL="` + gw + `"; agy --model '` + strings.ReplaceAll(model, "'", "''") + `'`
-	}
-	return "GEMINI_API_KEY=" + key + " GOOGLE_GEMINI_BASE_URL=" + gw + " agy --model '" + strings.ReplaceAll(model, "'", `'\''`) + "'"
-}
+// agyOverride is the name of magpie's settings file in agy's folder.
+const agyOverride = "magpie-settings.json"
 
-// AgyStart is what starts agy on magpie, the variables and the model,
-// while settings.json's model is one of magpie's; nil and "" otherwise,
-// when agy starts as it is.
-func AgyStart() (env []string, model string) {
+// agySettingsFile is magpie's settings file for agy on this machine.
+func agySettingsFile() string {
 	home, _ := homes()
-	m := jsonGet(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"), "model")()
-	if !usesMagpie(m) {
-		return nil, ""
+	return filepath.Join(home, ".gemini", "antigravity-cli", agyOverride)
+}
+
+// agyPlain are what ask agy for its remote control, which only a Google
+// sign-in has, never an API key's session: agy runs plain with one of
+// them (alone or with "=value").
+var agyPlain = []string{"remote-control", "--remote-control", "-remote-control"}
+
+// agyLaunchAt is AgyLaunch for agy reaching the gateway at gw with key and
+// magpie's settings file, in PowerShell or a POSIX shell.
+func agyLaunchAt(gw, key, settings, model string, powershell bool) string {
+	if powershell {
+		return `$env:GEMINI_API_KEY="` + key + `"; $env:GOOGLE_GEMINI_BASE_URL="` + gw + `"; agy --settings '` + strings.ReplaceAll(settings, "'", "''") + `' --model '` + strings.ReplaceAll(model, "'", "''") + `'`
 	}
-	return []string{"GEMINI_API_KEY=" + agentKey("agy"), "GOOGLE_GEMINI_BASE_URL=" + gateway.URL()}, m
+	return "GEMINI_API_KEY=" + key + " GOOGLE_GEMINI_BASE_URL=" + gw + " agy --settings '" + strings.ReplaceAll(settings, "'", `'\''`) + "' --model '" + strings.ReplaceAll(model, "'", `'\''`) + "'"
 }
 
 // agyShell gives the user's shells the function agy, or takes it out of
@@ -106,18 +119,25 @@ func agyFunction(kind, prog string) string {
     if (Test-Path -LiteralPath ` + q + `) {
         foreach ($l in @(& ` + q + ` agy env)) { $k, $v = "$l" -split '=', 2; if ($v) { $start[$k] = $v } }
     }
-    if (-not $start.model) { & $real @args; return }
+    if (-not $start.model -or @($args | Where-Object { "$_" -match '^--?(remote-control)(=|$)|^remote-control$' }).Count) { & $real @args; return }
     $was = $env:GEMINI_API_KEY, $env:GOOGLE_GEMINI_BASE_URL
     $env:GEMINI_API_KEY = $start.GEMINI_API_KEY; $env:GOOGLE_GEMINI_BASE_URL = $start.GOOGLE_GEMINI_BASE_URL
     try {
-        if (@($args | Where-Object { "$_" -match '^--?model(=|$)' }).Count) { & $real @args } else { & $real --model $start.model @args }
+        if (@($args | Where-Object { "$_" -match '^--?model(=|$)' }).Count) { & $real --settings $start.settings @args } else { & $real --settings $start.settings --model $start.model @args }
     } finally { $env:GEMINI_API_KEY = $was[0]; $env:GOOGLE_GEMINI_BASE_URL = $was[1] }
 }`
 	}
 	q := "'" + strings.ReplaceAll(prog, "'", `'\''`) + "'"
-	// "function": a name the user aliased isn't expanded where it is defined
-	return "function agy {\n  if [ -x " + q + " ]; then " + q + ` agy run "$@"; else command agy "$@"; fi` + "\n}"
+	return agyPosixHead + "  if [ -x " + q + " ]; then " + q + ` agy run "$@"; else command agy "$@"; fi` + "\n}"
 }
+
+// agyPosixHead opens the function agy in a POSIX shell's profile. It is
+// "agy() {", not bash's "function agy {", which dash refuses: a ~/.profile
+// that reads ~/.bashrc is read by sh -lc too, as Debian's dash (ljlwlcz on
+// X: fnOS, where an SSH probe's sh -lc failed on it). An alias named agy
+// would be expanded in "agy()", so it is taken out first, on a line of its
+// own, since a shell expands aliases a line at a time.
+const agyPosixHead = "unalias agy 2>/dev/null || true\nagy() {\n"
 
 // agyDistroProfiles are the profiles of a WSL distro's shells the
 // function goes in, as magpie opens them: bash's ~/.bashrc (which the
@@ -156,11 +176,11 @@ func distroLoginShell(at place) string {
 	return "bash"
 }
 
-// agyDistroModel is the sed script that prints settings.json's model while
-// it is one of magpie's, for the function in a distro, where no magpie
-// runs to read it. Its model is a line of its own as magpie writes the
-// file; one written on a single line is found too, so long as nothing
-// after it is named "model".
+// agyDistroModel is the sed script that prints magpie's settings file's
+// model, for the function in a distro, where no magpie runs to read it.
+// Its model is a line of its own as magpie writes the file; one written on
+// a single line is found too, so long as nothing after it is named
+// "model".
 const agyDistroModel = `s|^.*"model"[[:space:]]*:[[:space:]]*"\(` + magpieID + `/[^"]*\)".*$|\1|p`
 
 // agyDistroFunction is the function agy in a distro's shell of kind:
@@ -169,22 +189,26 @@ const agyDistroModel = `s|^.*"model"[[:space:]]*:[[:space:]]*"\(` + magpieID + `
 // `magpie agy run` does on this machine; as it is otherwise.
 func agyDistroFunction(kind, key, gw string) string {
 	q := func(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }
-	settings := `"$HOME/.gemini/antigravity-cli/settings.json"`
+	settings := `"$HOME/.gemini/antigravity-cli/` + agyOverride + `"`
 	if kind == "fish" {
 		fq := func(v string) string { return "'" + strings.NewReplacer(`\`, `\\`, "'", `\'`).Replace(v) + "'" }
 		return "function agy\n" +
 			"    set -l m (sed -n " + fq(agyDistroModel) + " " + settings + " 2>/dev/null | head -n 1)\n" +
 			"    if test -z \"$m\"\n        command agy $argv\n        return\n    end\n" +
+			"    for a in $argv\n        switch $a\n            case 'remote-control' '--remote-control' '-remote-control' '--remote-control=*'\n                command agy $argv\n                return\n        end\n    end\n" +
 			"    for a in $argv\n        switch $a\n            case '--model' '--model=*' '-model' '-model=*'\n                set m ''\n        end\n    end\n" +
 			"    if test -n \"$m\"\n        set argv --model $m $argv\n    end\n" +
+			"    set argv --settings " + settings + " $argv\n" +
 			"    env GEMINI_API_KEY=" + fq(key) + " GOOGLE_GEMINI_BASE_URL=" + fq(gw) + " agy $argv\nend"
 	}
-	return "function agy {\n" +
+	return agyPosixHead +
 		"  local m a\n" +
 		"  m=$(sed -n " + q(agyDistroModel) + " " + settings + " 2>/dev/null | head -n 1)\n" +
 		`  if [ -z "$m" ]; then command agy "$@"; return; fi` + "\n" +
+		`  for a in "$@"; do case "$a" in remote-control|--remote-control|--remote-control=*|-remote-control) command agy "$@"; return;; esac; done` + "\n" +
 		`  for a in "$@"; do case "$a" in --model|--model=*|-model|-model=*) m=;; esac; done` + "\n" +
 		`  if [ -n "$m" ]; then set -- --model "$m" "$@"; fi` + "\n" +
+		"  set -- --settings " + settings + ` "$@"` + "\n" +
 		"  GEMINI_API_KEY=" + q(key) + " GOOGLE_GEMINI_BASE_URL=" + q(gw) + ` command agy "$@"` + "\n}"
 }
 
@@ -210,40 +234,77 @@ func agyIn(at place) *Agent {
 	home := at.home
 	dir := at.open(filepath.Join(home, ".gemini", "antigravity-cli"))
 	path := filepath.Join(dir, "settings.json")
-	get := jsonGet(path, "model")
-	provider := jsonGet(path, "modelProvider")
-	stashModel, stashProvider := "agy:"+path+":model", "agy:"+path+":modelProvider"
-	// setModels writes customModels with the user's own and, when with,
-	// magpie's; none left takes the key out
-	setModels := func(with bool) error {
-		ms := map[string]any{}
-		for k, v := range agyCustom(path) {
-			if !strings.HasPrefix(k, magpieID+"/") {
-				ms[k] = v
-			}
+	over := filepath.Join(dir, agyOverride)
+	settingsModel, overModel := jsonGet(path, "model"), jsonGet(over, "model")
+	provider := jsonGet(over, "modelProvider")
+	// the model is magpie's while its own file names one; a settings.json
+	// still wired by an older magpie says so too, until migrate moves it
+	get := func() string {
+		if m := overModel(); usesMagpie(m) {
+			return m
 		}
-		if with {
-			for _, m := range sharedModels("agy") {
-				ms[magpieID+"/"+m.ID] = map[string]string{"apiProvider": "API_PROVIDER_GOOGLE_GEMINI", "modelName": m.ID}
-			}
-		}
-		if len(ms) > 0 {
-			return edit.SetJSON(path, edit.KV{Path: agyModels, Value: ms})
-		}
-		if err := edit.DelJSON(path, agyModels); err != nil {
-			return err
-		}
-		if v, ok := edit.GetJSON(path, "customModelsConfig"); ok && strings.TrimSpace(v) == "{}" {
-			return edit.DelJSON(path, "customModelsConfig")
-		}
-		return nil
+		return settingsModel()
 	}
+	stashModel, stashProvider := "agy:"+path+":model", "agy:"+path+":modelProvider"
 	// put sets key to v, or takes it out for ""
 	put := func(key, v string) error {
 		if v == "" {
 			return edit.DelJSON(path, key)
 		}
 		return edit.SetJSON(path, edit.KV{Path: key, Value: v})
+	}
+	// ownModels is the user's own custom models, as settings.json has them
+	ownModels := func() map[string]any {
+		ms := map[string]any{}
+		for k, v := range agyCustom(path) {
+			if !strings.HasPrefix(k, magpieID+"/") {
+				ms[k] = v
+			}
+		}
+		return ms
+	}
+	// writeOver writes magpie's settings file: the provider, the model and
+	// every custom model, the user's own too, as agy takes the key whole
+	writeOver := func(model string) error {
+		ms := ownModels()
+		for _, m := range sharedModels("agy") {
+			ms[magpieID+"/"+m.ID] = map[string]string{"apiProvider": "API_PROVIDER_GOOGLE_GEMINI", "modelName": m.ID}
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		return edit.SetJSON(over, edit.KV{Path: "modelProvider", Value: "gemini"}, edit.KV{Path: "model", Value: model}, edit.KV{Path: agyModels, Value: ms})
+	}
+	dropOver := func() error {
+		if err := os.Remove(over); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	// migrate takes what an older magpie wrote into settings.json out of
+	// it, the user's model and provider back; it returns the model that
+	// was magpie's there, "" when settings.json was never wired
+	migrate := func() (string, error) {
+		m := settingsModel()
+		if !usesMagpie(m) {
+			return "", nil
+		}
+		if err := put("modelProvider", unstash(stashProvider)); err != nil {
+			return m, err
+		}
+		if err := put("model", unstash(stashModel)); err != nil {
+			return m, err
+		}
+		if ms := ownModels(); len(ms) > 0 {
+			return m, edit.SetJSON(path, edit.KV{Path: agyModels, Value: ms})
+		}
+		if err := edit.DelJSON(path, agyModels); err != nil {
+			return m, err
+		}
+		if v, ok := edit.GetJSON(path, "customModelsConfig"); ok && strings.TrimSpace(v) == "{}" {
+			return m, edit.DelJSON(path, "customModelsConfig")
+		}
+		return m, nil
 	}
 	// the function agy, in this machine's shells or the distro's
 	distro := at.sys != nil
@@ -270,7 +331,7 @@ func agyIn(at place) *Agent {
 		if !distro {
 			return AgyLaunch(model)
 		}
-		return agyLaunchAt(gw(), key(), model, false)
+		return agyLaunchAt(gw(), key(), strings.TrimRight(filepath.ToSlash(home), "/")+"/.gemini/antigravity-cli/"+agyOverride, model, false)
 	}
 	return &Agent{
 		ID: "agy", Name: "Antigravity CLI", Icon: "antigravity-color", Aliases: []string{"antigravity-cli"}, Spelled: prefixed, NoNames: true,
@@ -287,13 +348,28 @@ func agyIn(at place) *Agent {
 			}
 			return "agy"
 		},
+		Start: func() Starting {
+			s := Starting{Bin: "agy", Flag: "--model", Plain: agyPlain}
+			if v := overModel(); usesMagpie(v) {
+				s.Env, s.Model = []string{"GEMINI_API_KEY=" + key(), "GOOGLE_GEMINI_BASE_URL=" + gw()}, v
+				s.Args = []string{"--settings", at.native(over)}
+			}
+			return s
+		},
 		Sync: func() error {
-			on := usesMagpie(get())
+			m, err := migrate()
+			if err != nil {
+				return err
+			}
+			if m == "" {
+				m = overModel()
+			}
+			on := usesMagpie(m)
 			shell(on)
 			if !on {
 				return nil
 			}
-			return setModels(true)
+			return writeOver(m)
 		},
 		Notice: func() string {
 			v := get()
@@ -317,11 +393,11 @@ func agyIn(at place) *Agent {
 			if !usesMagpie(v) {
 				return ""
 			}
-			if _, ok := agyCustom(path)[v]; !ok {
-				return "Antigravity CLI's custom model " + v + " (settings.json) is gone, so it no longer reaches magpie"
+			if _, ok := agyCustom(over)[v]; !ok {
+				return "Antigravity CLI's custom model " + v + " (" + agyOverride + ") is gone, so it no longer reaches magpie"
 			}
 			if p := provider(); p != "gemini" {
-				return "Antigravity CLI's modelProvider (settings.json) is " + orDefault(p) + ", not gemini, so it asks Google directly"
+				return "Antigravity CLI's modelProvider (" + agyOverride + ") is " + orDefault(p) + ", not gemini, so it asks Google directly"
 			}
 			// a distro's function names the gateway's address: one WSL
 			// changed on a restart (NAT) no longer reaches it
@@ -338,38 +414,28 @@ func agyIn(at place) *Agent {
 			Key: "model", Label: "model",
 			Get: get,
 			Set: func(v string) error {
-				cur := get()
+				if _, err := migrate(); err != nil {
+					return err
+				}
+				cur := overModel()
 				if ref, ok := strings.CutPrefix(v, magpieID+"/"); ok && isMagpie(ref) {
-					if !usesMagpie(cur) {
-						stash(map[string]string{stashModel: cur, stashProvider: provider()})
-					}
-					if err := setModels(true); err != nil {
-						return err
-					}
-					if err := edit.SetJSON(path, edit.KV{Path: "modelProvider", Value: "gemini"}, edit.KV{Path: "model", Value: v}); err != nil {
+					if err := writeOver(v); err != nil {
 						return err
 					}
 					shell(true)
 					return nil
 				}
+				// back to the user's own: settings.json was never touched
 				if usesMagpie(cur) {
-					// back to what the user had
-					if v == "" {
-						v = unstash(stashModel)
-					} else {
-						forget(stashModel)
-					}
-					if err := put("modelProvider", unstash(stashProvider)); err != nil {
+					if err := dropOver(); err != nil {
 						return err
 					}
-				}
-				if err := put("model", v); err != nil {
-					return err
-				}
-				if usesMagpie(cur) {
 					shell(false)
 				}
-				return setModels(false)
+				if v == "" {
+					return nil
+				}
+				return put("model", v)
 			},
 			Options: func(cur map[string]string) []Option {
 				custom := agyCustom(path)
@@ -393,7 +459,36 @@ func agyIn(at place) *Agent {
 				}
 				return withVia(group("Antigravity CLI", own), "agy", magpieID+"/")
 			},
-		}},
+		}, agyEffortField(func() bool { return !at.cold && usesMagpie(get()) })},
+	}
+}
+
+// agyEffortField is effortField for agy.
+func agyEffortField(on func() bool) Field { return effortField("agy", on) }
+
+// effortField is how hard agy's models reason, picked in its row. agy
+// 1.5 has --effort (low, medium, high) and /effort for one session only;
+// /effort is turned away for magpie's models ("not adjustable", xyenon on
+// Discord) and works on the Google names agy knows, and either one's level
+// goes over the row's (agyLevelAsked). settings.json has no key for it
+// (--settings: unknown setting "effort"). Its request asks
+// thinkingBudget -1, the model's own choice. The gateway asks its
+// requests for the level picked here (provider.AgentEffort), as the
+// model takes it (withGeminiEffort); with none they go as agy asks.
+// Shown only while agy is on magpie's models, and never read at a
+// stopped distro (#3896). An agent a plugin adds that says effort has
+// one as well, under its id.
+func effortField(id string, on func() bool) Field {
+	return Field{
+		Key: "effort", Label: "effort",
+		Get: func() string { return provider.AgentEffort(id) },
+		Set: func(v string) error { return provider.SetAgentEffort(id, v) },
+		Options: func(map[string]string) []Option {
+			if !on() {
+				return nil
+			}
+			return pickedEfforts(id)
+		},
 	}
 }
 

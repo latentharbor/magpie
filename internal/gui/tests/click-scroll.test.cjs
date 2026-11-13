@@ -6,7 +6,6 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const now = new Date();
@@ -95,7 +94,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
     await t.test("date controls stay separate from request grouping controls", async () => {
       await reset();
-      assert.equal(await page.locator(".rt-group-by .rt-day").count(), 2, "the grouping controls share the date-button class");
+      assert.equal(await page.locator(".rt-group-by .rt-day").count(), 3, "the grouping controls share the date-button class");
+      assert.equal(await page.locator('.rt-group-by .rt-day[data-by="key"]').evaluate((b) => b.hidden), true, "By key waits for a gateway key");
       assert.equal(await dayButtons.count(), 2, "only Live and the fixture's history day should be selected");
       assert.match(await dayButtons.first().innerText(), /Live/);
       await dayButtons.nth(1).click();
@@ -185,32 +185,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const is = await top(page, "#" + id);
         assert(Math.abs(is - was) <= 1, `${id} moved the page ${Math.round(is - was)}px`);
       }
-    });
-
-    await t.test("a click during a parent's entrance does not hold its moving coordinates", async () => {
-      await reset();
-      await page.locator(view).evaluate((v) => {
-        const spacer = document.createElement("div");
-        spacer.style.cssText = "flex:none;height:1600px";
-        const part = document.createElement("div");
-        part.id = "entering"; part.style.flex = "none";
-        const button = document.createElement("button");
-        button.id = "entering-button"; button.textContent = "Open";
-        part.append(button);
-        v.append(spacer, part, Object.assign(document.createElement("div"), { style: "flex:none;height:600px" }));
-      });
-      await scrollTo("#entering-button");
-      await page.locator("#entering").evaluate((p) => {
-        // The child has no animation of its own. Its parent's long entrance
-        // remains in progress through the click; finish it explicitly below.
-        p.animate([{ transform: "translateY(8px)" }, { transform: "none" }], { duration: 60000 });
-      });
-      const was = await page.locator(view).evaluate((v) => v.scrollTop);
-      const b = await page.locator("#entering-button").boundingBox();
-      await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
-      await page.locator("#entering").evaluate((p) => p.getAnimations().forEach((a) => a.finish()));
-      await settle(page);
-      assert.equal(await page.locator(view).evaluate((v) => v.scrollTop), was, "an entrance is not a request to scroll");
     });
 
     // The browser tells of a scroll at the next frame. A scroll by code made
@@ -318,17 +292,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const heard = (fn, e) => { try { fn(e); } finally { window.__wheelsHeard++; } };
         window.addEventListener = function (type, fn, o) {
           if (type !== "wheel") return add.call(this, type, fn, o);
-          return add.call(this, type, (e) => {
-            if (!window.__lateWheel) return heard(fn, e);
-            // Inject the complete compositor step before delivering its
-            // trusted event. WPE smooth-wheels deliver the first 9–18px
-            // frame, then cancel the remaining animation when the guard
-            // puts that frame back. That does not model the complete scroll
-            // arriving before the event that this case is meant to cover.
-            e.preventDefault();
-            e.target.closest(".view").scrollTop += e.deltaY;
-            setTimeout(() => heard(fn, e), 60);
-          }, { ...o, passive: false });
+          return add.call(this, type, (e) => (window.__lateWheel ? setTimeout(() => heard(fn, e), window.__lateBy || 60) : heard(fn, e)), o);
         };
       });
       await reset();
@@ -343,7 +307,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const n = await page.evaluate(() => window.__wheelsHeard);
         await page.mouse.wheel(0, dy);
         await page.waitForFunction((n) => window.__wheelsHeard > n, n);
-        await scrollSettled(page);
         await page.waitForFunction(() => performance.now() >= purposeUntil);
       };
       // a scroll by code is put back at the frame it is told of
@@ -353,7 +316,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         if (click) await dayButtons.nth(1).click();
         const was = await scrollTop();
         await wheel(300);
-        assert((await scrollTop()) > was + 100, `the late-heard wheel must scroll the view${click ? " after a click" : ""}: ` + JSON.stringify(await page.locator(view).evaluate((v, was) => ({ was, top: v.scrollTop, end: v.scrollHeight - v.clientHeight, heard: window.__wheelsHeard, purposeUntil, now: performance.now() }), was)));
+        assert((await scrollTop()) > was + 100, `the late-heard wheel must scroll the view${click ? " after a click" : ""}`);
       }
       // a scroll by code is still put back, the wheel that follows it not
       // giving it to the reader

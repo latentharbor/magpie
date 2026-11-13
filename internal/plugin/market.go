@@ -21,6 +21,7 @@ import (
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/ghtoken"
+	"github.com/yetone/magpie/internal/netproxy"
 	"github.com/yetone/magpie/internal/source"
 	"github.com/yetone/magpie/internal/update"
 )
@@ -284,6 +285,8 @@ func fetchJSONFaithful(ctx context.Context, u string, limit int64) ([]byte, erro
 }
 
 func fetchJSONFrom(ctx context.Context, u string, limit int64, do func(*http.Client, *http.Request) (*http.Response, error)) ([]byte, error) {
+	// through plugin downloads' proxy, where Settings sets one
+	ctx = netproxy.Downloads(ctx)
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return nil, err
@@ -432,7 +435,9 @@ type npmLatest struct {
 		Name string `json:"name"`
 	} `json:"_npmUser"`
 	Magpie struct {
-		Icon string `json:"icon"`
+		Icon    string          `json:"icon"`
+		Name    string          `json:"name"`
+		Summary json.RawMessage `json:"summary"`
 	} `json:"magpie"`
 }
 
@@ -658,17 +663,33 @@ type Page struct {
 // Readme is the package's README, as npm has it, or — for a plugin added
 // from a folder on this computer or a git repository — the one its folder
 // carries.
-func Readme(ctx context.Context, name string) (Page, error) {
+func Readme(ctx context.Context, name string) (Page, error) { return ReadmeIn(ctx, name, "") }
+
+// ReadmeIn is Readme in the reader's language (the UI's, "zh-CN", "ja"):
+// the README a package carries named for it (README.zh-CN.md, README_zh.md
+// and the like) in place of its README.md, from its folder where it is
+// installed and from npm's or GitHub's copy where it isn't. Without one,
+// or with lang "" or English, the README.md.
+func ReadmeIn(ctx context.Context, name, lang string) (Page, error) {
 	if IsGit(name) {
 		// one not installed yet (a repository tagged magpie-plugin): its
 		// README as GitHub has it
 		if _, err := os.Stat(Target(name)); err != nil {
 			if repo := githubRepo(name); repo != "" {
+				if r, ok := cachedReadme(ctx, name); ok {
+					return Page{Readme: r}, nil
+				}
+				if r, ok := githubLangReadme(ctx, repo, lang); ok {
+					return Page{Readme: r}, nil
+				}
 				return githubReadme(ctx, repo)
 			}
 		}
 	}
 	if IsPath(name) || IsGit(name) {
+		if p, ok := folderLangReadme(Target(name), lang); ok {
+			return p, nil
+		}
 		return folderReadme(Target(name))
 	}
 	if !pkgName.MatchString(name) {
@@ -676,6 +697,14 @@ func Readme(ctx context.Context, name string) (Page, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
+	if p, ok := folderLangReadme(Target(name), lang); ok {
+		return p, nil // installed: its own file, as it was installed
+	}
+	// the copy the community repo keeps, before npm, which a human check
+	// can stand in front of
+	if r, ok := cachedReadme(ctx, name); ok {
+		return Page{Readme: r}, nil
+	}
 	b, err := fetchNPM(ctx, name, "/"+npmPath(name), 32<<20)
 	if err != nil {
 		// one npm doesn't have (yet): the README the community repo's
@@ -690,15 +719,25 @@ func Readme(ctx context.Context, name string) (Page, error) {
 		return Page{}, err
 	}
 	var d struct {
-		Readme string               `json:"readme"`
-		Time   map[string]time.Time `json:"time"`
+		Readme   string               `json:"readme"`
+		Time     map[string]time.Time `json:"time"`
+		DistTags map[string]string    `json:"dist-tags"`
 	}
 	if err := json.Unmarshal(b, &d); err != nil {
-		return Page{}, err
+		// a page that isn't npm's entry (a human check, a portal)
+		return Page{}, errors.New("the answer isn't the package's page; npm may be asking for a human check")
 	}
 	const most = 200 << 10
 	if len(d.Readme) > most {
 		d.Readme = d.Readme[:most]
+	}
+	// the registry's entry holds the README.md alone; one named for the
+	// reader's language is in the package's files, which only the public
+	// registry's copy is asked of jsDelivr for
+	if _, _, official := npmBase(name); official {
+		if r, ok := npmLangReadme(ctx, name, d.DistTags["latest"], lang); ok {
+			d.Readme = r
+		}
 	}
 	return Page{Readme: d.Readme, Updated: d.Time["modified"]}, nil
 }
@@ -803,6 +842,42 @@ func ownName(said string) string {
 		}
 	}
 	return n
+}
+
+// ownSummary is what a package.json's magpie.summary says of the package,
+// by language ("en", "zh"), as its card shows it (#3608): a sentence a
+// language, trimmed, of at most 300 bytes on one line, with nothing that
+// could make it read as other text (control or format characters, a bidi
+// override); a language that says anything else is left out, and nil is
+// none. Not an object of strings at all is none too, never a failed read
+// of the whole package.json.
+func ownSummary(raw json.RawMessage) map[string]string {
+	var said map[string]any
+	if len(raw) == 0 || json.Unmarshal(raw, &said) != nil {
+		return nil
+	}
+	out := map[string]string{}
+	for lang, v := range said {
+		s, ok := v.(string)
+		l, t := strings.TrimSpace(lang), strings.TrimSpace(s)
+		if !ok || l == "" || len(l) > 12 || t == "" || len(t) > 300 || !utf8.ValidString(t) || !utf8.ValidString(l) {
+			continue
+		}
+		bad := false
+		for _, r := range l + t {
+			if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+				bad = true
+				break
+			}
+		}
+		if !bad {
+			out[l] = t
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Upgrade installs the newest version of one plugin: npm's, or its git

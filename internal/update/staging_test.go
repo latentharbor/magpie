@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/yetone/magpie/internal/appdir"
+	"github.com/yetone/magpie/internal/testenv"
 )
 
 // noApps fails when any path under dir is named like an app: LaunchServices
@@ -116,6 +117,33 @@ func fakeApp(t *testing.T, path, v string) {
 	}
 }
 
+// Staging layout tests use real ad-hoc seals but have no Developer ID. Stub
+// only the reported team identity; every signature verification stays native.
+func fakeAppSignerTeam(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	testenv.Program(t, filepath.Join(dir, "codesign"), "#!/bin/sh\n/usr/bin/codesign \"$@\" || exit $?\nif [ \"$1\" = -dv ]; then echo TeamIdentifier=MAGPIETEST >&2; fi\n")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestStagingFixtureStillChecksRealSeal(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("native codesign")
+	}
+	fakeAppSignerTeam(t)
+	app := filepath.Join(t.TempDir(), "fixture.app")
+	fakeApp(t, app, "1.0")
+	if err := sameSigner(context.Background(), app, app); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app, "Contents", "Info.plist"), []byte("broken plist"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := sameSigner(context.Background(), app, app); err == nil || !strings.Contains(err.Error(), "signature is broken") {
+		t.Fatalf("tampered native seal was not rejected: %v", err)
+	}
+}
+
 // Stage unpacks the release's magpie.app (the zip's one top folder, as
 // the release builds it) to a name that isn't an app's, tells
 // LaunchServices to forget the name it was unpacked under, and Install
@@ -124,12 +152,7 @@ func TestStageUnpacksNoApp(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("ditto and codesign")
 	}
-	// This test checks the staging path and LaunchServices cleanup. Signing
-	// policy is exercised separately in distribution_test.go; its fake apps
-	// have no Developer ID and cannot authenticate as a real release.
-	oldSigner := stagedSigner
-	stagedSigner = func(context.Context, string, string, *Release) error { return nil }
-	t.Cleanup(func() { stagedSigner = oldSigner })
+	fakeAppSignerTeam(t)
 	forgot := stubUnregister(t)
 	root := t.TempDir()
 	src := filepath.Join(root, "src")

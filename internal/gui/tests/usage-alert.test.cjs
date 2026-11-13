@@ -63,10 +63,20 @@ function server(lang, posts, problem) {
 
 const view = (page) => page.locator("#view-settings").evaluate((v) => v.scrollTop);
 
-// Use the shared reader: an unfinished wheel burst can carry the switch
-// behind Settings' sticky tabs after this helper has returned.
+// wheelTo scrolls the settings with the wheel, as a reader would (a script
+// setting scrollTop is put back), until the alert rows are mid-page, or as
+// far as the page goes with them in view (Allowances is shorter since a
+// subscription's warm-ups and check-in went to its provider's editor)
 async function wheelTo(page) {
-  await reach(page, page.locator("#usageAlertSegs .opt").nth(1));
+  await page.locator("#view-settings").hover();
+  for (let i = 0, last = -1; i < 40; i++) {
+    const box = await page.locator("#balanceAlertRow").boundingBox(), top = await view(page);
+    if (box && top > 0 && (box.y + box.height < 300 || top === last && box.y + box.height < page.viewportSize().height - 60)) return;
+    last = top;
+    await page.mouse.wheel(0, 120);
+    await page.waitForTimeout(30);
+  }
+  throw new Error("couldn't scroll the alert rows into view");
 }
 
 const words = {
@@ -92,14 +102,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
     const pages = [];
     t.after(async () => {
-      try {
-        if (process.env.ARTIFACT_DIR) {
-          await fs.mkdir(process.env.ARTIFACT_DIR, { recursive: true });
-          for (const [i, p] of pages.entries()) if (!p.isClosed()) await p.screenshot({ timeout: 10000, path: path.join(process.env.ARTIFACT_DIR, `${engine}-usage-alert-${i}.png`) });
-        }
-      } finally {
-        await browser.close();
+      if (process.env.ARTIFACT_DIR) {
+        await fs.mkdir(process.env.ARTIFACT_DIR, { recursive: true });
+        for (const [i, p] of pages.entries()) await p.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `${engine}-usage-alert-${i}.png`) });
       }
+      await browser.close();
     });
 
     for (const lang of ["en", "zh"]) {
@@ -163,8 +170,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await share.inputValue(), "90");
 
         // the balance: On saves 5, then the amount typed
-        await reach(page, balSegs.nth(1));
-        const atBalance = await view(page);
         await balSegs.nth(1).click();
         const b = await posted(3);
         assert.equal(b.balanceAlert, 5);
@@ -182,7 +187,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // and a scroll made by a script is put back as the page is drawn
         // again: so the alert clicks are checked here, and the currency
         // row is wheeled into view, as a reader would, before its click.
-        assert.equal(await view(page), atBalance, "no balance alert click moved the page");
+        assert.equal(await view(page), before, "no alert click moved the page");
         const cny = page.locator("#currencySegs .opt", { hasText: w.cny });
         // wholly in sight and under nothing, or the click's own scroll to it
         // reads as the page moving (10-22, taller rows)

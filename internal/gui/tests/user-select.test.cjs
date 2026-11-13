@@ -10,7 +10,6 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const now = new Date();
@@ -67,8 +66,12 @@ async function drag(page, loc) {
     b = n;
   }
   // scrolled to as a reader does, with the wheel, clear of the window's foot
-  await reach(page, loc);
-  b = await loc.boundingBox();
+  for (let i = 0; i < 20 && (b.y < 120 || b.y + b.height > 560); i++) {
+    await page.mouse.move(10 + b.width / 2, 300);
+    await page.mouse.wheel(0, b.y - 300);
+    await page.waitForTimeout(120);
+    b = await loc.boundingBox();
+  }
   const y = b.y + Math.min(b.height / 2, 8);
   await page.mouse.move(b.x + 2, y);
   await page.mouse.down();
@@ -110,7 +113,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await selectOf(row), "none");
         assert.equal(await drag(page, row.locator(".to")), "");
         await drag(page, said);
-        await reach(page, page.locator(".rt-req").nth(1));
+        await page.locator(".rt-req").nth(1).evaluate((e) => e.scrollIntoView({ block: "center", behavior: "instant" }));
         await page.locator(".rt-req").nth(1).click();
         await page.waitForFunction(() => document.querySelector(".rt-req[aria-pressed=true]") === document.querySelectorAll(".rt-req")[1]);
 

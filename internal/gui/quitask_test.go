@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/agent"
+	"github.com/yetone/magpie/internal/settings"
 )
 
 // A Quit the user chose while agents go through magpie asks first
@@ -17,7 +18,7 @@ import (
 func TestWindowQuitAsksFirst(t *testing.T) {
 	quits := 0
 	asked := make(chan struct{}, 4)
-	h := Handler(askingHost{webHost{quit: func() { quits++ }}, asked}, nil)
+	h := webPageHandler(t, askingHost{webHost{quit: func() { quits++ }}, asked}, nil)
 	post := func(url string) {
 		t.Helper()
 		r := httptest.NewRecorder()
@@ -47,7 +48,7 @@ func TestWindowQuitAsksFirst(t *testing.T) {
 	default:
 	}
 
-	web := Handler(webHost{quit: func() { quits++ }}, nil)
+	web := webPageHandler(t, webHost{quit: func() { quits++ }}, nil)
 	r := httptest.NewRecorder()
 	web.ServeHTTP(r, httptest.NewRequest("POST", "/api/window/quit", nil))
 	if quits != 2 {
@@ -87,7 +88,7 @@ func TestQuitAPIListsAgents(t *testing.T) {
 	t.Cleanup(func() { quitAgents = old })
 	quitAgents = func() []quitAgentJSON { return []quitAgentJSON{{ID: "codex", Name: "Codex", Icon: "openai"}} }
 	r := httptest.NewRecorder()
-	Handler(webHost{}, nil).ServeHTTP(r, httptest.NewRequest("GET", "/api/quit", nil))
+	webPageHandler(t, webHost{}, nil).ServeHTTP(r, httptest.NewRequest("GET", "/api/quit", nil))
 	var got struct{ Agents []quitAgentJSON }
 	if err := json.Unmarshal(r.Body.Bytes(), &got); err != nil || len(got.Agents) != 1 || got.Agents[0].ID != "codex" {
 		t.Fatalf("GET /api/quit = %d %s (%v)", r.Code, r.Body, err)
@@ -126,5 +127,100 @@ func TestQuitNow(t *testing.T) {
 		if got := quitNow(c.asked, now, c.wired); got != c.want {
 			t.Errorf("%s: quitNow = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// "Don't ask again" (zhujiu on Discord): the question's Quit sent with
+// noAsk=1 saves settings.QuitNoAsk and quits; from then on a Quit with
+// agents connected quits at once, until Settings › General › Ask before
+// quitting turns the question back on.
+func TestQuitDontAskAgain(t *testing.T) {
+	sandboxHome(t)
+	old := quitAgents
+	t.Cleanup(func() { quitAgents = old })
+	quitAgents = func() []quitAgentJSON { return []quitAgentJSON{{ID: "codex", Name: "Codex", Icon: "openai"}} }
+	now := time.Now()
+	if quitAtOnce(0, now) {
+		t.Fatal("with Codex connected, the first Quit quit without asking")
+	}
+
+	quits := 0
+	h := webPageHandler(t, askingHost{webHost{quit: func() { quits++ }}, make(chan struct{}, 1)}, nil)
+	r := httptest.NewRecorder()
+	h.ServeHTTP(r, httptest.NewRequest("POST", "/api/window/quit?now=1&noAsk=1", nil))
+	if r.Code != 204 || quits != 1 {
+		t.Fatalf("the question's Quit with Don't ask again: %d %s, %d quits", r.Code, r.Body, quits)
+	}
+	if !settings.Load().QuitNoAsk {
+		t.Fatal("Don't ask again wasn't saved")
+	}
+	if !quitAtOnce(0, now) {
+		t.Fatal("after Don't ask again, a Quit with Codex connected still asks")
+	}
+
+	if err := settings.SetQuitNoAsk(false); err != nil {
+		t.Fatal(err)
+	}
+	if quitAtOnce(0, now) {
+		t.Fatal("with Ask before quitting on again, a Quit didn't ask")
+	}
+	// a plain Quit from the question saves nothing
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/window/quit?now=1", nil))
+	if settings.Load().QuitNoAsk {
+		t.Fatal("the question's Quit without Don't ask again saved it")
+	}
+}
+
+// tudjam17795 on X: with Settings › General › Put agents back when
+// quitting on, the app's quit restores the connected agents and its next
+// start connects them again; off (the default), a quit leaves them as
+// they are. With it on a Quit needs no question, and a gateway served by
+// another magpie leaves its agents alone.
+func TestRestoreAgentsOnQuit(t *testing.T) {
+	sandboxHome(t)
+	old := [...]any{servedHere, quitDetect, quitRestore, startAgents, startRewire}
+	t.Cleanup(func() {
+		servedHere, quitDetect, quitRestore = old[0].(func() bool), old[1].(func() []*agent.Agent), old[2].(func([]*agent.Agent) ([]string, error))
+		startAgents, startRewire = old[3].(func() []*agent.Agent), old[4].(func([]*agent.Agent) ([]string, error))
+	})
+	restored, rewired := 0, 0
+	servedHere = func() bool { return true }
+	quitDetect = func() []*agent.Agent { return nil }
+	quitRestore = func([]*agent.Agent) ([]string, error) { restored++; return nil, nil }
+	startAgents = func() []*agent.Agent { return nil }
+	startRewire = func([]*agent.Agent) ([]string, error) { rewired++; return nil, nil }
+	oldAgents := quitAgents
+	t.Cleanup(func() { quitAgents = oldAgents })
+	quitAgents = func() []quitAgentJSON { return []quitAgentJSON{{ID: "codex"}} }
+	if quitAtOnce(0, time.Now()) {
+		t.Fatal("off by default, a Quit with Codex connected quit without asking")
+	}
+
+	restoreAgentsOnQuit()
+	if restored != 0 {
+		t.Fatal("off by default, a quit put the agents back")
+	}
+	s := settings.Load()
+	s.RestoreOnQuit = true
+	if err := settings.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	servedHere = func() bool { return false }
+	restoreAgentsOnQuit()
+	if restored != 0 {
+		t.Fatal("another magpie serves the gateway, yet the quit put its agents back")
+	}
+	servedHere = func() bool { return true }
+	restoreAgentsOnQuit()
+	if restored != 1 {
+		t.Fatalf("with the setting on, restored %d times", restored)
+	}
+	// nothing to ask: agents are put back
+	if !quitAtOnce(0, time.Now()) {
+		t.Fatal("with the setting on a Quit asks")
+	}
+	rewireAgentsOnStart()
+	if rewired != 1 {
+		t.Fatalf("a start rewired %d times", rewired)
 	}
 }

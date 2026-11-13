@@ -4,8 +4,9 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { test } = require('node:test');
 const { chromium, webkit } = require('playwright');
+const { watchSettingsReads, settingsDrawn, inEditor, settled, pickItem } = require('./reader.cjs');
 const assets = path.resolve(__dirname, '../assets');
-for (const engine of ['chromium','webkit']) for (const lang of ['en','zh','zh-TW','ja','de']) {
+for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ['chromium','webkit'])) for (const lang of ['en','zh','zh-TW','ja','de']) {
  test(`${engine} ${lang}: Claude login mapping, trust gate, drafts and narrow layout`, async t => {
   const browser = await (engine === 'webkit' ? webkit.launch() : chromium.launch());
   t.after(()=>browser.close());
@@ -32,7 +33,9 @@ for (const engine of ['chromium','webkit']) for (const lang of ['en','zh','zh-TW
    const f=path.join(assets,u.pathname==='/'?'index.html':u.pathname);
    return route.fulfill({body:await fs.readFile(f),contentType:{'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml'}[path.extname(f)]});
   });
+  await watchSettingsReads(page);
   await page.goto('http://magpie.test/?view=settings&tab=network');
+  await settingsDrawn(page);
   await page.locator('#claudeLoginOpen').click();
   const modal=page.locator('.claude-login');await modal.waitFor();
   await modal.locator('.login-target-error:not([hidden])').waitFor();
@@ -41,8 +44,11 @@ for (const engine of ['chromium','webkit']) for (const lang of ['en','zh','zh-TW
     mapping:e.querySelector('.login-mapping input').getBoundingClientRect().width}));
   assert.equal(geometry.display,'flex','mapping editor inherited the label/control grid');
   assert(geometry.certificate>450 && geometry.mapping>140,JSON.stringify(geometry));
-  await modal.getByRole('button',{name:await page.evaluate(()=>t('Map Claude models from a provider')),exact:true}).click();
-  await page.getByRole('menuitemradio',{name:'New Team',exact:true}).click();
+  const mapButton=modal.getByRole('button',{name:await page.evaluate(()=>t('Map Claude models from a provider')),exact:true});
+  await settled(page);
+  await inEditor(page,mapButton);
+  await mapButton.click();
+  await pickItem(page,page.getByRole('menuitemradio',{name:'New Team',exact:true}));
   assert.equal(await modal.locator('.login-mapping input').nth(1).inputValue(),'team-new/claude-opus-5-5','replacing a deleted Team kept its old target');
   assert.equal(await modal.locator('.login-target-error:not([hidden])').count(),0);
   const check=modal.locator('input[type=checkbox]').first();

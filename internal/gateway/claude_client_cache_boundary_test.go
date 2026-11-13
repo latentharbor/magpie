@@ -110,8 +110,7 @@ func reusablePrefix(t *testing.T, first, second []map[string]any) int {
 // mark still ends a block of round two, whose marks moved on with the
 // growth: Anthropic's check looks back over block boundaries, not into
 // merged blocks, so a boundary merged away is a cache written for nothing
-// (#3835). The default path may also preserve that prefix in this fork;
-// the guarantee here is that explicit client marks never lose it.
+// (#3835). The default path is a control: it keeps no transcript at all.
 func TestClaudeClientCacheKeepsEarlierTranscriptBoundary(t *testing.T) {
 	for _, client := range []bool{false, true} {
 		name := "default"
@@ -135,6 +134,9 @@ func TestClaudeClientCacheKeepsEarlierTranscriptBoundary(t *testing.T) {
 			}
 			longest := reusablePrefix(t, rounds[0], rounds[1])
 			t.Logf("before blocks=%d, after blocks=%d, reusable serialized prefix bytes=%d", len(rounds[0]), len(rounds[1]), longest)
+			if !client && longest > 1000 {
+				t.Fatal("default reproduction unexpectedly preserves the transcript")
+			}
 			if client && longest < 400000 {
 				t.Fatal("client marks survived, but the earlier transcript block boundary was merged away")
 			}

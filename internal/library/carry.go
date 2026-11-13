@@ -33,6 +33,14 @@ type Bundle struct {
 	// carried, which knew nothing of this computer's: Put keeps them. Collect
 	// always sets it, empty too, so taking the last one out is carried.
 	Subagents *[]*Subagent `json:"subagents,omitempty"`
+	// Hooks are nil in a bundle from a magpie before they were carried,
+	// as Subagents are: Put keeps this computer's. Applied.Hooks, the
+	// entries magpie wrote into each agent here, stays out.
+	Hooks *[]*Hook `json:"hooks,omitempty"`
+	// Env is nil in a bundle from a magpie before variables were carried:
+	// Put keeps this computer's. Applied.Env stays out. A backup made
+	// without keys carries the names with empty values (WithoutSecrets).
+	Env *[]*EnvVar `json:"env,omitempty"`
 }
 
 // CarriedSkill is a skill with its folder's files.
@@ -45,6 +53,17 @@ type CarriedSkill struct {
 	Left   []string          `json:"left,omitempty"` // files too big to carry
 	// Called is the name its SKILL.md gives, when that isn't Name
 	Called string `json:"called,omitempty"`
+	// Note is the user's note on it (Skill.Note)
+	Note string `json:"note,omitempty"`
+	// Router is Skill.Router: direct, kept out of the skill router
+	Router string `json:"router,omitempty"`
+	// From is the repository the skill was traced to on the computer that
+	// made the bundle (Skill.From, skill_from.go), when it isn't a source
+	// the skill carries itself: the lock, a checkout, CC Switch's record or
+	// an install-again there. What traced it is that computer's own files,
+	// so without this the other computer groups the skill under "this
+	// computer". Bundles from before this have none.
+	From string `json:"from,omitempty"`
 }
 
 // A skill's file bigger than maxCarried is left out, and so are the
@@ -102,9 +121,13 @@ func Collect() (*Bundle, error) {
 	for _, s := range skills {
 		dirs = append(dirs, realDir(skillDir(s.Name)))
 	}
+	tr := &tracer{}
 	for i, c := range readSkills(dirs) {
 		s := skills[i]
-		c.Name, c.Source, c.Agents, c.Called = s.Name, s.Source, orNone(slices.Sorted(slices.Values(s.Agents))), s.Called
+		if s.Source == nil || s.Source.Kind == "folder" {
+			c.From = tr.repoOf(s)
+		}
+		c.Name, c.Source, c.Agents, c.Called, c.Note, c.Router = s.Name, s.Source, orNone(slices.Sorted(slices.Values(s.Agents))), s.Called, s.Note, s.Router
 		b.Skills = append(b.Skills, c)
 	}
 	subs := []*Subagent{}
@@ -115,6 +138,20 @@ func Collect() (*Bundle, error) {
 		subs = append(subs, &c)
 	}
 	b.Subagents = &subs
+	hooks := []*Hook{}
+	for _, h := range sorted(l.Hooks, func(h *Hook) string { return h.Name }) {
+		c := *h
+		c.Agents = orNone(slices.Sorted(slices.Values(h.Agents)))
+		hooks = append(hooks, &c)
+	}
+	b.Hooks = &hooks
+	envs := []*EnvVar{}
+	for _, e := range sorted(l.Env, func(e *EnvVar) string { return e.Name }) {
+		c := *e
+		c.Agents = orNone(slices.Sorted(slices.Values(e.Agents)))
+		envs = append(envs, &c)
+	}
+	b.Env = &envs
 	return b, nil
 }
 
@@ -132,7 +169,10 @@ func orNone(xs []string) []string {
 // readSkills is each skill folder's files. Links in it, .git and what
 // isn't a plain file stay out. What goes is chosen smallest first across
 // every skill, so the text of them all comes before any big file.
-func readSkills(dirs []string) []*CarriedSkill {
+func readSkills(dirs []string) []*CarriedSkill { return readSkillsMax(dirs, maxCarried, maxCarriedAll) }
+
+// readSkillsMax is readSkills with a file's and the whole's budget given.
+func readSkillsMax(dirs []string, perFile, all int64) []*CarriedSkill {
 	type file struct {
 		skill  int
 		rel, p string
@@ -172,10 +212,10 @@ func readSkills(dirs []string) []*CarriedSkill {
 	slices.SortFunc(files, func(a, b file) int {
 		return cmp.Or(cmp.Compare(a.size, b.size), cmp.Compare(a.skill, b.skill), strings.Compare(a.rel, b.rel))
 	})
-	budget := int64(maxCarriedAll)
+	budget := all
 	for _, f := range files {
 		c := out[f.skill]
-		if f.size > maxCarried || f.size > budget {
+		if f.size > perFile || f.size > budget {
 			c.Left = append(c.Left, f.rel)
 			continue
 		}
@@ -183,7 +223,7 @@ func readSkills(dirs []string) []*CarriedSkill {
 		if err != nil {
 			continue
 		}
-		if n := int64(len(data)); n > maxCarried || n > budget { // grew since
+		if n := int64(len(data)); n > perFile || n > budget { // grew since
 			c.Left = append(c.Left, f.rel)
 			continue
 		}
@@ -262,6 +302,42 @@ func (b *Bundle) check() error {
 			seen[s.Name] = true
 		}
 	}
+	if b.Env != nil {
+		seen := map[string]bool{}
+		for _, e := range *b.Env {
+			if e == nil {
+				return fmt.Errorf("an empty variable")
+			}
+			if err := e.check(); err != nil {
+				return err
+			}
+			if seen[e.Name] {
+				return fmt.Errorf("the variable %s twice", e.Name)
+			}
+			seen[e.Name] = true
+		}
+	}
+	if b.Hooks != nil {
+		seen := map[string]bool{}
+		for _, h := range *b.Hooks {
+			if h == nil {
+				return fmt.Errorf("an empty hook")
+			}
+			// the event and agents are left as they come: one a newer
+			// magpie knows and this one doesn't is a problem on the
+			// agent it is given to (syncHooks), not a refused library
+			if err := checkName("hook", h.Name); err != nil {
+				return err
+			}
+			if strings.TrimSpace(h.Command) == "" {
+				return fmt.Errorf("the hook %s has no command", h.Name)
+			}
+			if seen[h.Name] {
+				return fmt.Errorf("the hook %s twice", h.Name)
+			}
+			seen[h.Name] = true
+		}
+	}
 	return nil
 }
 
@@ -275,9 +351,25 @@ func localFile(rel string) bool {
 // WithoutSecrets empties the values of the servers' environment variables
 // and headers that secret says hold one; their names stay, to be filled in.
 func (b *Bundle) WithoutSecrets(secret func(string) bool) {
+	// a variable's name says nothing of what its value is: every value
+	// goes, the names stay
+	if b.Env != nil {
+		envs := []*EnvVar{}
+		for _, e := range *b.Env {
+			c := *e
+			c.Value = ""
+			envs = append(envs, &c)
+		}
+		b.Env = &envs
+	}
 	for i, s := range b.MCP {
 		c := *s
 		c.Env, c.Headers = blank(s.Env, secret), blank(s.Headers, secret)
+		c.Accounts = nil
+		for _, a := range s.Accounts {
+			a.Headers = blank(a.Headers, secret)
+			c.Accounts = append(c.Accounts, a)
+		}
 		// an OAuth app's secret is a key too; its client ID isn't
 		if s.OAuth != nil && s.OAuth.ClientSecret != "" {
 			a := *s.OAuth
@@ -311,11 +403,29 @@ func (b *Bundle) WithSecrets(have *Bundle, secret func(string) bool) *Bundle {
 	}
 	out := *b
 	out.MCP = nil
+	if b.Env != nil && have.Env != nil {
+		envs := []*EnvVar{}
+		for _, e := range *b.Env {
+			c := *e
+			if i := slices.IndexFunc(*have.Env, func(h *EnvVar) bool { return h.Name == e.Name }); i >= 0 && c.Value == "" {
+				c.Value = (*have.Env)[i].Value
+			}
+			envs = append(envs, &c)
+		}
+		out.Env = &envs
+	}
 	for _, s := range b.MCP {
 		c := *s
 		i := slices.IndexFunc(have.MCP, func(h *Server) bool { return h.Name == s.Name })
 		if i >= 0 {
 			c.Env, c.Headers = filled(s.Env, have.MCP[i].Env, secret), filled(s.Headers, have.MCP[i].Headers, secret)
+			c.Accounts = nil
+			for _, a := range s.Accounts {
+				if j := slices.IndexFunc(have.MCP[i].Accounts, func(h Account) bool { return h.ID == a.ID }); j >= 0 {
+					a.Headers = filled(a.Headers, have.MCP[i].Accounts[j].Headers, secret)
+				}
+				c.Accounts = append(c.Accounts, a)
+			}
 			// the same app's secret, kept here
 			if h := have.MCP[i].OAuth; s.OAuth != nil && s.OAuth.ClientSecret == "" && h != nil && h.ClientID == s.OAuth.ClientID {
 				a := *s.OAuth
@@ -416,7 +526,18 @@ func Put(b *Bundle) (*Result, error) {
 		for _, s := range b.Skills {
 			// turned off here stays off here: that is this computer's own
 			off := l.skill(s.Name) != nil && l.skill(s.Name).OffHere
-			skills = append(skills, &Skill{Name: s.Name, Source: s.Source, Agents: slices.Clone(orNone(s.Agents)), OffHere: off, Called: s.Called})
+			n := &Skill{Name: s.Name, Source: s.Source, Agents: slices.Clone(orNone(s.Agents)), OffHere: off, Called: s.Called, Note: s.Note, Router: s.Router}
+			// where it came from: the other computer's trace, else what
+			// this one has found itself (Group again) for the same skill,
+			// which a bundle from before From was carried says nothing of
+			n.From = s.From
+			if cur := l.skill(s.Name); cur != nil && sameSource(cur.Source, s.Source) {
+				if n.From == "" {
+					n.From = cur.From
+				}
+				n.Gone = cur.Gone // kept on this computer only
+			}
+			skills = append(skills, n)
 			if keep[s.Name] {
 				continue
 			}
@@ -498,6 +619,27 @@ func Put(b *Bundle) (*Result, error) {
 				subs = append(subs, &c)
 			}
 			l.Subagents = subs
+		}
+		// the same for hooks: Applied.Hooks decides, entry by entry,
+		// what magpie takes out of each agent's file here
+		if b.Hooks != nil {
+			hooks := []*Hook{}
+			for _, h := range *b.Hooks {
+				c := *h
+				c.Agents = slices.Clone(orNone(h.Agents))
+				hooks = append(hooks, &c)
+			}
+			l.Hooks = hooks
+		}
+		// variables the same way: Applied.Env decides what is taken out
+		if b.Env != nil {
+			envs := []*EnvVar{}
+			for _, e := range *b.Env {
+				c := *e
+				c.Agents = slices.Clone(orNone(e.Agents))
+				envs = append(envs, &c)
+			}
+			l.Env = envs
 		}
 		return nil
 	})

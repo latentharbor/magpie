@@ -72,10 +72,20 @@ func signIn(t *testing.T) string {
 // logins and forgets anything a previous test cached.
 func isolate(t testing.TB) {
 	t.Helper()
+	// nor a read a test before it left running, though it isolated nothing
+	endReadsOut(t, "before the test")
 	oldKeychain, oldBase, oldExe := claudeKeychain, claudeBase, claudeExecutable
 	oldDevin := DevinExecutable
+	// a read this test leaves running ends with it (#3174): registered
+	// first, this runs after every other cleanup, with the test's fakes
+	// let go
+	t.Cleanup(func() { endReadsOut(t, "after the test") })
 	claudeKeychain = false
 	claudeExecutable = func() string { return "" }
+	// a Claude sign-in with no Claude Code downloads one: never in a test
+	oldDownload := downloadClaudeCode
+	downloadClaudeCode = func(context.Context) error { return errors.New("no Claude Code download in tests") }
+	t.Cleanup(func() { downloadClaudeCode = oldDownload })
 	// the machine's own devin, if it has one, is no test's
 	DevinExecutable = func() string { return "" }
 	forgetClaudeCredential()
@@ -261,6 +271,31 @@ func TestAccountsAreProviders(t *testing.T) {
 	// no Claude credential in this home: no claude provider
 	if _, ok := find(All(), "claude"); ok {
 		t.Fatal("claude listed without credentials")
+	}
+}
+
+// endReadsOut waits for the allowance and usage reads a test left running
+// (readsOut). Left to run on, one reads the sign-in in the next test's
+// home before that test has written it, and caches that there is none:
+// TestClaudeAccountServesModelsListedSinceItsFetch found no Claude
+// account, under load only, after TestClaudeAllSignedOutStaysListed's
+// InUseLogin left its Allowances read past firstWait (#3174).
+func endReadsOut(t testing.TB, when string) {
+	t.Helper()
+	deadline := time.After(time.Minute) // a read gives up after 30s
+	for {
+		readsOut.Lock()
+		n, idle := readsOut.n, readsOut.idle
+		readsOut.Unlock()
+		if n == 0 {
+			return
+		}
+		select {
+		case <-idle:
+		case <-deadline:
+			t.Errorf("%d allowance or usage reads still ran a minute %s", n, when)
+			return
+		}
 	}
 }
 

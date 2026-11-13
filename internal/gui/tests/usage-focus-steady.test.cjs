@@ -131,10 +131,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // the window, on the Overview
       const calls = { state: 0, overview: 0, requests: 0 }, cur = { v: 0 };
       const p = await open("http://magpie.test/?view=usage", { width: 1180, height: 760 }, calls, cur);
-      await p.locator("#usageTab .opt.on").waitFor({ state: "attached" });
-      // The initial state read redraws the tabs. Read the selection and
-      // its position together, not from a handle to a replaced tab.
-      if (await p.evaluate(() => !!document.querySelector("#usageTab .opt.on:not(:first-child)"))) await p.locator(":is(#usageTab .opt, .nav-s):visible").first().click();
+      if (await p.locator("#usageTab .opt.on").evaluate((b) => b !== b.parentElement.firstElementChild)) await p.locator(":is(#usageTab .opt, .nav-s):visible").first().click();
       const BAR = "#chart .bars .bar";
       await p.locator(BAR).first().waitFor();
       assert.equal(await p.locator(BAR).count(), DAYS);
@@ -179,9 +176,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.deepEqual(await flashes(panel), [], "the panel's chart isn't dimmed or blanked");
       assert.deepEqual(await kept(panel, PCOL), Array.from({ length: pcols }, (_, i) => i + 1), "the same columns stay");
 
-      // the Routing page's groups: the same cards stay
-      await p.locator('[data-view="routing"]').first().click();
-      const GRP = "#view-routing .rt-group";
+      // the Routing groups page: the same cards stay
+      await p.locator('[data-view="groups"]').first().click();
+      const GRP = "#view-groups .rt-group";
       await p.locator(GRP).first().waitFor();
       await p.waitForTimeout(300);
       await watch(p, GRP);

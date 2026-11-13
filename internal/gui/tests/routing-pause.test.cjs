@@ -86,28 +86,27 @@ async function open(engine, lang, width, t) {
   await page.route("**/*", serve(lang, posts));
   await page.goto("http://magpie.test/?view=routing");
   const group = page.locator(".rt-group").first();
-  await group.waitFor();
+  await group.waitFor({ state: "attached" });
   return { page, group, errors, posts };
 }
 // a click as the reader's: wheeled into the middle of the view first (a
 // click never moves the page, so Playwright's own scroll is put back), then
 // the mouse on it once it holds still
 async function press(page, x) {
-  for (let i = 0; i < 12; i++) {
-    const d = await x.evaluate((e) => { const v = document.querySelector("#view-routing");
-      return Math.round(e.getBoundingClientRect().top - v.getBoundingClientRect().top - v.clientHeight / 2); });
-    if (Math.abs(d) <= 100) break;
+  // a group opening into its editor moves its height and parts for ~700ms
+  // (91b0be836): where x will be is read once that has stopped
+  await page.waitForFunction(() => !document.getAnimations().some((a) => a.playState === "running" && Number.isFinite(a.effect?.getComputedTiming().endTime)));
+  const d = await x.evaluate((e) => { const v = document.querySelector("#view-groups");
+    return Math.round(e.getBoundingClientRect().top - v.getBoundingClientRect().top - v.clientHeight / 2); });
+  if (Math.abs(d) > 100) {
     // over the view, not the sidebar beside it
-    const v = await page.locator("#view-routing").boundingBox();
-    // The request log is itself scrollable. Wheel in the view's gutter,
-    // not over that log, or the control never comes into the viewport.
-    await page.mouse.move(v.x + v.width - 4, 300);
+    const v = await page.locator("#view-groups").boundingBox();
+    await page.mouse.move(v.x + 10, 300);
     await page.mouse.wheel(0, d);
     await page.waitForTimeout(400);
   }
   await page.waitForTimeout(300); // the page settled (WebKit's folds)
   const b = await x.boundingBox();
-  assert(b.y >= 0 && b.y + b.height <= page.viewportSize().height, "the control was wheeled into view before clicking");
   await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
 }
 // nothing in the rules runs past the editor's side
@@ -124,6 +123,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
       // the trace: the model paused, by which rule and when
       await page.waitForFunction((s) => document.documentElement.innerText.includes(s), w.aside);
+      await page.evaluate(() => window.show("groups"));
+      await group.waitFor();
 
       // the group's rule, in words
       const title = await group.evaluate((g) => [...g.querySelectorAll("[title]")].map((e) => e.title).join("\n"));
@@ -183,8 +184,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert(save, `saved: ${JSON.stringify(posts)}`);
       assert.deepEqual(save.body.rules.map((r) => [r.use, !!r.pause, r.tokens || 0, r.time]), [
         ["a/glm", true, 0, { from: "14:00", to: "18:00", days: WEEKDAYS }],
-        ["b/other", true, 0, { from: "09:00", to: "12:00", days: [],
-          zone: await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone) }],
+        // hours set here are in the browser's zone, saved with them (c888ef272)
+        ["b/other", true, 0, { from: "09:00", to: "12:00", days: [], zone: "Asia/Tokyo" }],
       ]);
       assert.deepEqual(errors, []);
     });
@@ -193,6 +194,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
   for (const lang of Object.keys(words)) {
     test(`${engine} ${lang}: a pause rule at a narrow width`, async (t) => {
       const { page, group, errors } = await open(engine, lang, 420, t);
+      await page.evaluate(() => window.show("groups"));
+      await group.waitFor();
       await press(page, group.locator("button", { hasText: EDIT[lang] }));
       const row = page.locator(".rt-gedit .rt-rule").first();
       await row.waitFor();

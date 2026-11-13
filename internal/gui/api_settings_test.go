@@ -1,7 +1,6 @@
 package gui
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -170,45 +169,6 @@ func perModelValue(typ reflect.Type, table string) reflect.Value {
 		return out
 	}
 	return reflect.Zero(typ)
-}
-
-// Older settings pages keep the opt-in transport; invalid choices never
-// replace the saved choice, while an empty choice restores the CLI default.
-func TestSettingsClaudeTransport(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	handler := Handler(nil, nil)
-	for _, x := range []struct {
-		body string
-		want string
-		bad  bool
-	}{
-		{`{"claudeTransport":"http"}`, "http", false},
-		{`{"theme":"dark"}`, "http", false},
-		{`{"claudeTransport":"automatic"}`, "http", true},
-		{`{"claudeTransport":""}`, "cli", false},
-		{`{"claudeTransport":"http"}`, "http", false},
-		{`{"claudeTransport":"cli"}`, "cli", false},
-	} {
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest("POST", "/api/settings", strings.NewReader(x.body)))
-		if (rec.Code != http.StatusOK) != x.bad {
-			t.Fatalf("%s: %d %s", x.body, rec.Code, rec.Body)
-		}
-		if got := settings.Load().ClaudeTransport; got != x.want {
-			t.Fatalf("%s: transport = %q, want %q", x.body, got, x.want)
-		}
-		if !x.bad {
-			var response struct {
-				ClaudeTransport string `json:"claudeTransport"`
-			}
-			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-				t.Fatal(err)
-			}
-			if response.ClaudeTransport != x.want {
-				t.Fatalf("API response transport = %q, want %q", response.ClaudeTransport, x.want)
-			}
-		}
-	}
 }
 
 // How often a refused request is asked again (DD on Discord) is set by the
@@ -505,5 +465,38 @@ func TestSettingsSearchAllSetOnItsOwn(t *testing.T) {
 	post("/api/settings/search-all", `{"on":false}`)
 	if settings.Load().SearchAll {
 		t.Fatal("search-all didn't turn it off")
+	}
+}
+
+// How many results a search is answered with (Settings › Models › Web
+// search, #5545) is set on its own: the endpoint sets it and says it
+// back, a save of the whole page keeps it, and one out of 1 to 20 is
+// refused with nothing written.
+func TestSettingsSearchCountSetOnItsOwn(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	h := Handler(nil, nil)
+	post := func(path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("POST", path, strings.NewReader(body)))
+		return rec
+	}
+	rec := post("/api/settings/search-count", `{"n":12}`)
+	if rec.Code != http.StatusOK || settings.Load().SearchCount != 12 {
+		t.Fatalf("search-count didn't set it: %d %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), `"searchCount":12`) {
+		t.Errorf("the state sent back doesn't say it: %s", rec.Body)
+	}
+	if rec := post("/api/settings", `{"theme":"dark"}`); rec.Code != http.StatusOK || settings.Load().SearchCount != 12 {
+		t.Fatalf("a save of the page dropped searchCount: %d %s", rec.Code, rec.Body)
+	}
+	for _, bad := range []string{`{"n":21}`, `{"n":-1}`} {
+		if rec := post("/api/settings/search-count", bad); rec.Code == http.StatusOK || settings.Load().SearchCount != 12 {
+			t.Errorf("%s: %d, count now %d", bad, rec.Code, settings.Load().SearchCount)
+		}
+	}
+	if rec := post("/api/settings/search-count", `{"n":0}`); rec.Code != http.StatusOK || settings.Load().SearchCount != 0 {
+		t.Fatalf("0 didn't put the default back: %d %s", rec.Code, rec.Body)
 	}
 }

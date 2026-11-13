@@ -111,8 +111,21 @@ func TestMaskingModelWaitNotCutOffAtMost(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the request's wait for the model went on after its client went away")
 	}
-	// A client cancellation before routing may remove its temporary held
-	// row. The read above verifies that the local model's wait stopped.
+}
+
+// A masking begun as the rest of a request's wait ran out still says it
+// waited for the local masking model, what the model was doing and how to
+// send without it; and no longer that what the model read is kept, which
+// held only for texts it had finished.
+func TestUnroutedMsgSaysTheMaskingModel(t *testing.T) {
+	on, busy := modelOn, modelBusy
+	modelOn, modelBusy = func() bool { return true }, func() string { return "it is still loading" }
+	t.Cleanup(func() { modelOn, modelBusy = on, busy })
+	m := unroutedMsg(2*time.Minute, true)
+	if !strings.Contains(m, "waiting for the local masking model") || !strings.Contains(m, "it is still loading") ||
+		!strings.Contains(m, "turn it off in Settings") || strings.Contains(m, "without routing") || strings.Contains(m, "kept") {
+		t.Fatalf("held for the model: %s", m)
+	}
 }
 
 // With the model off, a request held while masked says it was held while

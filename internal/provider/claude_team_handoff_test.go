@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yetone/magpie/internal/routes"
+	"github.com/yetone/magpie/internal/claudeteam"
 )
 
 func TestClaudeTeamStandbyClearedBeforeAssignment(t *testing.T) {
@@ -86,7 +86,7 @@ func TestClaudeTeamReauthRequiresSelectedMember(t *testing.T) {
 func TestClaudeTeamSmartTrustAndDwell(t *testing.T) {
 	tm, _, c := teamFixture(t)
 	now := time.Now()
-	seats := []claudeTeamSeat{{teamID(2), "team_tier_1"}, {teamID(3), "unassigned"}, {teamID(4), "unassigned"}}
+	seats := []claudeTeamSeat{{AccountID: teamID(2), SeatTier: "team_tier_1"}, {AccountID: teamID(3), SeatTier: "unassigned"}, {AccountID: teamID(4), SeatTier: "unassigned"}}
 	for _, n := range []int{2, 3, 4} {
 		tm.disk.Limits[teamID(n)] = []ClaudeLimit{
 			{Kind: "five_hour", Used: .1, ResetsAt: now.Add(4 * time.Hour).Unix()},
@@ -136,8 +136,8 @@ func TestClaudeTeamVoluntaryExpiryNeedsBenefit(t *testing.T) {
 		{"distant five hour", []time.Duration{24 * time.Hour, 4 * time.Hour}, []time.Duration{24 * time.Hour, 2 * time.Hour}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			seat := func(ds []time.Duration) routes.Seat {
-				s := routes.Seat{}
+			seat := func(ds []time.Duration) claudeteam.Weight {
+				s := claudeteam.Weight{}
 				for _, d := range ds {
 					s.Soon = append(s.Soon, now.Add(d))
 				}

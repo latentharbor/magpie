@@ -27,6 +27,44 @@ var googleTurnsAway = []string{
 	"hermes agent, an intelligent ai assistant created by nous research",
 }
 
+// brokenTwice is line with "|" after the first and the second character of
+// each run of three or more ASCII letters or digits.
+func brokenTwice(line string) string {
+	var b strings.Builder
+	for i := 0; i < len(line); {
+		j := i
+		for j < len(line) && agAlnum(line[j]) {
+			j++
+		}
+		switch {
+		case j == i:
+			b.WriteByte(line[i])
+			i++
+		case j-i >= 3:
+			b.WriteString(line[i:i+1] + "|" + line[i+1:i+2] + "|" + line[i+2:j])
+			i = j
+		default:
+			b.WriteString(line[i:j])
+			i = j
+		}
+	}
+	return b.String()
+}
+
+// Claude Code 2.1.316's own system blocks (claude -p, captured 11-11): the
+// first is turned away, once broken after only its first letter.
+func TestAntigravityCloakClaudeCode2316(t *testing.T) {
+	system := "x-anthropic-billing-header: cc_version=2.1.316.2e4; cc_entrypoint=sdk-cli;\nYou are a Claude agent, built on Anthropic's Claude Agent SDK.\n"
+	got := antigravityCloak(system)
+	want := "x-a|n|thropic-b|i|lling-h|e|ader: cc_version=2.1.316.2e4; cc_entrypoint=sdk-cli;\nYou are a Claude agent, b|u|ilt on A|n|thropic's C|l|aude A|g|ent S|D|K.\n"
+	if got != strings.ReplaceAll(want, "|", zeroWidth) {
+		t.Fatalf("went as %q", got)
+	}
+	if antigravityCloak(got) != got {
+		t.Fatal("broken again")
+	}
+}
+
 func TestAntigravityCloakBreaksEveryLineItTurnsAway(t *testing.T) {
 	for _, system := range []string{
 		claudeCodeSystem,
@@ -51,11 +89,13 @@ func TestAntigravityCloakBreaksEveryLineItTurnsAway(t *testing.T) {
 		if !strings.Contains(got, zeroWidth) {
 			t.Errorf("nothing broken up: %q", got)
 		}
-		// nothing else: each break sits after a line's first letter
+		// nothing else: every run of three or more letters or digits in a
+		// line has a break after its first and its second character, the
+		// way Google's check lets through (11-11, a real account)
 		low := strings.ToLower(strings.ReplaceAll(got, zeroWidth, "|"))
 		for _, line := range googleTurnsAway {
-			if strings.Contains(strings.ToLower(system), line) && !strings.Contains(low, line[:1]+"|"+line[1:]) {
-				t.Errorf("%q isn't broken after its first letter in %q", line, got)
+			if strings.Contains(strings.ToLower(system), line) && !strings.Contains(low, brokenTwice(line)) {
+				t.Errorf("%q isn't broken after its first two characters in %q", line, got)
 			}
 		}
 		if antigravityCloak(got) != got {
@@ -155,7 +195,7 @@ func TestAntigravityAnswersHermesAndCodexByDefault(t *testing.T) {
 		if code, out := codexAGPost(s, codexAGTurn(true, search)); code != 200 || !strings.Contains(out, "from google") {
 			t.Fatalf("Codex's switched thread (search=%v): %d %s", search, code, out)
 		}
-		if !strings.Contains(sent, "Y"+zeroWidth+"ou are Codex, an agent based on GPT-5") || antigravityTurnsAway(sent) {
+		if !strings.Contains(strings.ReplaceAll(sent, zeroWidth, "|"), brokenTwice("You are Codex, an agent based on GPT-5")) || antigravityTurnsAway(sent) {
 			t.Fatalf("Codex's prompt went as %q", sent)
 		}
 	}
@@ -216,5 +256,38 @@ func TestOnlyAntigravityIsSentThePromptBrokenUp(t *testing.T) {
 		if !strings.Contains(string(b), "You are Hermes Agent, an intelligent") || strings.Contains(string(b), zeroWidth) || strings.Contains(string(b), `\u200b`) {
 			t.Errorf("%s was sent the prompt broken up: %s", name, b)
 		}
+	}
+}
+
+// DeepSeek Harness's paragraph on @ paths goes to an Antigravity account
+// reworded, and to every other provider as written (plugins#1028).
+func TestAntigravityDSHAtPathsGoReworded(t *testing.T) {
+	dsh := agReworded[0][0]
+	r := &Request{System: "You are DeepSeek Harness.\n\n" + dsh + "\n\nBe brief.", Messages: []Message{{Role: "user", Parts: []Part{{Kind: Text, Text: "hi"}}}}}
+	ag := provider.Provider{ID: "antigravity", Account: &provider.Account{Agent: "antigravity"}}
+	b := string(codeAssistBody(ag, r, "gemini-4-argon", nil))
+	if strings.Contains(b, "Tokens prefixed with @") || !strings.Contains(b, "When the user writes @ followed by a path, they are pointing at that file or folder.") || !strings.Contains(b, "Be brief.") {
+		t.Fatalf("Antigravity's account was sent %s", b)
+	}
+	if r.System != "You are DeepSeek Harness.\n\n"+dsh+"\n\nBe brief." {
+		t.Fatalf("the caller's request was changed: %q", r.System)
+	}
+	gemini := provider.Provider{ID: "gemini-cli", Account: &provider.Account{Agent: "gemini"}}
+	if b := string(codeAssistBody(gemini, r, "gemini-3-flash", nil)); !strings.Contains(b, "Tokens prefixed with @ are paths the user explicitly referenced.") {
+		t.Fatalf("Gemini CLI's account was sent %s", b)
+	}
+	asWritten := ag
+	asWritten.PromptAsWritten = true
+	if b := string(codeAssistBody(asWritten, r, "gemini-4-argon", nil)); !strings.Contains(b, "Tokens prefixed with @ are paths the user explicitly referenced.") {
+		t.Fatalf("prompt=as-written was sent %s", b)
+	}
+	// a prompt that only mentions @ paths, and one with the Claude Code
+	// line besides, are each changed only where they match
+	if got := antigravityReword("Tokens prefixed with @ are paths. Be brief."); got != "Tokens prefixed with @ are paths. Be brief." {
+		t.Fatalf("a mention was changed: %q", got)
+	}
+	both := antigravityReword(antigravityCloak("x-anthropic-billing-header: cc\n" + dsh))
+	if antigravityTurnsAway(both) || !strings.Contains(both, "When the user writes @") {
+		t.Fatalf("broken up and reworded: %q", both)
 	}
 }

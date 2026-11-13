@@ -82,7 +82,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const errors = [], posts = [];
       page.on("pageerror", (e) => errors.push(e.message));
       await page.route("**/*", serve(lang, posts));
-      await page.goto("http://magpie.test/?view=routing");
+      await page.goto("http://magpie.test/?view=groups");
       const card = page.locator(".rt-group", { hasText: "Hand" });
       await card.waitFor();
 
@@ -99,8 +99,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // the reader scrolls the card to the middle, then picks luna: saved
       // with the group's other fields as they were, nothing moves, the
       // editor stays shut
-      const view = page.locator("#view-routing");
-      const dy = await card.evaluate((g) => { const v = document.querySelector("#view-routing");
+      const view = page.locator("#view-groups");
+      const dy = await card.evaluate((g) => { const v = document.querySelector("#view-groups");
         return Math.round(g.getBoundingClientRect().top - v.getBoundingClientRect().top - v.clientHeight / 2); });
       await page.mouse.move(550, 400);
       await page.mouse.wheel(0, dy);
@@ -131,17 +131,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // the reader wheels the editor's routing into the middle (code that
       // scrolls is put back: only the reader moves the view)
       const wheelTo = async (x) => {
-        const v = await view.boundingBox();
-        await page.mouse.move(v.x + v.width - 4, v.y + 100);
-        for (let i = 0; i < 12; i++) {
-          const d = await x.evaluate((e) => { const v = document.querySelector("#view-routing");
-            return Math.round(e.getBoundingClientRect().top - v.getBoundingClientRect().top - v.clientHeight / 2); });
-          if (Math.abs(d) <= 100) break;
-          await page.mouse.wheel(0, d);
-          await page.waitForTimeout(400);
-        }
-        const b = await x.boundingBox();
-        assert(b.y >= 0 && b.y + b.height <= page.viewportSize().height, "the control is in view before clicking");
+        // the distance is read once the editor has stopped moving
+        await settled(page);
+        const d = await x.evaluate((e) => { const v = document.querySelector("#view-groups");
+          return Math.round(e.getBoundingClientRect().top - v.getBoundingClientRect().top - v.clientHeight / 2); });
+        await page.mouse.move(550, 400);
+        await page.mouse.wheel(0, d);
+        await page.waitForTimeout(400);
       };
       await wheelTo(row);
       // the routing's own hint is the first; a group-in-group note follows it

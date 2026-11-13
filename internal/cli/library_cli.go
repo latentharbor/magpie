@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,15 +20,21 @@ const libraryUsage = `magpie library                     what the library gives 
   magpie library instructions        print the shared instructions
   magpie library instructions set <file|->   replace them with a file's text (- for stdin)
   magpie library instructions agents <a,b…|none>   the agents that get them
-  magpie library mcp add <name> <url | command args…> [agents=a,b…] [--local]
+  magpie library mcp add <name> <url | command args…> [agents=a,b…] [header=K=V…] [env=K=V…] [timeout=SECS] [--local]
+                                     header= is for a URL, env= for a command; the program's own words go after --
+  magpie library mcp set <name> header=K=V | header-=K | env=K=V | env-=K | timeout=SECS   change one setting of a server
+  magpie library mcp show <name>     print the server as the library keeps it, as JSON
   magpie library mcp agents <name> <a,b…|none>
   magpie library mcp local <name> on|off   keep it to this computer: a sync or a backup never carries it, and one
                                      coming in neither takes it away nor puts another computer's in its place
+  magpie library mcp off|on <name>   take it from every agent, project and app, keeping its settings; on gives it back as it was
   magpie library mcp rm <name>
   magpie library mcp router on|off   give each agent one MCP server, magpie, in place of the library's (magpie runs them, once for every agent)
   magpie library mcp router <name> shared|direct   with the router on, share the server through it (the default) or keep it each
                                      agent's own entry, as with the router off: for one that reads its project from the folder it starts in
   magpie library skill agents <name> <a,b…|none>
+  magpie library skill router on|off   give each agent one skill, magpie-skills, that lists the library's: it reads the one a task needs
+  magpie library skill router <name> routed|direct   with the router on, list the skill there (the default) or keep it each agent's own
   magpie library skill off-here <name>   turn it off on this computer only: a sync neither carries that nor turns it back on
   magpie library skill on-here <name>    …and on again here
   magpie library skill hand-over <name…>|--all   move skills kept in ~/.agents/skills into the library's folder: the agents that read them
@@ -40,8 +47,10 @@ const libraryUsage = `magpie library                     what the library gives 
                                      (one changed here is left as it is; update it by name with --replace-edits)
   magpie library skill how link|copy [agent]   give skills as links to the library's or as copies: every agent's way, or one agent's
   magpie library skill how default <agent>     the agent goes the library's way again
+  magpie library skill where agents|shared     skills go to the agents ticked, or also into ~/.agents/skills for every agent and tool that reads it
   magpie library skill use-library <name> <agent>   an agent's own skill by that name is in the way: set it aside, link the library's
   magpie library skill keep-own <name> <agent>      …or keep the agent's, and take the agent off the library's
+  magpie library project …           a project folder's own skills (Library › Projects): magpie library project help
   magpie library rtk                 which agents run their shell commands through RTK (rtk-ai.app), to save tokens
   magpie library rtk on|off <agent>  switch it (on with RTK's own installer; off works with RTK gone)
   magpie library rtk install         install RTK (Homebrew, winget, or RTK's own script)
@@ -101,30 +110,55 @@ func libraryCmd(args []string) error {
 		switch {
 		case len(rest) >= 3 && rest[0] == "add":
 			var cmd, agents []string
-			local := false
-			for _, a := range rest[2:] {
-				if a == "--local" {
-					local = true
-				} else if v, ok := strings.CutPrefix(a, "agents="); ok {
-					if agents, err = libraryAgents(v, "mcp"); err != nil {
-						return err
-					}
-				} else {
-					cmd = append(cmd, a)
+			var o library.ServerOpts
+			if cmd, o, err = library.SplitServerWords(rest[2:]); err != nil {
+				return err
+			}
+			for _, v := range o.Agents {
+				var as []string
+				if as, err = libraryAgents(v, "mcp"); err != nil {
+					return err
 				}
+				agents = append(agents, as...)
 			}
 			var s library.Server
 			if s, err = library.ServerOf(rest[1], cmd); err != nil {
 				return err
 			}
-			if agents != nil {
+			if o.HasAgent {
 				s.Agents = agents
 			}
-			s.Local = local
+			if err = o.Apply(&s); err != nil {
+				return err
+			}
 			res, err = library.SaveServer("", s)
 			if len(s.Agents) == 0 {
 				unused = s.Name
 			}
+		case len(rest) >= 3 && rest[0] == "set" && !strings.HasPrefix(rest[1], "-"):
+			// header, env and timeout of a server in the library, one at a time (#6111)
+			var cmd []string
+			var o library.ServerOpts
+			if cmd, o, err = library.SplitServerWords(rest[2:]); err != nil {
+				return err
+			}
+			if len(cmd) > 0 || o.HasAgent || o.Local != nil {
+				return fmt.Errorf("set takes header=K=V, env=K=V, header-=K, env-=K and timeout=SECS, not %q", strings.Join(cmd, " "))
+			}
+			res, err = library.SetServer(rest[1], o)
+		case len(rest) == 2 && rest[0] == "show" && !strings.HasPrefix(rest[1], "-"):
+			v, rerr := library.Read(nil)
+			if rerr != nil {
+				return rerr
+			}
+			for _, s := range v.Servers {
+				if s.Name == rest[1] {
+					b, _ := json.MarshalIndent(s.Server, "", "  ")
+					fmt.Println(string(b))
+					return nil
+				}
+			}
+			return fmt.Errorf("no server called %s", rest[1])
 		case len(rest) == 3 && rest[0] == "agents":
 			var as []string
 			if as, err = libraryAgents(rest[2], "mcp"); err == nil {
@@ -139,6 +173,9 @@ func libraryCmd(args []string) error {
 				}
 				return nil
 			}
+		case len(rest) == 2 && (rest[0] == "on" || rest[0] == "off") && !strings.HasPrefix(rest[1], "-"):
+			// off for everyone, kept with its settings; on again as it was
+			res, err = library.ServerOn(rest[1], rest[0] == "on")
 		case len(rest) == 2 && rest[0] == "rm":
 			res, err = library.RemoveServer(rest[1])
 		case len(rest) == 2 && (rest[0] == "router" || rest[0] == "hub") && (rest[1] == "on" || rest[1] == "off"):
@@ -164,6 +201,10 @@ func libraryCmd(args []string) error {
 			if res, err = removeEverySkill(rest[1:]); res == nil && err == nil {
 				return nil
 			}
+		case len(rest) == 2 && rest[0] == "router" && (rest[1] == "on" || rest[1] == "off"):
+			res, err = library.SetSkillRouter(rest[1] == "on")
+		case len(rest) == 3 && rest[0] == "router" && (rest[2] == "routed" || rest[2] == "direct") && !strings.HasPrefix(rest[1], "-"):
+			res, err = library.SkillRouterHow(rest[1], rest[2] == "direct")
 		case len(rest) == 2 && (rest[0] == "off-here" || rest[0] == "on-here") && !strings.HasPrefix(rest[1], "-"):
 			res, err = library.SkillHere(rest[1], rest[0] == "on-here")
 		case len(rest) >= 2 && rest[0] == "hand-over":
@@ -209,11 +250,15 @@ func libraryCmd(args []string) error {
 				how = ""
 			}
 			res, err = library.SetSkillHow(agent, how)
+		case len(rest) == 2 && rest[0] == "where" && (rest[1] == library.SkillsInAgents || rest[1] == library.SkillsInShared):
+			res, err = library.SetSkillsWhere(rest[1])
 		default:
 			return fmt.Errorf("usage:\n  %s", libraryUsage)
 		}
 	case "rtk":
 		return rtkCmd(rest)
+	case "project", "projects":
+		return libraryProjectCmd(rest)
 	case "help", "-h", "--help":
 		fmt.Print("  " + libraryUsage)
 		return nil
@@ -448,7 +493,7 @@ func libraryStatus() error {
 		}
 		fmt.Printf("  %s %s → %s\n", bold.Render(s.Name), muted.Render(what), on(s.Agents))
 		if s.Local {
-			fmt.Println("   ", muted.Render("this computer only: a sync never carries it · magpie library mcp local "+s.Name+" off"))
+			fmt.Println("   ", muted.Render("not synced: a sync never carries it to your other computers · magpie library mcp local "+s.Name+" off"))
 		}
 		if s.Hub == library.HubDirect {
 			fmt.Println("   ", muted.Render("direct: each agent's own entry, never through the hub · magpie library mcp hub "+s.Name+" shared"))

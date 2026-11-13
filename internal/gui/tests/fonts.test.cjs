@@ -224,28 +224,9 @@ for (const [engine, runtime] of engines) {
       assert.equal(api.reads, reads, "Enter didn't refresh the font list");
       // a pointer that moves still takes an item's focus
       await page.locator("#uiFontRow .font-family").click();
-      await page.evaluate(async () => {
-        await Promise.all(document.querySelector(".font-menu").getAnimations({subtree:true}).map(a => a.finished.catch(() => {})));
-      });
       const item = page.locator(".font-menu .pm-item").nth(2);
       const box = await item.boundingBox();
-      await page.evaluate(() => {
-        window.__fontMoves = [];
-        addEventListener("mousemove", e => {
-          window.__fontMoves.push({ x: e.clientX, y: e.clientY, sx: e.screenX, sy: e.screenY, target: e.target.className, active: document.activeElement.className });
-          if (window.__fontMoves.length > 10) window.__fontMoves.shift();
-        }, true);
-      });
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 1);
-      try {
-        await page.waitForFunction(e => e === document.activeElement, await item.elementHandle());
-      } catch (err) {
-        const detail = await item.evaluate(e => {
-          const b = e.getBoundingClientRect(), x = b.x + b.width / 2, y = b.y + b.height / 2 + 1;
-          return { box: b.toJSON(), hit: document.elementFromPoint(x, y)?.outerHTML.slice(0, 300), active: document.activeElement.outerHTML.slice(0, 300), pointerAt, pointerMoved, moves: window.__fontMoves };
-        });
-        throw new Error("moved pointer did not focus font item: " + JSON.stringify(detail), { cause: err });
-      }
       assert.equal(await item.evaluate(e => e === document.activeElement), true, "a moved pointer focuses the item it's on");
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
@@ -384,6 +365,40 @@ for (const [engine, runtime] of engines) {
         assert.deepEqual(errors, []);
         await close();
       }
+    } finally { await browser.close(); }
+  });
+
+  // unscientific9: a tab's first open of Settings stuck while the probe
+  // measured every server family in the click's task. Each measure is made
+  // to cost 1 ms here, so 400 families held one task for 1.6 s before; the
+  // probe now yields, and measures the two generics once.
+  for (const lang of ["en", "zh"]) test(`${engine} ${lang}: a browser tab's font probe never holds the page`, async () => {
+    const browser = await runtime.launch();
+    try {
+      const fonts = Array.from({ length: 400 }, (_, i) => ({ name: "Probe Family " + i, styles: [face("Probe Family " + i)] }));
+      fonts.push({ name: "Georgia", styles: [face("Georgia")] });
+      const init = () => {
+        const measure = CanvasRenderingContext2D.prototype.measureText;
+        window.__probe = { calls: 0, longest: 0 };
+        let start = null;
+        CanvasRenderingContext2D.prototype.measureText = function (text) {
+          const now = performance.now();
+          if (start === null) start = now, setTimeout(() => { start = null; });
+          for (const end = now + 1; performance.now() < end;);
+          window.__probe.calls++;
+          window.__probe.longest = Math.max(window.__probe.longest, performance.now() - start);
+          return measure.call(this, text);
+        };
+      };
+      const { page, errors, close } = await open(browser, lang, { web: true, list: fonts, init });
+      const probe = await page.evaluate(() => window.__probe);
+      const shown = await page.evaluate(() => fontList.map(f => f.name));
+      assert(!shown.some(n => n.startsWith("Probe Family")), "a family this browser doesn't draw isn't offered");
+      assert(probe.calls >= fonts.length, "every family was measured: " + probe.calls);
+      assert(probe.calls <= 2 * fonts.length + 4, "the generics are measured once: " + probe.calls + " measures");
+      assert(probe.longest < 300, "the probe held one task for " + probe.longest.toFixed(0) + " ms");
+      assert.deepEqual(errors, []);
+      await close();
     } finally { await browser.close(); }
   });
 

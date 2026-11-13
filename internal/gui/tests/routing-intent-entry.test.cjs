@@ -65,24 +65,15 @@ function serve(lang, posts) {
 // wheel down to a control, as the reader would (the page keeps still for
 // any other scroll), then click it with the mouse
 async function press(page, loc, height) {
-  // This helper clicks a settled control. The separate entrance/focus
-  // regression covers deliberately interacting while the editor opens.
-  await loc.evaluate(async (e) => {
-    const playing = [];
-    for (let n = e; n; n = n.parentElement) playing.push(...n.getAnimations().filter((a) => a.playState === "running" && Number.isFinite(a.effect?.getComputedTiming().endTime)));
-    await Promise.all(playing.map((a) => a.finished.catch(() => {})));
-  });
-  const view = await page.locator("#view-routing").boundingBox();
-  await page.mouse.move(view.x + view.width - 4, view.y + 100);
-  for (let i = 0; i < 20; i++) {
-    const y = (await loc.boundingBox()).y;
-    if (y > view.y + 20 && y < height - 160) break;
-    await page.mouse.wheel(0, y <= view.y + 20 ? -300 : 300);
+  // where loc will be is read once the editor has stopped moving
+  await settled(page);
+  await page.mouse.move(Math.min(550, (page.viewportSize().width / 2) | 0), 300);
+  for (let i = 0; i < 12 && (await loc.boundingBox()).y > height - 160; i++) {
+    await page.mouse.wheel(0, 300);
     await page.waitForTimeout(150);
   }
   const b = await loc.boundingBox();
-  assert(b.y >= 0 && b.y + b.height <= height, "the control is in view before clicking");
-  await loc.click();
+  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
 }
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
@@ -99,7 +90,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const errors = [], posts = [];
         page.on("pageerror", (e) => errors.push(e.message));
         await page.route("**/*", serve(lang, posts));
-        await page.goto("http://magpie.test/?view=routing");
+        await page.goto("http://magpie.test/?view=groups");
         const group = page.locator(".rt-group").first();
         await group.waitFor();
 
@@ -107,10 +98,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const ed = page.locator(".rt-gedit");
         const byIntent = ed.locator(".rt-gadds button", { hasText: w.add });
         await byIntent.waitFor();
-        assert.equal(await ed.locator(".rt-gadds button").count(), 1, "one way to add a rule");
+        // one way to add a rule, besides the example rule a group with
+        // none offers (01a260af4, routing-rule-example.test.cjs)
+        assert.equal(await ed.locator(".rt-gadds button:not(.rt-try)").count(), 1, "one way to add a rule");
         // inside the editor, however narrow
         const eb = await ed.boundingBox();
-        for (const b of [await byIntent.boundingBox()]) assert(b.x >= eb.x - 0.5 && b.x + b.width <= eb.x + eb.width + 0.5, `${JSON.stringify(b)} in ${JSON.stringify(eb)}`);
+        for (const b of [await byIntent.boundingBox(), await ed.locator(".rt-gadds button.rt-try").boundingBox()]) assert(b.x >= eb.x - 0.5 && b.x + b.width <= eb.x + eb.width + 0.5, `${JSON.stringify(b)} in ${JSON.stringify(eb)}`);
         // no classifier yet: no rule has an intent
         assert.equal(await ed.locator(".rt-classifier").isVisible(), false);
 

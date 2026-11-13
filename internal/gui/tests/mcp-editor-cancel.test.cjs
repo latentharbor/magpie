@@ -14,7 +14,6 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const { I18N } = require("./strings.cjs").strings(); // i18n.js's and the plugins'
@@ -132,11 +131,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           // a command's env and arguments
           await open("gh-local");
           assert.equal(await box.count(), 0);
-          await ed.locator("input.mono").first().fill("npx -y @modelcontextprotocol/server-github --read-only");
+          await ed.locator("textarea.lib-cmd").fill("npx -y @modelcontextprotocol/server-github --read-only");
           await ed.locator(".lib-pair .lib-x").click();
           await cancel(true);
           await open("gh-local");
-          assert.equal(await ed.locator("input.mono").first().inputValue(), "npx -y @modelcontextprotocol/server-github");
+          assert.equal(await ed.locator("textarea.lib-cmd").inputValue(), "npx -y @modelcontextprotocol/server-github");
           assert.deepEqual(await pairs(), ["GITHUB_PERSONAL_ACCESS_TOKEN", "ghp_local"]);
           await cancel(false);
           assert.deepEqual(calls.filter((c) => c.startsWith("save")), [], "nothing saved");
@@ -159,7 +158,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           const add = page.locator("#view-library .after-list button");
           // scrolled to with the wheel, as a reader does (the page puts back
           // a scroll no reader asked for): narrow, it's under the footer
-          await reach(page, add);
+          await page.locator("#view-library").hover();
+          await page.mouse.wheel(0, 2000);
+          await page.waitForFunction(() => { const v = document.querySelector("#view-library"); return v.scrollTop + v.clientHeight >= v.scrollHeight - 1; });
           await add.click();
           await ed.waitFor();
           await ed.locator(".segs .opt", { hasText: /^HTTP$/ }).click();

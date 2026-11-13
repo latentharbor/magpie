@@ -16,7 +16,6 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const HOME = "/Users/aimer";
@@ -117,11 +116,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           // down by the wheel till the set's last lines, and the caret at
           // their end, are in sight
           for (let i = 0; i < 60; i++) {
-            const [bottom, head, foot] = await ta.evaluate((e) => [e.getBoundingClientRect().bottom, e.closest(".view").getBoundingClientRect().top, e.closest(".view").getBoundingClientRect().bottom]);
-            if (bottom > head + 30 && bottom < foot - 60) break;
-            await page.mouse.move(width / 2, 320);
-            await page.mouse.wheel(0, bottom < head + 30 ? -100 : 100);
-            await scrollSettled(page);
+            const [bottom, foot] = await ta.evaluate((e) => [e.getBoundingClientRect().bottom, e.closest(".view").getBoundingClientRect().bottom]);
+            if (bottom < foot - 60) break;
+            await wheel(1);
           }
         } else {
           // Cline's own text, open at the foot of the page

@@ -105,6 +105,9 @@ func noRests() {
 	restingUntil.m = map[string]time.Time{}
 	restingUntil.note = map[string]Rest{}
 	restingUntil.Unlock()
+	codexHolds.Lock()
+	codexHolds.m = nil
+	codexHolds.Unlock()
 }
 
 func post(t *testing.T, path, body string) (int, string) {
@@ -612,6 +615,40 @@ func TestResponsesClientChatUpstream(t *testing.T) {
 	}
 }
 
+// Every event magpie writes for a Responses client is shaped as the typed
+// client reads it: a sequence_number on each, and a whole Response wherever
+// one is carried. A missing field is a turn the client drops whole
+// ("serialization error: missing field ..."), which is what let this filter
+// after one field at a time fail repeatedly.
+func TestResponsesEventsAreClientShaped(t *testing.T) {
+	f := &fake{t: t, reply: sse(
+		`data: {"id":"c1","model":"m1","choices":[{"delta":{"content":"ok"}}]}`,
+		`data: {"id":"c1","choices":[{"delta":{},"finish_reason":"stop"}]}`)}
+	setup(t, provider.Chat, f)
+	code, body := post(t, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
+	if code != 200 {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	seen := 0
+	for _, e := range events(body) {
+		seen++
+		typ, _ := e["type"].(string)
+		if _, ok := e["sequence_number"]; !ok {
+			t.Errorf("%s carries no sequence_number: %v", typ, e)
+		}
+		if r, ok := e["response"].(map[string]any); ok {
+			for _, k := range []string{"id", "object", "created_at", "status", "model", "output"} {
+				if _, ok := r[k]; !ok {
+					t.Errorf("%s's response lacks %s: %v", typ, k, r)
+				}
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no events in a translated reply")
+	}
+}
+
 func TestPassthroughRewritesModel(t *testing.T) {
 	f := &fake{t: t, ctype: "application/json", reply: `{"id":"msg","type":"message","content":[]}`}
 	setup(t, provider.Anthropic, f)
@@ -1021,6 +1058,68 @@ func TestModelsListContext(t *testing.T) {
 		}
 	}
 	t.Fatalf("no group/big: %s", rec.Body.String())
+}
+
+// One longest context for every model (WJaunita45604 on X): /v1/models
+// says no window above it for a model the user set none for, and a model's
+// own value stays.
+func TestModelsListContextCap(t *testing.T) {
+	setup(t, provider.Chat, &fake{t: t})
+	p, err := provider.Find("fake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Models = []string{"m1", "m2"}
+	p.Contexts = map[string]int{"m2": 900000}
+	if err := provider.Save(*p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(catalog.CachePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalog.CachePath(), []byte(`{"x":{"models":{"m1":{"id":"m1","limit":{"context":1000000}},"m2":{"id":"m2","limit":{"context":1000000}}}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog.Reset()
+	t.Cleanup(catalog.Reset)
+	windows := func() map[string]float64 {
+		rec := httptest.NewRecorder()
+		New().Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/v1/models", nil))
+		var out struct {
+			Data []map[string]any `json:"data"`
+		}
+		json.Unmarshal(rec.Body.Bytes(), &out)
+		got := map[string]float64{}
+		for _, m := range out.Data {
+			id, _ := m["id"].(string)
+			for _, k := range []string{"context_window", "context_length", "max_input_tokens"} {
+				if n, ok := m[k].(float64); ok {
+					if prev, seen := got[id]; seen && prev != n {
+						t.Fatalf("%s says two windows: %v", id, m)
+					}
+					got[id] = n
+				}
+			}
+		}
+		return got
+	}
+	if got := windows(); got["fake/m1"] != 1000000 || got["fake/m2"] != 900000 {
+		t.Fatalf("before the cap: %v", got)
+	}
+	if err := provider.SetContextCap(200000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { provider.SetContextCap(0) })
+	if got := windows(); got["fake/m1"] != 200000 || got["fake/m2"] != 900000 {
+		t.Fatalf("under a 200K cap: %v, want m1 200000 and m2's own 900000", got)
+	}
+	if err := provider.SetContextCapAll(true); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { provider.SetContextCapAll(false) })
+	if got := windows(); got["fake/m1"] != 200000 || got["fake/m2"] != 200000 {
+		t.Fatalf("under a 200K cap on every model: %v, want both 200000", got)
+	}
 }
 
 func TestModelsListReasoning(t *testing.T) {

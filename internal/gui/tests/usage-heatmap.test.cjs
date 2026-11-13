@@ -18,7 +18,6 @@ async function pointTo(p, loc) {
   await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 2 });
 }
 const { chromium, webkit } = require("playwright");
-const { reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -93,9 +92,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     if (shots) await fs.mkdir(shots, { recursive: true });
     const open = async (lang, { width, theme = "light", variant = "" }) => {
       const errors = [], asked = [];
-      // The expected English dates use US month/day order. Do not inherit
-      // the host's en-GB region, which the app correctly preserves.
-      const context = await browser.newContext({ locale: "en-US", viewport: { width, height: 820 }, reducedMotion: "reduce" });
+      const context = await browser.newContext({ viewport: { width, height: 820 }, reducedMotion: "reduce" });
       const p = await context.newPage();
       p.setDefaultTimeout(5000);
       p.setDefaultNavigationTimeout(60000);
@@ -146,11 +143,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const sc = await p.evaluate(() => {
           const s = document.querySelector("#ledHeatScroll"), r = s.getBoundingClientRect(), last = [...s.querySelectorAll(".heat-grid i")].at(-1).getBoundingClientRect();
           const card = document.querySelector("#ledHeat").getBoundingClientRect();
-          const v = document.querySelector("#view-usage"), vr = v.getBoundingClientRect();
           return { over: s.scrollWidth > s.clientWidth + 1, left: s.scrollLeft, sw: s.scrollWidth, cw: s.clientWidth, lr: [last.left, last.right, r.left, r.right], inView: last.right <= r.right + 1 && last.left >= r.left - 1, inCard: r.left >= card.left && r.right <= card.right,
-            page: document.documentElement.scrollWidth <= window.innerWidth + 1, view: v.scrollWidth <= v.clientWidth + 1,
-            overflow: [...v.querySelectorAll("*")].filter(e => !e.closest(".heat-scroll,.led-wrap,.led-hscroll") && e.getBoundingClientRect().right > document.querySelector("#ledgerPane").getBoundingClientRect().right + 1).slice(0,12).map(e => ({tag:e.tagName,id:e.id,cls:e.className,right:e.getBoundingClientRect().right,width:e.getBoundingClientRect().width,text:e.textContent.slice(0,100)})), viewWidths:[v.scrollWidth,v.clientWidth],
-            containers: ["#ledgerPane","#ledWrap","#ledHScroll","#ledHeat"].map(sel => { const e=document.querySelector(sel),r=e.getBoundingClientRect(); return {sel,left:r.left,right:r.right,width:r.width,sw:e.scrollWidth,cw:e.clientWidth,overflow:getComputedStyle(e).overflowX}; }) };
+            page: document.documentElement.scrollWidth <= window.innerWidth + 1, view: document.querySelector("#view-usage").scrollWidth <= document.querySelector("#view-usage").clientWidth + 1 };
         });
         assert(sc.inView, "the newest day in sight: " + JSON.stringify(sc));
         assert(sc.inCard && sc.page && sc.view, "no sideways scroll outside the card: " + JSON.stringify(sc));
@@ -162,7 +156,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const cell = heat.locator(`.heat-grid i[data-date="${busy.date}"]`);
         // the reader wheels the page to the card (magpie puts back a scroll by
         // code), and the pointer then rests on a day
-        await reach(p, cell);
+        await p.mouse.move(width / 2, 300);
+        for (let i = 0; i < 20; i++) {
+          const b = await heat.boundingBox();
+          if (b.y >= 60 && b.y + b.height <= 800) break;
+          await p.mouse.wheel(0, b.y < 60 ? -120 : 120);
+          await p.waitForTimeout(60);
+        }
         await pointTo(p, cell);
         const tip = heat.locator("#ledHeatTip");
         await tip.waitFor();

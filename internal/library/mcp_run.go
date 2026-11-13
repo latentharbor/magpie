@@ -68,7 +68,8 @@ func specOf(s *Server) (runSpec, bool) {
 	if len(unset) > 0 {
 		return runSpec{}, false
 	}
-	return runSpec{Command: s.Command, Args: slices.Clone(s.Args), Env: env}, true
+	cmd, args := launchCmd(s, "")
+	return runSpec{Command: cmd, Args: slices.Clone(args), Env: env}, true
 }
 
 var runs struct {
@@ -672,11 +673,8 @@ func ServeRun(w http.ResponseWriter, r *http.Request, name string) {
 		runReply(w, rpcError(m.ID, -32603, err.Error()))
 		return
 	}
-	stream := strings.Contains(r.Header.Get("Accept"), "text/event-stream")
 	var events chan []byte
-	if stream {
-		// A server can ask roots/list as soon as it reads tools/call.
-		// Register the client's stream before sending that call to it.
+	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
 		events = s.open()
 		defer s.close(events)
 	}
@@ -697,7 +695,7 @@ func ServeRun(w http.ResponseWriter, r *http.Request, name string) {
 			remember(spec, m.Method, r.Result)
 		}
 	}
-	if !stream {
+	if events == nil {
 		select {
 		case b, ok := <-reply:
 			if !ok {

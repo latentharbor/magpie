@@ -70,7 +70,7 @@ func kimiModelTables(path string, legacy bool, wrote map[string]map[string]strin
 		name := "models." + strconv.Quote(magpieID+"/"+m.ID)
 		ctx := m.Context
 		if ctx <= 0 {
-			ctx = kimiContext
+			ctx = unknownWindow(kimiContext)
 		}
 		var was map[string]string
 		if slices.Contains(names, name) {
@@ -294,7 +294,8 @@ func kimiIn(at place) *Agent {
 		return err == nil && t != nil
 	}
 	return atomic(&Agent{
-		ID: "kimi", Name: "Kimi Code", Icon: "kimi", Aliases: []string{"kimi-code", "kimi-cli"}, Spelled: prefixed,
+		Telemetry: kimiTelemetry(at, path),
+		ID:        "kimi", Name: "Kimi Code", Icon: "kimi", Aliases: []string{"kimi-code", "kimi-cli"}, Spelled: prefixed,
 		// kimi-cli (Python) says KimiCLI/…; Kimi Code 2.x, kimi-code-cli/…
 		// (jiabubu on Discord: its requests showed the raw name)
 		UA:  []string{"kimicli", "kimi-code-cli"},

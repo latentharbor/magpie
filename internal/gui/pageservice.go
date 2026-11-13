@@ -202,6 +202,11 @@ func servePageService(rw http.ResponseWriter, r *http.Request, p *pluginPage, to
 			http.Error(rw, "the plugin's service isn't answering", http.StatusBadGateway)
 		},
 	}
+	// The transport may still be finishing its request-body read when the
+	// service starts streaming. HTTP/1's implicit drain would close that body
+	// on the first flush and truncate the upstream response (golang/go#40747).
+	// In-process writers and HTTP/2 already permit concurrent reads/writes.
+	_ = http.NewResponseController(rw).EnableFullDuplex()
 	rp.ServeHTTP(rw, r)
 }
 

@@ -78,7 +78,7 @@ func teamFixture(t *testing.T) (*claudeTeamController, *fakeTeamAdmin, ClaudeTea
 	t.Cleanup(func() { claudeTeam, newClaudeTeamAdmin = before, factory })
 	tm := newClaudeTeamController()
 	claudeTeam = tm
-	f := &fakeTeamAdmin{seats: []claudeTeamSeat{{teamID(2), "team_tier_1"}, {teamID(3), "unassigned"}, {teamID(4), "team_tier_1"}, {teamID(9), "team_tier_1"}}}
+	f := &fakeTeamAdmin{seats: []claudeTeamSeat{{AccountID: teamID(2), SeatTier: "team_tier_1"}, {AccountID: teamID(3), SeatTier: "unassigned"}, {AccountID: teamID(4), SeatTier: "team_tier_1"}, {AccountID: teamID(9), SeatTier: "team_tier_1"}}}
 	newClaudeTeamAdmin = func(ClaudeTeamConfig) claudeTeamAdmin { return f }
 	var ls []savedLogin
 	for _, n := range []int{2, 3, 4} {
@@ -184,7 +184,7 @@ func TestClaudeTeamOtherSeatDoesNotBlockRotation(t *testing.T) {
 
 func TestClaudeTeamMissingMemberStillRejected(t *testing.T) {
 	c := ClaudeTeamConfig{Members: []string{teamID(2)}}
-	for _, seats := range [][]claudeTeamSeat{nil, {{teamID(2), ""}}, {{teamID(3), "unassigned"}}} {
+	for _, seats := range [][]claudeTeamSeat{nil, {{AccountID: teamID(2), SeatTier: ""}}, {{AccountID: teamID(3), SeatTier: "unassigned"}}} {
 		if err := teamMembersPresent(c, seats); err == nil {
 			t.Fatalf("missing or unverified membership accepted: %v", seats)
 		}
@@ -208,7 +208,7 @@ func TestClaudeTeamDrainMultipleSeatsAndLostResponses(t *testing.T) {
 	// Wait on the actual closed/draining state, not elapsed time.
 	for {
 		tm.mu.Lock()
-		closed, ch := tm.closed[teamID(2)], tm.changed
+		closed, ch := tm.admissions.Closed(teamID(2)), tm.changed
 		tm.mu.Unlock()
 		if closed {
 			break
@@ -385,7 +385,7 @@ func TestClaudeTeamCachedWindowsAndNoHoursLongWait(t *testing.T) {
 	for _, id := range c.Members {
 		tm.disk.Limits[id] = []ClaudeLimit{{Kind: "five_hour", Used: 1, ResetsAt: now.Add(time.Hour).Unix()}, {Kind: "seven_day", Used: 1, ResetsAt: now.Add(48 * time.Hour).Unix()}}
 	}
-	if _, to, err := tm.choose(c, []claudeTeamSeat{{teamID(2), "team_tier_1"}, {teamID(3), "unassigned"}, {teamID(4), "unassigned"}}, ""); to != "" || err == nil {
+	if _, to, err := tm.choose(c, []claudeTeamSeat{{AccountID: teamID(2), SeatTier: "team_tier_1"}, {AccountID: teamID(3), SeatTier: "unassigned"}, {AccountID: teamID(4), SeatTier: "unassigned"}}, ""); to != "" || err == nil {
 		t.Fatal("chose a still-exhausted account")
 	}
 	back, ok := teamBack(tm.disk.Limits[teamID(3)], 100, now)

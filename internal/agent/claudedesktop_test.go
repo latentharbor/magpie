@@ -123,6 +123,10 @@ func TestClaudeDesktopFresh(t *testing.T) {
 		t.Fatal("detected without its folder")
 	}
 	os.MkdirAll(p.dir, 0o755)
+	if desktopdir.OS == "windows" {
+		// there its program, not its folder, says it is here
+		desktopWrite(t, filepath.Join(home, "AppData", "Local", "AnthropicClaude", "claude.exe"), "")
+	}
 	if !a.Detected() {
 		t.Fatal("not detected")
 	}
@@ -144,7 +148,8 @@ func TestClaudeDesktopFresh(t *testing.T) {
 		"inferenceProvider": "gateway", "inferenceGatewayBaseUrl": gateway.URL(),
 		"inferenceGatewayApiKey": "magpie-claude-desktop", "inferenceGatewayAuthScheme": "bearer",
 		"disableDeploymentModeChooser": true, "coworkEgressAllowedHosts": []any{"*"},
-		"claudeAiImport": map[string]any{"enabled": true, "bannerBehavior": "detect"},
+		"claudeAiImport":    map[string]any{"enabled": true, "bannerBehavior": "detect"},
+		"toolSearchEnabled": true,
 	}
 	if prof := desktopJSON(t, p.prof); !reflect.DeepEqual(prof, want) {
 		t.Errorf("profile: %v", prof)
@@ -837,6 +842,77 @@ func TestClaudeDesktopLanguageOddValues(t *testing.T) {
 	}
 }
 
+// bigcat1800 on Discord: Desktop 4.4212 in 3p mode on magpie, 13 MCP
+// servers, and every tool's schema went whole on each request (~162K
+// tokens). Desktop starts Claude Code with experimental betas off unless
+// its toolSearchEnabled policy is on, and Claude Code then keeps tool
+// search off whatever ENABLE_TOOL_SEARCH says. magpie's profile gets the
+// policy once, on a switch on and, for a Desktop already on magpie, from
+// Sync; a value the user set, false too, or took away since, stays theirs.
+func TestClaudeDesktopTurnsOnToolSearch(t *testing.T) {
+	home, p := desktopSandbox(t)
+	a := claudeDesktop(home)
+	if err := a.Field("provider").Set("magpie"); err != nil {
+		t.Fatal(err)
+	}
+	if got := desktopJSON(t, p.prof)["toolSearchEnabled"]; got != true {
+		t.Fatalf("switch on: toolSearchEnabled %v", got)
+	}
+
+	// on magpie before this change: no toolSearchEnabled, no mark
+	prof := desktopJSON(t, p.prof)
+	delete(prof, "toolSearchEnabled")
+	b, _ := json.Marshal(prof)
+	desktopWrite(t, p.prof, string(b))
+	forget(desktopSearch + p.key)
+	if err := a.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if got := desktopJSON(t, p.prof)["toolSearchEnabled"]; got != true {
+		t.Fatalf("Sync on magpie: toolSearchEnabled %v", got)
+	}
+
+	// the user takes it away in Desktop's window: not written back
+	desktopWrite(t, p.prof, string(b))
+	if err := a.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Field("provider").Set("magpie"); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := desktopJSON(t, p.prof)["toolSearchEnabled"]; has {
+		t.Fatal("seeded again over the user's choice")
+	}
+
+	// the user's own false, seen first: kept
+	if err := edit.SetJSON(p.prof, edit.KV{Path: "toolSearchEnabled", Value: false}); err != nil {
+		t.Fatal(err)
+	}
+	forget(desktopSearch + p.key)
+	if err := a.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if got := desktopJSON(t, p.prof)["toolSearchEnabled"]; got != false {
+		t.Fatalf("the user's toolSearchEnabled: %v", got)
+	}
+	if a.Check() != "" {
+		t.Fatalf("check %q", a.Check())
+	}
+
+	// off magpie: the profile goes, and Sync writes nothing
+	if err := a.Field("provider").Set(""); err != nil {
+		t.Fatal(err)
+	}
+	forget(desktopSearch + p.key)
+	before := desktopTree(t, p)
+	if err := a.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if after := desktopTree(t, p); !reflect.DeepEqual(after, before) {
+		t.Fatalf("Sync off magpie wrote:\n%v", after)
+	}
+}
+
 // lambdua on X: Desktop on magpie runs in Claude-3p, a userData of its own,
 // so the Code and Cowork sessions it had signed in with Anthropic were out
 // of sight. Desktop imports them itself (Settings → Import) once its
@@ -1197,6 +1273,14 @@ func TestClaudeDesktopKeepsTheSignedInHistory(t *testing.T) {
 	}
 	if n := a.Notice(); !strings.Contains(n, noticeClaudedesktop3.String()) {
 		t.Errorf("on, the notice doesn't say the signed-in history stays: %q", n)
+	}
+	// and how to go on with it on magpie: Desktop's own importer, which
+	// the profile turns on (Jacky_yyyyyyyy on X)
+	if n := a.Notice(); !strings.Contains(n, noticeClaudedesktop5.String()) {
+		t.Errorf("on, the notice doesn't say how to go on with the history on magpie: %q", n)
+	}
+	if got := desktopJSON(t, p.prof)["claudeAiImport"]; !reflect.DeepEqual(got, desktopImportOn) {
+		t.Errorf("on, Desktop's import isn't turned on for the notice to point at: %v", got)
 	}
 	if err := f.Set(""); err != nil {
 		t.Fatal(err)

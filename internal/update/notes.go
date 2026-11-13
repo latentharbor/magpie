@@ -7,12 +7,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/settings"
 )
 
@@ -32,27 +32,41 @@ func NotesFeed() string {
 	if f := os.Getenv("MAGPIE_NOTES_FEED"); f != "" {
 		return f
 	}
-	return releaseHome + "/latest/download/notes.json"
+	if distributionTrust != "" {
+		return releaseHome + "/latest/download/notes.json"
+	}
+	return Site + "/api/notes"
 }
 
 // ReleasePage is version's page on GitHub, where its notes are when the
 // site can't give them (#661).
 func ReleasePage(version string) string {
-	return releaseHome + "/tag/v" + strings.TrimPrefix(strings.TrimSpace(version), "v")
+	home := "https://github.com/yetone/magpie-releases/releases"
+	if distributionTrust != "" {
+		home = releaseHome
+	}
+	return home + "/tag/v" + strings.TrimPrefix(strings.TrimSpace(version), "v")
 }
 
 // NotesBetween asks the site for the notes of every release after after
 // (none when "") up to and including upto, newest first, in lang (see
 // InLang).
 func NotesBetween(ctx context.Context, after, upto, lang string) ([]Note, error) {
+	notes, _, err := NotesBetweenTotal(ctx, after, upto, lang)
+	return notes, err
+}
+
+// NotesBetweenTotal is NotesBetween with how many releases there are in
+// all before MostNotes keeps the newest, so a list cut short can say so
+// (sujingshen on X: 156 releases behind read "40 releases").
+func NotesBetweenTotal(ctx context.Context, after, upto, lang string) ([]Note, int, error) {
 	if distributionTrust != "" {
-		// Distribution notes shown in the app come from authenticated bytes,
-		// not a separately replaceable, unsigned historical notes file.
 		r, err := LatestIn(ctx, lang)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
-		return Between([]Note{{Version: r.Version, Notes: r.Notes, URL: r.URL}}, after, upto), nil
+		notes := Between([]Note{{Version: r.Version, Notes: r.Notes, URL: r.URL}}, after, upto)
+		return notes, len(notes), nil
 	}
 	q := url.Values{"upto": {upto}}
 	if after != "" {
@@ -60,9 +74,10 @@ func NotesBetween(ctx context.Context, after, upto, lang string) ([]Note, error)
 	}
 	notes, err := askNotes(ctx, q, lang)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return Between(notes, after, upto), nil
+	all := between(notes, after, upto)
+	return capNotes(all), len(all), nil
 }
 
 // BackCounts are the ranges Settings' What's new offers besides the notes
@@ -192,6 +207,19 @@ func withChannel(feed string) string {
 // upto, newest first, at most MostNotes; with after "" only upto's. Each
 // one's Install section is taken out, and one left empty is dropped.
 func Between(notes []Note, after, upto string) []Note {
+	return capNotes(between(notes, after, upto))
+}
+
+// capNotes keeps the newest MostNotes of notes, newest first.
+func capNotes(notes []Note) []Note {
+	if most := MostNotes(); len(notes) > most {
+		return notes[:most]
+	}
+	return notes
+}
+
+// between is Between with every release kept.
+func between(notes []Note, after, upto string) []Note {
 	var out []Note
 	seen := map[string]bool{}
 	for _, n := range notes {
@@ -214,9 +242,6 @@ func Between(notes []Note, after, upto string) []Note {
 		out = append(out, n)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return Newer(out[i].Version, out[j].Version) })
-	if most := MostNotes(); len(out) > most {
-		out = out[:most]
-	}
 	return out
 }
 
@@ -249,7 +274,7 @@ func Back(notes []Note, upto string, n int) []Note {
 	return out
 }
 
-var heading = regexp.MustCompile(`^(#{1,6})\s+(.*?)\s*#*\s*$`)
+var heading = lazyre.New(`^(#{1,6})\s+(.*?)\s*#*\s*$`)
 
 // installHeadings are the Install section's heading in each language the
 // notes come in: the Chinese notes call it 安装, and every release's own

@@ -6,6 +6,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const reader = require("./reader.cjs");
 const assets = path.resolve(__dirname, "../assets");
 const now = new Date().toISOString();
 const rows = [
@@ -23,7 +24,7 @@ const rows = [
 [10000,10001,30000,30001,1250,0,undefined,900,-1].forEach((ms,i) => rows[i].ms=ms);
 rows.push({t:now,agent:"codex",agentName:"Codex",provider:"codex",providerName:"ChatGPT",access:"subscription",model:"gpt-6-sol",in:10,out:2,status:200,ms:4000,cost:0,priced:false});
 
-for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
+for (const engine of ["chromium", "webkit"]) {
   test(engine + ": session account identities", async t => {
     const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({channel:"chromium"}));
     t.after(() => browser.close());
@@ -117,11 +118,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.mouse.move(700, 400);
         await page.mouse.wheel(0, rowTop - 400);
         await page.waitForFunction((y) => document.querySelectorAll(".led-row")[2].getBoundingClientRect().top < y - 100, rowTop);
-        await page.locator(".led-row").nth(2).click();
-        const detail = page.locator(".led-detail");
+        const detail = await reader.openRequest(page, page.locator(".led-row").nth(2));
         assert((await detail.textContent()).includes("relay"),"raw provider ID remains available in details");
         assert((await detail.textContent()).includes("creator@example.com"));
         assert((await detail.textContent()).includes(lang === "zh" ? "不推断供应商" : "no service provider is inferred"));
+        await reader.closeRequest(page);
         const review = page.locator(".led-row").nth(7);
         assert.equal(await review.locator("td").nth(5).textContent(),"—","an estimate must not claim a served model");
         assert.equal(await review.locator(".swap").count(),0,"price alias is not observed forwarding");
@@ -135,19 +136,15 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
             const badges = [...cell.querySelectorAll(".source-badges .src")].map(n => n.getBoundingClientRect());
             const bounds = cell.getBoundingClientRect();
             const name = cell.querySelector(".where-name").getBoundingClientRect();
-            // At compact widths the longer English labels can use two
-            // lines; both remain whole and inside their account's cell.
-            const ordered = badges.length === 2 && (badges[0].bottom <= badges[1].top
-              || Math.abs(badges[0].top - badges[1].top) < 1 && badges[0].right < badges[1].left);
-            return ordered && badges.every(b => b.top >= name.bottom && b.left >= bounds.left && b.right <= bounds.right && b.bottom <= bounds.bottom)
-              && (innerWidth < 1200 || Math.abs(badges[0].top - badges[1].top) < 1);
+            return badges.length === 2 && Math.abs(badges[0].top - badges[1].top) < 1 && badges[0].right < badges[1].left && badges.every(b => b.top >= name.bottom && b.left >= bounds.left && b.right <= bounds.right && b.bottom <= bounds.bottom);
           });
-          assert(layout,"both badges stay readable below the account at " + width);
+          assert(layout,"both badges share one row below the account at " + width);
         }
         await page.setViewportSize({width:1200,height:900});
         await review.focus();
         await page.keyboard.press("Enter");
-        const officialDetail = page.locator(".led-detail").last();
+        const officialDetail = page.locator("#ledReqPane .led-detail");
+        await officialDetail.waitFor();
         assert((await officialDetail.textContent()).includes(lang === "zh" ? "官方登录" : "Official login"));
         assert((await cells.nth(7).locator(".official").getAttribute("title")).includes(lang === "zh" ? "不代表已确认这次请求" : "does not establish the route"));
         assert.deepEqual(errors,[]);

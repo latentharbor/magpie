@@ -126,6 +126,9 @@ func answers(addr string) bool {
 // printWeb prints where a started page is, and what its link carries.
 func printWeb(w *gui.Web) {
 	fmt.Println(green.Render("●"), "magpie web on", bold.Render(w.Link))
+	if w.BoxLink != "" {
+		fmt.Println(muted.Render("  the LazyCat box's administrators, signed in to the box, open"), w.BoxLink, muted.Render("without the key"))
+	}
 	if l := tlsLine(); l != "" {
 		fmt.Println(l)
 	}
@@ -137,6 +140,9 @@ func printWeb(w *gui.Web) {
 		}
 		if gateway.ContainerAddrs() {
 			fmt.Println(muted.Render("  " + containerNote))
+		}
+		if l := containerLine(); l != "" {
+			fmt.Println(l)
 		}
 		fmt.Println(amber.Render("!"), lanWarning())
 	} else if l := proxyLink(key); l != "" {

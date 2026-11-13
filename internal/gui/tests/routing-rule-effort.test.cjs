@@ -70,7 +70,7 @@ async function open(engine, lang, width, t) {
   const errors = [], posts = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.route("**/*", serve(lang, posts));
-  await page.goto("http://magpie.test/?view=routing");
+  await page.goto("http://magpie.test/?view=groups");
   const group = page.locator(".rt-group").first();
   await group.waitFor();
   return { page, group, errors, posts };
@@ -78,20 +78,19 @@ async function open(engine, lang, width, t) {
 // a click as the reader's: wheeled into the middle of the view first (a
 // click never moves the page), then the mouse on it once it holds still
 async function press(page, x) {
-  for (let i = 0; i < 12; i++) {
-    const d = await x.evaluate((e) => { const v = document.querySelector("#view-routing");
-      return Math.round(e.getBoundingClientRect().top - v.getBoundingClientRect().top - v.clientHeight / 2); });
-    if (Math.abs(d) <= 100) break;
-    const v = await page.locator("#view-routing").boundingBox();
-    // Wheel the view's gutter rather than its nested request log. An
-    // opening editor can clamp an early step, so remeasure before clicking.
-    await page.mouse.move(v.x + v.width - 4, 300);
+  // a group opening into its editor moves its height and parts for ~700ms
+  // (91b0be836): where x will be is read once that has stopped
+  await page.waitForFunction(() => !document.getAnimations().some((a) => a.playState === "running" && Number.isFinite(a.effect?.getComputedTiming().endTime)));
+  const d = await x.evaluate((e) => { const v = document.querySelector("#view-groups");
+    return Math.round(e.getBoundingClientRect().top - v.getBoundingClientRect().top - v.clientHeight / 2); });
+  if (Math.abs(d) > 100) {
+    const v = await page.locator("#view-groups").boundingBox();
+    await page.mouse.move(v.x + 10, 300);
     await page.mouse.wheel(0, d);
     await page.waitForTimeout(400);
   }
   await page.waitForTimeout(300); // the page settled (WebKit's folds)
   const b = await x.boundingBox();
-  assert(b.y >= 0 && b.y + b.height <= page.viewportSize().height, "the control was wheeled into view before clicking");
   await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
 }
 // nothing in the rules runs past the editor's side

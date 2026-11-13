@@ -16,6 +16,23 @@ import (
 
 const claudeTeamPrefix = "claude-team-"
 
+// A configured organization keeps its management UI available, including
+// when its journal is unreadable and must be repaired rather than forgotten.
+func ClaudeTeamConfiguredCount() (int, error) {
+	discoverClaudeTeams()
+	var n int
+	for _, t := range claudeTeamControllers() {
+		c, err := t.readConfig()
+		if err != nil {
+			return n, err
+		}
+		if c.OrganizationID != "" {
+			n++
+		}
+	}
+	return n, nil
+}
+
 var claudeTeams = struct {
 	sync.Mutex
 	path    string
@@ -134,6 +151,11 @@ func claudeTeamForUser(user string) *claudeTeamController {
 }
 
 func startClaudeTeam(t *claudeTeamController) {
+	// No configured organization means no background controller, lock file
+	// or empty journal. Saving a first organization starts it explicitly.
+	if c, err := t.readConfig(); err == nil && c.OrganizationID == "" {
+		return
+	}
 	claudeTeams.Lock()
 	defer claudeTeams.Unlock()
 	if claudeTeams.ctx == nil || claudeTeams.ctx.Err() != nil || claudeTeams.started[t] {
@@ -380,7 +402,7 @@ func (p Provider) TeamRouteOn() bool {
 	t := claudeTeamForUser(p.Account.User)
 	t.mu.Lock()
 	id := t.users[strings.ToLower(p.Account.User)]
-	assigned := t.cfg.Enabled && slices.Contains(t.cfg.Members, id) && (t.seats[id] == "team_tier_1" || t.legacyRoutes[id]) && !t.closed[id]
+	assigned := t.cfg.Enabled && slices.Contains(t.cfg.Members, id) && (t.seats[id] == "team_tier_1" || t.legacyRoutes[id]) && !t.admissions.Closed(id)
 	t.mu.Unlock()
 	if !assigned {
 		return false

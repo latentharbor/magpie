@@ -141,13 +141,9 @@ done
 			req.Header.Set("User-Agent", "claude-cli/2.1.0 (external, cli)")
 			s.Handler().ServeHTTP(rec, req)
 		}()
-		wait := 30 * time.Second
-		if raceOn {
-			wait = 2 * time.Minute
-		}
 		select {
 		case <-done:
-		case <-time.After(wait):
+		case <-time.After(30 * time.Second):
 			t.Fatalf("stream=%s: no answer", stream)
 		}
 		b, _ := os.ReadFile(log)

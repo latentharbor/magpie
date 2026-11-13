@@ -13,6 +13,10 @@ package gateway
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
+	"strings"
+
+	"github.com/yetone/magpie/internal/provider"
 )
 
 // Codex groups some tools in a namespace (collaboration's spawn_agent,
@@ -175,12 +179,31 @@ func (t *nsTidy) carries(b []byte) bool {
 
 // call names a function_call to a namespaced function by its name and
 // namespace, or a call to a tool renamed for a ChatGPT account by the
-// agent's name, and reports whether it was one.
+// agent's name, and reports whether it was one. A call whose namespace
+// the upstream said itself (a vendor asked as Codex sends it, #3183)
+// needs no naming, only the word which of its arguments are sealed
+// (sealedArgs): Codex reads a namespaced call without the list as sealed,
+// and the plain-text task would reach its subagent as ciphertext.
 func (t *nsTidy) call(it map[string]any) bool {
-	if it == nil || it["namespace"] != nil || it["type"] != "function_call" && it["type"] != "custom_tool_call" {
+	if it == nil || it["type"] != "function_call" && it["type"] != "custom_tool_call" {
 		return false
 	}
 	name, _ := it["name"].(string)
+	if ns, _ := it["namespace"].(string); ns != "" {
+		for _, q := range t.named {
+			if q.Namespace == ns && q.Name == name {
+				if _, ok := it["encrypted_function_args"]; !ok {
+					args, _ := it["arguments"].(string)
+					if sealed, ok := sealedArgs(args); ok {
+						it["encrypted_function_args"] = sealed
+						return true
+					}
+				}
+				break
+			}
+		}
+		return false
+	}
 	if n, ok := t.back[name]; ok {
 		it["name"] = n
 		return true
@@ -193,4 +216,42 @@ func (t *nsTidy) call(it map[string]any) bool {
 	}
 	callTo(it, name, t.named)
 	return true
+}
+
+// sealedArgs is the encrypted_function_args a relayed call's arguments
+// say: the names of those the ChatGPT backend sealed (a "gAAAAA…" token,
+// nativeSealedAgentPayload), [] when none is. A relay of that backend
+// (CPA, Sub2API) seals spawn_agent's, send_message's and followup_task's
+// message as the backend does, but leaves the list out; given [] Codex
+// handed the token to the other agent as plain text, and a subagent's
+// task, or its result to its lead, arrived as ciphertext neither could
+// read (brethhbbm on X, oevery and WilliamK7 on #3183). Given the names,
+// Codex delivers it sealed, which the relay opens again. ok is false when
+// the arguments say nothing yet (a stream's output_item.added, before
+// they come) or aren't a JSON object: the call goes on as it came.
+func sealedArgs(args string) ([]any, bool) {
+	var a map[string]any
+	if strings.TrimSpace(args) == "" || json.Unmarshal([]byte(args), &a) != nil || a == nil {
+		return nil, false
+	}
+	sealed := []any{}
+	keys := make([]string, 0, len(a))
+	for k := range a {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		if v, _ := a[k].(string); nativeSealedAgentPayload.MatchString(v) {
+			sealed = append(sealed, k)
+		}
+	}
+	return sealed, true
+}
+
+// sealsItsOwn says p is OpenAI's own Responses API (openai.com, Azure) or a
+// ChatGPT account: it answers a namespaced call's seal itself, and its
+// replies go back as they came, never given the empty
+// encrypted_function_args a relay's are (#3183).
+func sealsItsOwn(p provider.Provider) bool {
+	return accountAgent(p) == "codex" || strings.HasSuffix(p.VendorHost(), "openai.com") || p.IsAzure()
 }

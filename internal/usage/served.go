@@ -1,13 +1,14 @@
 package usage
 
 import (
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
 
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/provider"
+	"github.com/yetone/magpie/internal/sessions"
 )
 
 // Which model answered: a vendor may serve a request with another model
@@ -20,7 +21,7 @@ import (
 // versionTail is what a vendor puts after a model's name for the version
 // it answered with: a date, a build number, Bedrock's v1:0, latest,
 // preview. Not v3 alone: deepseek-v3 is another model than deepseek-v2.
-var versionTail = regexp.MustCompile(`(?:[-_@:](?:\d{4}-\d{2}-\d{2}|\d{2}-\d{2}|\d{6,8}|\d{3,4}|v\d+:\d+|latest|preview|exp))+$`)
+var versionTail = lazyre.New(`(?:[-_@:](?:\d{4}-\d{2}-\d{2}|\d{2}-\d{2}|\d{6,8}|\d{3,4}|v\d+:\d+|latest|preview|exp))+$`)
 
 // vendorDot is Bedrock's region and maker before a model's name
 // (us.anthropic.claude-…), the geography of an inference profile as
@@ -28,16 +29,16 @@ var versionTail = regexp.MustCompile(`(?:[-_@:](?:\d{4}-\d{2}-\d{2}|\d{2}-\d{2}|
 // makers are those models.dev's bedrock list names ids by (xai.grok-4.7,
 // writer.palmyra-x5, moonshot.kimi-k2-thinking, nvidia.nemotron), which
 // the reply names as Anthropic's own are, without the geography.
-var vendorDot = regexp.MustCompile(`^(?:(?:global|us-gov|[a-z]{2,4})\.)?(?:anthropic|amazon|meta|mistral|cohere|ai21|deepseek|qwen|openai|google|moonshotai|moonshot|minimax|nvidia|writer|xai|zai)\.`)
+var vendorDot = lazyre.New(`^(?:(?:global|us-gov|[a-z]{2,4})\.)?(?:anthropic|amazon|meta|mistral|cohere|ai21|deepseek|qwen|openai|google|moonshotai|moonshot|minimax|nvidia|writer|xai|zai)\.`)
 
 // contextTail is what Claude Code writes after a model's name for the size of
 // its context: claude-opus-5[1m].
-var contextTail = regexp.MustCompile(`\[[^\]]*\]$`)
+var contextTail = lazyre.New(`\[[^\]]*\]$`)
 
 // windowTail is the window magpie offers a model at beside its default
 // (grok-4.7@500k, Cursor's grok-4.7@256k): the vendor answers under the
 // plain name, which is the same model (#1645).
-var windowTail = regexp.MustCompile(`@\d+[km]?$`)
+var windowTail = lazyre.New(`@\d+[km]?$`)
 
 // bareModel is a model's name without its maker or path, its version, the
 // size of its context or its case.
@@ -64,10 +65,30 @@ func bareModel(m string) string {
 // is the member another magpie's routing group sent it to (GroupRouted),
 // nor a vendor's own name for the deployment serving the model
 // (ServingName), nor the model a relay sold under a name of its own
-// (RelayRenamed).
+// (RelayRenamed), nor the model at a region's deployment (RegionTail).
 func Swapped(sent, served string) bool {
 	a, b := bareModel(sent), bareModel(served)
-	return a != "" && b != "" && squash(a) != squash(b) && a != "auto" && squash(bareModel(provider.EffortFamily(a))) != squash(b) && !GroupRouted(sent, served) && !ServingName(sent, served) && !RelayRenamed(sent, served) && !VendorAlias(sent, served)
+	return a != "" && b != "" && squash(a) != squash(b) && a != "auto" && squash(bareModel(provider.EffortFamily(a))) != squash(b) && !GroupRouted(sent, served) && !ServingName(sent, served) && !RelayRenamed(sent, served) && !VendorAlias(sent, served) && !RegionTail(sent, served)
+}
+
+// regionTail is a region a vendor's id names its deployment of a model
+// by: WorkBuddy AI lists DeepSeek V4.1 Flash as deepseek-v4.1-flash-sg,
+// its paid id for the Singapore deployment (the plugin's product config
+// names it paidId to the free deepseek-v4.1-flash, one window for both),
+// and answers under the model's own name.
+var regionTail = lazyre.New(`[-_](?:sg|us|eu|cn|intl|global)$`)
+
+// RegionTail reports whether one of sent and served is the other with a
+// region after it: the same model at that region's deployment, not
+// another model swapped in (plugins#628, chansee97). A region in both,
+// or a name that differs besides it, is not this.
+func RegionTail(sent, served string) bool {
+	a, b := bareModel(sent), bareModel(served)
+	if a == "" || b == "" {
+		return false
+	}
+	ra, rb := regionTail.ReplaceAllString(a, ""), regionTail.ReplaceAllString(b, "")
+	return (ra != a) != (rb != b) && ra != "" && squash(ra) == squash(rb)
 }
 
 // vendorAlias is a vendor's own alias for one of its models, as the
@@ -223,7 +244,7 @@ func ClineServing(sent, served string) bool {
 
 // vmcPoint is a version's dot as ClinePass's vmc/ names write it (v4p1
 // for v4.1), the part ClineServing reads past
-var vmcPoint = regexp.MustCompile(`(\d)p(\d)`)
+var vmcPoint = lazyre.New(`(\d)p(\d)`)
 
 // GrokServing reports whether served is xAI's name for the build serving
 // the Grok model sent: the model's own name with "-build" after its
@@ -246,19 +267,21 @@ func GrokServing(sent, served string) bool {
 
 // grokBuild is the "-build" after a Grok model's version (grok-4.7-build,
 // grok-4.7-build-fast), the part GrokServing reads past.
-var grokBuild = regexp.MustCompile(`^grok-[0-9][0-9.]*(-build)(?:-|$)`)
+var grokBuild = lazyre.New(`^grok-[0-9][0-9.]*(-build)(?:-|$)`)
 
 // GeminiServing reports whether served is the name Google's backend gives
 // the deployment that serves the Gemini model sent: the model's own name
-// with "-n" after it. Antigravity answers every level of gemini-3.8-flash
-// (-low, -medium, -high) with modelVersion gemini-3.8-flash-n, an id no
-// request can ask for (404) and fetchAvailableModels never lists, so it is
-// that model, not another one swapped in (dumplings on Discord). It holds
-// for Gemini models only: gpt-5 answered as gpt-5-n is still a swap, as is
-// gemini-3.8-flash answered as gemini-3.8-flash-lite or gemini-3.7-flash-n.
+// with one letter after it (sessions.GeminiDeployment). Antigravity
+// answers every level of gemini-3.8-flash (-low, -medium, -high) with
+// modelVersion gemini-3.8-flash-n, an id no request can ask for (404) and
+// fetchAvailableModels never lists, so it is that model, not another one
+// swapped in (dumplings on Discord); gemini-4-argon's is gemini-4-argon-d
+// (oioio on Discord). It holds for Gemini models only: gpt-5 answered as
+// gpt-5-n is still a swap, as is gemini-3.8-flash answered as
+// gemini-3.8-flash-lite or gemini-3.7-flash-n.
 func GeminiServing(sent, served string) bool {
 	a := squash(bareModel(provider.EffortFamily(bareModel(sent))))
-	b, ok := strings.CutSuffix(bareModel(served), "-n")
+	b, ok := sessions.GeminiDeployment(bareModel(served))
 	return ok && strings.HasPrefix(a, "gemini") && squash(b) == a
 }
 

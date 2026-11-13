@@ -1,7 +1,7 @@
 // Run with Node's test runner and Playwright on the module path; see README.md.
 // yuexian7 on Discord: models.dev lists their model as reasoning, and the
 // vendor answers any reasoning parameter with 422 while the request
-// without it works. In the provider editor's Names & levels, a model's
+// without it works. In the provider editor's Model settings, a model's
 // levels can all be unticked: magpie then sends it no reasoning field, said
 // beside the levels, and the Save sends {reasonless: true}. A model saved
 // so shows none ticked, and ticking one takes it back. Every language,
@@ -11,7 +11,6 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 
@@ -72,7 +71,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const tr = (k, v = {}) => page.evaluate(([k, v]) => t(k, v), [k, v]);
         await page.locator(".row.provider").click();
 
-        if (!(await page.locator(".mnames:not([hidden])").count())) await page.getByRole("button", { name: await tr("Names & levels"), exact: true }).click();
+        if (!(await page.locator(".mnames:not([hidden])").count())) await page.getByRole("button", { name: await tr("Model settings"), exact: true }).click();
         const row = (id) => page.locator(".mname", { has: page.locator("code", { hasText: id }) });
         const boxes = (id) => row(id).locator(".mlevels input[type=checkbox]");
         const hint = (id) => row(id).locator(".mlevels .mnone");
@@ -83,18 +82,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // model-1: both unticked, no error, the hint shows
         assert.deepEqual(await ticked("model-1"), [true, true]);
         assert(!(await hint("model-1").isVisible()));
-        await page.evaluate(() => document.fonts.ready.then(() => {}));
-        await boxes("model-1").nth(0).scrollIntoViewIfNeeded();
-        await scrollSettled(page);
         await boxes("model-1").nth(0).click();
-        await page.waitForFunction(() => [...document.querySelectorAll(".mname")].find(e => e.querySelector("code")?.textContent === "model-1")?.querySelector(".mlevels input")?.checked === false).catch(async e => {
-          const detail = await boxes("model-1").nth(0).evaluate(e => {
-            const box = x => { const r = x.getBoundingClientRect(); return { top:r.top,left:r.left,width:r.width,height:r.height }; };
-            const r = e.getBoundingClientRect(), hit = document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
-            return { checked:e.checked,box:box(e),hit:hit?.outerHTML,modal:box(e.closest(".editor")),names:box(e.closest(".mnames")) };
-          });
-          throw new Error(e.message + " checkbox: " + JSON.stringify(detail));
-        });
         await boxes("model-1").nth(1).click();
         assert.deepEqual(await ticked("model-1"), [false, false], "the last level unticks");
         assert(await hint("model-1").isVisible());

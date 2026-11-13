@@ -130,7 +130,7 @@ func TestUsageReadAfterAppendHashesNothingOnAFineClock(t *testing.T) {
 			if !tc.fine {
 				logChangeTime = func(info os.FileInfo) time.Time { return changeTime(info).Truncate(time.Second) }
 			}
-			// Each read comes tc.after past the append's change stamp.
+			// each read comes tc.after past the stamp of the append before it
 			stamp := logChangeTime(mustStat(t))
 			logIndexNow = func() time.Time { return stamp.Add(tc.after) }
 			Summarize(Today)

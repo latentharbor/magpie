@@ -11,7 +11,6 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const models = [
@@ -70,7 +69,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const errors = [], posts = [];
       page.on("pageerror", (e) => errors.push(e.message));
       await page.route("**/*", serve(lang, posts));
-      await page.goto("http://magpie.test/?view=routing");
+      await page.goto("http://magpie.test/?view=groups");
       const card = page.locator(".rt-group", { hasText: "Sol" });
       await card.waitFor();
       assert((await card.locator(".mem").textContent()).includes(w.off), "the card says the member is off");
@@ -84,8 +83,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.equal(await sw("claude-opus-5-5").getAttribute("aria-checked"), "true");
       assert.equal(await row("glm-5").evaluate((x) => x.classList.contains("muted")), true);
 
-      await reach(page, sw("glm-5"));
-      await reach(page, sw("gpt-6.1-sol"));
+      await row("claude-opus-5-5").evaluate((x) => x.scrollIntoView({ block: "center" })); // by the test, as the reader would
+      await page.waitForTimeout(200);
       const at = () => page.evaluate(() => [...document.querySelectorAll("*")].filter((e) => e.scrollTop).map((e) => [e.id || e.className, e.scrollTop]).join(";") + "|" + Math.round(document.querySelector(".rt-gedit").getBoundingClientRect().top));
       const before = await at();
       await sw("glm-5").click();

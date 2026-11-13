@@ -149,9 +149,10 @@ func resumeSession(s sessions.Session) tea.Cmd {
 	if fi, err := os.Stat(s.Cwd); s.Cwd != "" && (err != nil || !fi.IsDir()) {
 		return func() tea.Msg { return flashMsg{text: "its folder " + tildePath(s.Cwd) + " isn't there any more"} }
 	}
-	c := proc.Command("sh", "-c", s.Resume)
+	run := sessions.ResumeNow(s)
+	c := proc.Command("sh", "-c", run)
 	if runtime.GOOS == "windows" {
-		c = proc.Command("powershell", "-NoProfile", "-Command", s.Resume)
+		c = proc.Command("powershell", "-NoProfile", "-Command", run)
 	}
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		if err != nil {
@@ -340,7 +341,7 @@ func sessLines(st sessions.Stats, rng int, model, folder string, byCost bool, wi
 	// of all the prompts came to: Input leaves out what was read from the
 	// cache and what was written to it
 	if p := r.Input + r.CacheRead + r.CacheWrite; r.CacheRead > 0 && p > 0 {
-		hit = sMuted.Render(fmt.Sprintf(" (%d%% hit)", 100*r.CacheRead/p))
+		hit = sMuted.Render(" (" + usage.HitPct(float64(r.CacheRead)/float64(p)) + " hit)")
 	}
 	active := sessions.Duration(r.Active)
 	if r.Active >= 0 {

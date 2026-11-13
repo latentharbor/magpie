@@ -353,6 +353,11 @@ func (s *signInFlow) begin() error {
 			return err
 		}
 	case "codex":
+		if s.site == CodexDeviceSite {
+			// a code entered on ChatGPT's device page: nothing comes back
+			// to this computer (codex_device_signin.go)
+			return startCodexDeviceSignIn(s)
+		}
 		// ChatGPT sends the browser back only to this one port. One that
 		// can't be had (Windows reserves it, or another program holds it)
 		// doesn't stop the sign-in: the page the browser ends on has the
@@ -781,7 +786,7 @@ func postTokenWith(ctx context.Context, tokenURL, ctype, bearer string, h http.H
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := Keyed(http.DefaultClient).Do(req)
 	if err != nil {
 		return err
 	}
@@ -838,7 +843,7 @@ func claudeLogin(c claudeCredentials, acct map[string]any) (savedLogin, error) {
 		return savedLogin{}, err
 	}
 	profile, _ := json.Marshal(acct)
-	return savedLogin{Agent: "claude", User: claudeUser(email, c.OAuth.SubscriptionType, acct), Plan: c.OAuth.SubscriptionType, Auth: auth, Profile: profile}, nil
+	return savedLogin{Agent: "claude", User: claudeUser(email, c.OAuth.SubscriptionType, acct), Plan: c.OAuth.plan(), Auth: auth, Profile: profile}, nil
 }
 
 func codexExchange(ctx context.Context, code, verifier, redirect string) (savedLogin, error) {
@@ -926,6 +931,14 @@ func addLogin(l savedLogin) (using bool, err error) {
 		// account is magpie's alone, its own sign-in left as it is
 		using = false
 	}
+	if l.AccessOnly {
+		// kept access token only: Codex would renew it, so it is magpie's
+		// alone, and never the one Codex holds here or in another folder
+		if signedIn && (sameLogin(live, l) || sameRefresh(live.Auth, l.Auth)) || codexHeldFolder(ls, l) != "" {
+			return false, errAccessOnlyHeld
+		}
+		using = false
+	}
 	if first := claudeStandIn(ls); !signedIn && l.Agent == "claude" && first != "" {
 		// logged out of Claude Code with accounts in magpie: it stays so,
 		// as the user left it (a claude.ai sign-in beside magpie's token
@@ -948,7 +961,7 @@ func addLogin(l savedLogin) (using bool, err error) {
 	// Codex and magpie both read it, or the next look would read the old
 	// ones back over them
 	held := ""
-	if l.Agent == "codex" && !using {
+	if l.Agent == "codex" && !using && !l.AccessOnly {
 		held = codexHeldFolder(ls, l)
 		l.Home = held
 	}

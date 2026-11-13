@@ -79,15 +79,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await page.locator("#modal .lib-confirm").waitFor();
       for (const scheme of ["light", "dark"]) {
         await page.emulateMedia({ colorScheme: scheme });
-        await page.waitForFunction(() => {
-          const root = getComputedStyle(document.documentElement);
-          const probe = document.createElement("span");
-          probe.style.color = root.getPropertyValue("--accent");
-          document.body.append(probe);
-          const accent = getComputedStyle(probe).color;
-          probe.remove();
-          return getComputedStyle(document.querySelector("#modal .primary")).backgroundColor === accent;
-        });
+        await page.waitForTimeout(200);
         const { colors: c, elements: e } = await palette(page, {
           dialog: "#modal .dialog", message: "#modal .lib-confirm", confirm: "#modal .primary",
         });

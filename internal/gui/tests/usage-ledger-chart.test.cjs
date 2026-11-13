@@ -15,7 +15,6 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { scrollSettled } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const midnight = new Date();
@@ -116,8 +115,8 @@ function server(lang, theme, variant, asked, exported) {
 }
 
 const L = {
-  en: { strip: ["Tokens", "Requests", "Cost", "Cache hit rate", "Output speed"], metric: ["Tokens", "Cost", "Requests", "Speed"], split: ["Model", "Model · provider", "Provider", "Agent"], all: "All providers", none: "No known price for these requests" },
-  zh: { strip: ["Token", "请求", "费用", "缓存命中率", "输出速度"], metric: ["Token", "费用", "请求", "速度"], split: ["模型", "模型 · 供应商", "供应商", "Agent"], all: "全部供应商", none: "这些请求没有已知价格" },
+  en: { strip: ["Tokens", "Requests", "Cost", "Cache hit rate", "Output speed"], metric: ["Tokens", "Cost", "Requests", "Speed", "Traffic"], split: ["Model", "Model · provider", "Provider", "Agent"], all: "All providers", none: "No known price for these requests" },
+  zh: { strip: ["Token", "请求", "费用", "缓存命中率", "输出速度"], metric: ["Token", "费用", "请求", "速度", "流量"], split: ["模型", "模型 · 供应商", "供应商", "Agent"], all: "全部供应商", none: "这些请求没有已知价格" },
 };
 // where each split is among #ledSplit's choices
 const SPLIT = { model: 0, modelAt: 1, provider: 2, agent: 3 };
@@ -253,7 +252,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           const global = new Set();
           for (const sel of rules) for (const part of sel.split(",")) { const m = part.trim().match(/^\.([\w-]+)$/); if (m) global.add(m[1]); }
           const used = new Set();
-          for (const e of document.querySelectorAll("#ledDash *, #ledWrap .led-detail *")) for (const c of e.classList) used.add(c);
+          for (const e of document.querySelectorAll("#ledDash *, #ledReqPane .led-detail *")) for (const c of e.classList) used.add(c);
           const ok = new Set(["segs", "opt", "grow", "text", "sess-pick", "skeleton", "thumb", "on", "ic"]); // the page's shared parts, used as meant
           // the new parts' own, prefixed names are theirs; a short bare one may be anyone's
           const own = /^(led|pu|cx|rk|usage)-/;
@@ -284,7 +283,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
     for (const lang of ["en", "zh"]) await t.test(lang + ": a day filters details while keeping the whole chart", async () => {
       const { p, asked, exported, errors } = await open(lang, lang === "zh" ? "dark" : "light", { variant: "daily" });
-      await p.locator("#period .opt").nth(1).click();
+      await p.locator("#period .opt").nth(2).click();
       const days = p.locator("#ledChart .led-day");
       await days.nth(6).waitFor();
       const initial = await p.locator("#ledChart rect.col").evaluateAll((rs) => rs.map((r) => [r.dataset.day, r.dataset.k, r.getAttribute("height"), r.dataset.color]));
@@ -479,7 +478,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await p.mouse.move(b.rank.x + b.rank.width / 2, b.rank.y + b.rank.height / 2);
       await p.mouse.wheel(0, 120);
       for (let i = 0; i < 40 && (await box()).top === 0; i++) await p.waitForTimeout(25);
-      await scrollSettled(p);
       b = await box();
       assert(b.top > 0, "the ranking scrolled");
       seen = await look();
