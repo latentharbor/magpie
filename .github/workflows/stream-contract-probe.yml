@@ -1,0 +1,59 @@
+name: Verify stream failure and keepalive contracts
+on:
+  push:
+    branches: [probe/stream-contracts-20261113]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Repeat both stream contracts
+        run: go test -race -tags nogui -count=20 -timeout 15m ./internal/gateway -run '^(TestQuietCodexStreamKeptAliveThroughReplyWriters|TestClaudeSilentTurnFails|TestRelayUnendedReplyFails)$'
+      - name: Holding comments must still fail the keepalive test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/middleware/run.go "$RUNNER_TEMP/middleware-run.go"
+          trap 'cp "$RUNNER_TEMP/middleware-run.go" internal/middleware/run.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/middleware/run.go')
+          s = p.read_text()
+          old = 'if c := commentLines(b); c > 0 {'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, 'if c := commentLines(b); c > 0 && false {'))
+          PY
+          if go test -tags nogui -timeout 2m ./internal/gateway -run '^TestQuietCodexStreamKeptAliveThroughReplyWriters$/^a_middleware$' > "$RUNNER_TEMP/held-comment.log" 2>&1; then
+            cat "$RUNNER_TEMP/held-comment.log"
+            exit 1
+          fi
+          grep -F 'the agent heard no keepalive' "$RUNNER_TEMP/held-comment.log"
+      - name: A silent successful stream must still be rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/gateway/claude_subscription.go "$RUNNER_TEMP/claude-subscription.go"
+          trap 'cp "$RUNNER_TEMP/claude-subscription.go" internal/gateway/claude_subscription.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/gateway/claude_subscription.go')
+          s = p.read_text()
+          old = 'if failed == "" && stop == "" && r.Context().Err() == nil {'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, 'if false && failed == "" && stop == "" && r.Context().Err() == nil {'))
+          PY
+          if go test -tags nogui -timeout 2m ./internal/gateway -run '^TestRelayUnendedReplyFails$/stream=true|^TestRelayUnendedReplyFails$' > "$RUNNER_TEMP/silent-success.log" 2>&1; then
+            cat "$RUNNER_TEMP/silent-success.log"
+            exit 1
+          fi
+          grep -F 'ended ok true' "$RUNNER_TEMP/silent-success.log"
