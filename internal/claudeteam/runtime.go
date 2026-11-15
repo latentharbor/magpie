@@ -17,6 +17,7 @@ type Runtime struct {
 	Waiting  func()
 	Open     func() error
 	Step     func(context.Context)
+	NextDelay func() time.Duration
 	Stopped  func()
 	Failed   func(error)
 }
@@ -50,6 +51,12 @@ func (r Runtime) Run(ctx context.Context) {
 			return
 		}
 		r.Step(ctx)
-		timer.Reset(5 * time.Minute)
+		delay := 5 * time.Minute
+		if r.NextDelay != nil {
+			if next := r.NextDelay(); next > 0 && next < delay {
+				delay = next
+			}
+		}
+		timer.Reset(delay)
 	}
 }
