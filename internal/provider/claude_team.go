@@ -1083,13 +1083,15 @@ func (t *claudeTeamController) keep(ctx context.Context) {
 			t.signalLocked()
 			t.mu.Unlock()
 		},
-		Open:    t.openController,
-		Step:    t.controllerStep,
+		Open: t.openController,
+		Step: t.controllerStep,
 		NextDelay: func() time.Duration {
 			t.mu.Lock()
 			pending := t.disk.Pending != nil
 			t.mu.Unlock()
-			if pending { return 30 * time.Second }
+			if pending {
+				return 30 * time.Second
+			}
 			return 5 * time.Minute
 		},
 		Stopped: func() { t.mu.Lock(); t.running = false; t.signalLocked(); t.mu.Unlock() },
@@ -1175,7 +1177,9 @@ func (t *claudeTeamController) controllerStep(ctx context.Context) {
 	if refresh && manual == "" && !pending {
 		err = t.refreshSnapshot(ctx)
 	} else {
-		if !pending { t.collectQuotaDue(ctx) }
+		if !pending {
+			t.collectQuotaDue(ctx)
+		}
 		// Draining has its own two-minute bound. Reserve a further minute
 		// so a late release cannot starve assignment and verification.
 		work, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)

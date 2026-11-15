@@ -16,10 +16,17 @@ func TestRuntimeSchedulesPendingRecoveryWithoutAnotherWake(t *testing.T) {
 		defer cancel()
 		var at []time.Time
 		r := Runtime{LockPath: filepath.Join(t.TempDir(), "controller.lock"), Waiting: func() {}, Open: func() error { return nil },
-			Step: func(context.Context) { at = append(at, time.Now()); if len(at) == 2 { cancel() } },
+			Step: func(context.Context) {
+				at = append(at, time.Now())
+				if len(at) == 2 {
+					cancel()
+				}
+			},
 			NextDelay: func() time.Duration { return 30 * time.Second }, Stopped: func() {}, Failed: func(err error) { t.Error(err) }}
 		r.Run(ctx)
-		if len(at) != 2 || at[1].Sub(at[0]) != 30*time.Second { t.Fatalf("pending recovery waited for the normal five-minute poll: %v", at) }
+		if len(at) != 2 || at[1].Sub(at[0]) != 30*time.Second {
+			t.Fatalf("pending recovery waited for the normal five-minute poll: %v", at)
+		}
 	})
 }
 

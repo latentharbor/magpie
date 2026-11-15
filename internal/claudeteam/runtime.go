@@ -12,14 +12,14 @@ import (
 // the lease. Step never runs on the request path. Shutdown waits for an
 // accepted step to finish before relinquishing ownership.
 type Runtime struct {
-	LockPath string
-	Wake     <-chan struct{}
-	Waiting  func()
-	Open     func() error
-	Step     func(context.Context)
+	LockPath  string
+	Wake      <-chan struct{}
+	Waiting   func()
+	Open      func() error
+	Step      func(context.Context)
 	NextDelay func() time.Duration
-	Stopped  func()
-	Failed   func(error)
+	Stopped   func()
+	Failed    func(error)
 }
 
 func (r Runtime) Run(ctx context.Context) {
