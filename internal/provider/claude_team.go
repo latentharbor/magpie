@@ -685,7 +685,9 @@ func teamBack(ws []ClaudeLimit, threshold float64, now time.Time) (time.Time, bo
 }
 
 func (t *claudeTeamController) waitDrained(ctx context.Context, id string) error {
-	return t.admissions.Drain(ctx, id)
+	drain, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	return t.admissions.Drain(drain, id)
 }
 
 // AwaitClaudeTeamRotation is used only for an uncommitted failed request or
@@ -1081,8 +1083,17 @@ func (t *claudeTeamController) keep(ctx context.Context) {
 			t.signalLocked()
 			t.mu.Unlock()
 		},
-		Open:    t.openController,
-		Step:    t.controllerStep,
+		Open: t.openController,
+		Step: t.controllerStep,
+		NextDelay: func() time.Duration {
+			t.mu.Lock()
+			pending := t.disk.Pending != nil
+			t.mu.Unlock()
+			if pending {
+				return 30 * time.Second
+			}
+			return 5 * time.Minute
+		},
 		Stopped: func() { t.mu.Lock(); t.running = false; t.signalLocked(); t.mu.Unlock() },
 		Failed: func(err error) {
 			t.mu.Lock()
@@ -1158,19 +1169,24 @@ func (t *claudeTeamController) controllerStep(ctx context.Context) {
 	t.manual = ""
 	refresh := t.refreshRequested
 	t.refreshRequested = false
+	pending := t.disk.Pending != nil
 	t.mu.Unlock()
 	// Once accepted, transfer reconciliation has an independent bounded
 	// lifetime; shutdown waits for it before releasing the controller lock.
 	var err error
-	if refresh && manual == "" {
+	if refresh && manual == "" && !pending {
 		err = t.refreshSnapshot(ctx)
 	} else {
-		t.collectQuotaDue(ctx)
-		work, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		if !pending {
+			t.collectQuotaDue(ctx)
+		}
+		// Draining has its own two-minute bound. Reserve a further minute
+		// so a late release cannot starve assignment and verification.
+		work, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
 		err = t.reconcile(work, manual)
 		cancel()
-		if refresh {
-			err = errors.Join(err, t.refreshSnapshot(ctx))
+		if refresh && err == nil {
+			err = t.refreshSnapshot(ctx)
 		}
 	}
 	if err == nil {
@@ -1178,7 +1194,10 @@ func (t *claudeTeamController) controllerStep(ctx context.Context) {
 	}
 	// New logins/members and externally observed assignments share the
 	// same capture queue as internal assignments, independent of history.
-	if !refresh {
+	t.mu.Lock()
+	pending = t.disk.Pending != nil
+	t.mu.Unlock()
+	if !refresh && !pending {
 		t.collectQuotaDue(ctx)
 	}
 	if saveErr := t.persist(); err == nil {

@@ -68,6 +68,14 @@ pool or organization edits that would invalidate its recovery plan.
 
 ## Background lifecycle
 
+A pending transfer is recovered before either an explicit refresh or quota
+capture. Failed recovery keeps its actual error and does not collect usage from
+unconfirmed seats. Pending journals are rechecked after 30 seconds without
+needing a new inference request or manual rotation. Ordinary idle polling stays
+at five minutes. A transfer step allows three minutes overall, with draining
+bounded separately at two minutes, reserving management time for assignment and
+confirmation. A long valid inference is never canceled to meet that drain bound.
+
 The gateway owns one controller per organization, each protected by an operation
 lock and a cross-process file lock. Credentials, quotas, drain counters,
 recovery plans and members never cross organizations. A corrupt additional

@@ -1,0 +1,58 @@
+name: Team recovery regression
+on:
+  push:
+    branches: [fix/team-recovery-priority-20261115]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: team-recovery-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Format controller sources
+        run: |
+          gofmt -w internal/claudeteam/runtime.go internal/claudeteam/runtime_test.go internal/provider/claude_team.go internal/provider/claude_team_recovery_priority_test.go
+          git diff -- '*.go' > "$RUNNER_TEMP/team-format.patch"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: team-format
+          path: ${{ runner.temp }}/team-format.patch
+      - name: Team recovery and admission regressions
+        run: |
+          go test -tags nogui -race -count=3 -timeout 10m ./internal/claudeteam ./internal/provider -run 'Test(Runtime|Transaction|Recovery|Admission|ClaudeTeam)'
+      - name: Prove refresh regression catches the previous ordering
+        run: |
+          cp internal/provider/claude_team.go "$RUNNER_TEMP/team.go"
+          trap 'cp "$RUNNER_TEMP/team.go" internal/provider/claude_team.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/provider/claude_team.go');s=p.read_text();old='if refresh && manual == "" && !pending {'
+          assert s.count(old)==1
+          p.write_text(s.replace(old,'if refresh && manual == "" {'))
+          PY
+          if go test -tags nogui -timeout 1m ./internal/provider -run '^TestClaudeTeamRefreshRecoversCommittedTransferFirst$' > "$RUNNER_TEMP/negative-refresh.log" 2>&1; then
+            cat "$RUNNER_TEMP/negative-refresh.log"; exit 1
+          fi
+          grep -F -- '--- FAIL: TestClaudeTeamRefreshRecoversCommittedTransferFirst' "$RUNNER_TEMP/negative-refresh.log"
+      - name: Prove late draining regression catches the old deadline
+        run: |
+          cp internal/provider/claude_team.go "$RUNNER_TEMP/team.go"
+          trap 'cp "$RUNNER_TEMP/team.go" internal/provider/claude_team.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/provider/claude_team.go');s=p.read_text();old='context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)'
+          assert s.count(old)==1
+          p.write_text(s.replace(old,'context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)'))
+          PY
+          if go test -tags nogui -timeout 1m ./internal/provider -run '^TestClaudeTeamLateDrainStillHasTimeToConfirmAssignment$' > "$RUNNER_TEMP/negative-drain.log" 2>&1; then
+            cat "$RUNNER_TEMP/negative-drain.log"; exit 1
+          fi
+          grep -F -- '--- FAIL: TestClaudeTeamLateDrainStillHasTimeToConfirmAssignment' "$RUNNER_TEMP/negative-drain.log"
