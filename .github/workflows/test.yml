@@ -237,6 +237,7 @@ jobs:
 
   native-ui:
     name: ui (macos native)
+    if: ${{ !inputs.integration_only }}
     # Native-window acceptance remains visible under #4, separately from the
     # mandatory backend/signature checks. UI acceptance does not block this
     # distribution's releases; a failure is never reported as passing.
