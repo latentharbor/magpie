@@ -137,9 +137,16 @@ function drawTeamAccounts(list, p) {
     if (m.on) dot.append(svg(CHECK, 10, 2.2));
     const state = m.lapsed ? t("Sign-in required") : m.seatTier === "team_tier_1" ? "Premium" : m.seatTier === "unassigned" ? t("Unassigned") : m.seatTier ? t("Other seat tier") : t("Not verified");
     row.append(dot, el("span", "rename", m.user), el("span", "grow"), el("span", "plan", state));
-    const q = { windows: m.windows || (m.limits || []).map((w) => ({ name: w.kind === "five_hour" ? "5 hours" : w.kind === "seven_day" ? "7 days" : w.kind,
+    const q = { windows: m.windows || (m.limits || []).map((w) => ({ name: w.kind === "five_hour" ? "5 hours" : w.kind === "seven_day" ? "7 days" : w.kind === "seven_day_overage_included" ? "7 days · Fable" : w.kind,
       used: w.used * 100, resetsAt: w.resetsAt ? new Date(w.resetsAt * 1000).toISOString() : null })) };
     const quota = accountQuota({ [m.user]: q }, m.user);
+    // The ordinary account card puts scoped windows in a tooltip. The Team
+    // pool needs Fable visible alongside its global windows for handoffs.
+    const fable = q.windows.find(w => w.name === "7 days · Fable");
+    if (fable) quota.append(...accountQuota({[m.user]:{windows:[fable]}}, m.user).children);
+    else quota.append(el("span", "aq-asof", t("7 days · Fable") + " · " + t("Usage unknown")));
+    if(m.retryAt)quota.append(el("span","aq-asof",t("Retry assignment after: {time}",{time:new Date(m.retryAt).toLocaleString(intlLang())})));
+    if(m.handoffFailure)quota.append(el("span","aq-asof",t("Assignment attempt failed")+" · "+m.handoffFailure.phase+(m.handoffFailure.status?" · HTTP "+m.handoffFailure.status:"")+" · "+m.handoffFailure.message));
 	if (q.windows.some(w => w.estimated)) {
 	  quota.append(el("span", "aq-asof", t("Reset-based estimate; not refreshed from Claude")));
 	  if (q.windows.some(w => w.name === "5 hours" && w.used === 0 && !w.resetsAt))
@@ -223,8 +230,8 @@ async function openClaudeTeam(organizationId = "") {
       const state = m.seatTier === "team_tier_1" ? "Premium" : m.seatTier === "unassigned" ? t("Unassigned") : m.seatTier ? t("Other seat tier") : t("Not verified");
       top.append(el("span", "team-seat", state)); row.append(top);
       const windows = el("div", "team-windows");
-      for (const kind of ["five_hour", "seven_day"]) {
-        const name = kind === "five_hour" ? "5 hours" : "7 days";
+      for (const kind of ["five_hour", "seven_day", "seven_day_overage_included"]) {
+        const name = kind === "five_hour" ? "5 hours" : kind === "seven_day" ? "7 days" : "7 days · Fable";
         const old = (m.limits || []).find((w) => w.kind === kind);
         const w = m.windows ? m.windows.find(w => w.name === name) : old && {used:old.used * 100, resetsAt:old.resetsAt && new Date(old.resetsAt * 1000).toISOString()};
         const line = el("div", "team-window"), label = t(name);
@@ -236,7 +243,9 @@ async function openClaudeTeam(organizationId = "") {
         windows.append(line);
       }
       row.append(windows);
-      const states = { signed_out: "Sign in again", cooling: "Cooling down", unknown: "Usage unknown", ready: "Ready", other_seat: "Waiting for Unassigned", unverified: "Not verified" };
+      if (m.retryAt) row.append(el("p", "hint team-handoff-cooling", t("Retry assignment after: {time}", {time:date(m.retryAt)})));
+      if (m.handoffFailure) row.append(el("p", "hint team-handoff-error", t("Assignment attempt failed") + " · " + m.handoffFailure.phase + (m.handoffFailure.status ? " · HTTP " + m.handoffFailure.status : "") + " · " + m.handoffFailure.message));
+      const states = { signed_out: "Sign in again", cooling: "Cooling down", handoff_cooling:"Assignment cooling down", unknown: "Usage unknown", ready: "Ready", other_seat: "Waiting for Unassigned", unverified: "Not verified" };
       const foot = el("div", "team-member-foot");
       if (m.windows?.some(w => w.estimated)) foot.append(el("span", "hint", t("Reset-based estimate; not refreshed from Claude")));
       if (states[m.state]) foot.append(el("span", "hint", t(states[m.state])));
@@ -280,8 +289,12 @@ async function openClaudeTeam(organizationId = "") {
       const history = el("details", "team-history"); history.append(el("summary", "", t("Recent seat changes")));
       const who = (id) => view.members.find((m) => m.accountId === id)?.user || id;
       const result = { assigned: "Assigned", rolled_back: "Rolled back", unchanged: "Unchanged" };
-      const reasons = { manual: "Manual", authentication: "Sign-in ran out", exhausted: "Usage threshold reached", expiry: "Expiring allowance" };
-      for (const h of view.history.slice(-5).reverse()) history.append(el("p", "hint", date(h.at) + " · " + who(h.from) + " → " + who(h.to) + " · " + t(result[h.result] || "Not verified") + (reasons[h.reason] ? " · " + t(reasons[h.reason]) : "")));
+      const reasons = { manual: "Manual", authentication: "Sign-in ran out", exhausted: "Usage threshold reached", model_exhausted:"Model allowance exhausted", expiry: "Expiring allowance" };
+      for (const h of view.history.slice(-5).reverse()) {
+        const line=el("p", "hint", date(h.at) + " · " + who(h.from) + " → " + who(h.to) + " · " + t(result[h.result] || "Not verified") + (reasons[h.reason] ? " · " + t(reasons[h.reason]) : "") + (h.model ? " · " + h.model : ""));
+        if(h.failure) line.append(el("span","team-handoff-error"," · "+h.failure.phase+(h.failure.status?" · HTTP "+h.failure.status:"")+" · "+h.failure.message));
+        history.append(line);
+      }
       pool.append(history);
     }
   };

@@ -35,6 +35,8 @@ type ClaudeTeamMember struct {
 	ObservedAt     *time.Time    `json:"observedAt,omitempty"`
 	QuotaError     string        `json:"quotaError,omitempty"`
 	QuotaPending   bool          `json:"quotaPending,omitempty"`
+	HandoffFailure *claudeteam.Failure `json:"handoffFailure,omitempty"`
+	RetryAt *time.Time `json:"retryAt,omitempty"`
 }
 
 type ClaudeTeamEvent = claudeteam.Event
@@ -65,6 +67,7 @@ type claudeTeamDisk struct {
 	Original              map[string]claudeTeamFlags `json:"original"`
 	Pending               *claudeTeamPending         `json:"pending,omitempty"`
 	History               []ClaudeTeamEvent          `json:"history"`
+	Cooldowns map[string]ClaudeTeamEvent `json:"cooldowns,omitempty"`
 }
 
 type claudeTeamController struct {
@@ -91,6 +94,8 @@ type claudeTeamController struct {
 	quotaAttempted               map[string]bool
 	quotaBusy                    string
 	quotaChecks                  map[string]*claudeTeamQuotaCheck
+	modelDemand string
+	modelDemandUntil time.Time
 }
 
 func newClaudeTeamController() *claudeTeamController {
@@ -633,7 +638,7 @@ func (t *claudeTeamController) note(user string, ls []ClaudeLimit) {
 		}
 		t.disk.Observed[id] = time.Now()
 	}
-	spent := teamSpent(ws, t.cfg.Threshold, time.Now())
+	spent := teamSpent(ws, t.cfg.Threshold, time.Now()) || time.Now().Before(t.modelDemandUntil)&&claudeteam.SpentForModel(ws,t.cfg.Threshold,time.Now(),t.modelDemand)
 	if spent {
 		t.requested = true
 	}
@@ -814,7 +819,14 @@ func (t *claudeTeamController) finish(c ClaudeTeamConfig, seats []claudeTeamSeat
 		return err
 	}
 	t.mu.Lock()
-	t.disk.History = append(t.disk.History, ClaudeTeamEvent{At: time.Now().UTC(), From: p.From, To: p.To, Result: result, Reason: p.Reason, FromLimits: p.FromLimits, ToLimits: p.ToLimits})
+	event:=ClaudeTeamEvent{At:time.Now().UTC(),From:p.From,To:p.To,Result:result,Reason:p.Reason,Model:p.Model,Failure:p.Failure,RecoveryFailure:p.RecoveryFailure,FromLimits:p.FromLimits,ToLimits:p.ToLimits}
+	if result!="assigned"&&(p.Failure!=nil&&(p.Failure.Phase=="assign"||p.Failure.Phase=="confirm_assignment"||p.Failure.Phase=="recovery")||result=="rolled_back"&&p.Failure==nil){event.RetryAt,event.Failures=claudeteam.FailureCooldown(t.disk.History,p.To,event.At)}
+	if t.disk.Cooldowns==nil {t.disk.Cooldowns=map[string]ClaudeTeamEvent{}}
+	if result=="assigned" {delete(t.disk.Cooldowns,p.To)} else if !event.RetryAt.IsZero() {
+		if previous:=t.disk.Cooldowns[p.To];previous.Failures>=event.Failures {event.Failures=min(previous.Failures,999)+1;event.RetryAt=event.At.Add(15*time.Minute<<min(event.Failures-1,2))}
+		t.disk.Cooldowns[p.To]=event
+	}
+	t.disk.History = append(t.disk.History,event)
 	if len(t.disk.History) > 30 {
 		t.disk.History = slices.Clone(t.disk.History[len(t.disk.History)-30:])
 	}
@@ -880,6 +892,7 @@ func (t *claudeTeamController) transfer(ctx context.Context, c ClaudeTeamConfig,
 	}
 	p := claudeTeamPending{OrganizationID: c.OrganizationID, From: from, To: to, Baseline: premiumSet(seats), Reason: reason}
 	t.mu.Lock()
+	if time.Now().Before(t.modelDemandUntil){p.Model=t.modelDemand}
 	p.FromLimits = slices.Clone(t.disk.Limits[from])
 	p.ToLimits = slices.Clone(t.disk.Limits[to])
 	t.mu.Unlock()
@@ -934,6 +947,7 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := time.Now()
+	model:="";if now.Before(t.modelDemandUntil){model=t.modelDemand}
 	var members []claudeteam.Candidate
 	for _, seat := range seats {
 		if !slices.Contains(c.Members, seat.AccountID) {
@@ -942,23 +956,24 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 		ls := t.disk.Limits[seat.AccountID]
 		ws := claudeLimitWindows(ls)
 		a := allowanceOf(ws, now)
-		used, _ := a.For("", now)
-		pace, _ := a.Pace("", now)
+		used, _ := a.For(model, now)
+		pace, _ := a.Pace(model, now)
 		known := len(ws) > 0
 		if !known {
 			pace = FreshPace
 		}
 		if c.Routing == "" {
-			known = claudeteam.QuotaKnown(ls)
+			known = claudeteam.QuotaKnownForModel(ls,model)
 		}
+		_,cooled:=t.cooldownLocked(seat.AccountID,now)
 		members = append(members, claudeteam.Candidate{
 			ID: seat.AccountID, Tier: seat.SeatTier, Limits: ls, Lapsed: identities[seat.AccountID].Lapsed != "",
-			Unavailable: unavailable[seat.AccountID],
+			Unavailable: unavailable[seat.AccountID]||cooled,
 			Reliable:    t.disk.QuotaErrors[seat.AccountID] == "" && !t.disk.Observed[seat.AccountID].IsZero() && now.Sub(t.disk.Observed[seat.AccountID]) <= 24*time.Hour,
-			Weight:      claudeteam.Weight{Key: seat.AccountID, Account: true, Known: known, Learns: !known, Used: used, Pace: pace, Soon: a.Renewal("", now), Weight: 1},
+			Weight:      claudeteam.Weight{Key: seat.AccountID, Account: true, Known: known, Learns: !known, Used: used, Pace: pace, Soon: a.Renewal(model, now), Weight: 1},
 		})
 	}
-	return claudeteam.Choose(c, members, manual, t.disk.History, now)
+	return claudeteam.ChooseForModel(c, members, manual, t.disk.History, now,model)
 }
 
 func (t *claudeTeamController) reconcile(ctx context.Context, manual string) error {
@@ -995,10 +1010,13 @@ func (t *claudeTeamController) reconcile(ctx context.Context, manual string) err
 			return err
 		}
 	}
+	var lastFailure error
 	client := newClaudeTeamAdmin(c)
 	if pending != nil {
-		return t.recover(ctx, c, client, *pending)
+		if pending.Model!="" {t.mu.Lock();t.modelDemand=pending.Model;t.modelDemandUntil=time.Now().Add(15*time.Minute);t.mu.Unlock()}
+		err:=t.recover(ctx,c,client,*pending);var failed *claudeteam.TransferFailure;if !errors.As(err,&failed)||!failed.TryAnother(){return err};lastFailure=err
 	}
+	for attempt:=0;attempt<3;attempt++ {
 	seats, err := client.Members(ctx)
 	if err != nil {
 		return err
@@ -1017,24 +1035,31 @@ func (t *claudeTeamController) reconcile(ctx context.Context, manual string) err
 	t.collectQuotaDue(ctx)
 	from, to, err := t.choose(c, seats, manual)
 	if err != nil {
+		if lastFailure!=nil{return errors.Join(lastFailure,err)}
 		return err
 	}
 	if from == "" || to == "" {
-		return nil
+		return lastFailure
 	}
 	reason := "manual"
 	if manual == "" {
 		t.mu.Lock()
 		spent := teamSpent(t.disk.Limits[from], c.Threshold, time.Now())
+		modelSpent:=time.Now().Before(t.modelDemandUntil)&&claudeteam.SpentForModel(t.disk.Limits[from],c.Threshold,time.Now(),t.modelDemand)
 		t.mu.Unlock()
 		reason = "expiry"
 		if identities[from].Lapsed != "" {
 			reason = "authentication"
 		} else if spent {
 			reason = "exhausted"
+		} else if modelSpent {reason="model_exhausted"
 		}
 	}
-	return t.transfer(ctx, c, client, seats, from, to, reason)
+	err=t.transfer(ctx,c,client,seats,from,to,reason)
+	var failed *claudeteam.TransferFailure
+	if !errors.As(err,&failed)||!failed.TryAnother(){return err};lastFailure=err
+	}
+	return lastFailure
 }
 
 // RotateClaudeTeam asks the gateway's one background controller to move one
@@ -1239,6 +1264,7 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 		active[id] = n
 	}
 	quotaErrors := make(map[string]string, len(t.disk.QuotaErrors))
+	cooldowns:=make(map[string]ClaudeTeamEvent,len(t.disk.Cooldowns));for id,e:=range t.disk.Cooldowns{cooldowns[id]=e}
 	quotaPending := make(map[string]bool, len(t.quotaDue)+1)
 	for id, e := range t.disk.QuotaErrors {
 		quotaErrors[id] = e
@@ -1269,6 +1295,10 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 		m := ClaudeTeamMember{AccountID: account, OrganizationID: id.OrganizationID, User: l.User, Selected: slices.Contains(c.Members, account), On: l.On && !l.TeamOff, SeatTier: seats[account], Limits: limits[account], Lapsed: l.Lapsed != "", Active: active[account], State: "ready"}
 		m.Windows = claudeTeamWindowsAt(m.Limits, time.Now())
 		m.QuotaError, m.QuotaPending = quotaErrors[account], quotaPending[account]
+		event,cooling:=claudeteam.CoolingTarget(v.History,account,time.Now());if e,ok:=cooldowns[account];ok {event=e;cooling=time.Now().Before(e.RetryAt)}
+		if cooling&&m.SeatTier=="unassigned" {
+			at:=event.RetryAt;m.RetryAt=&at;m.HandoffFailure=event.Failure
+		}
 		if at := observed[account]; !at.IsZero() {
 			m.ObservedAt = &at
 		}
@@ -1279,6 +1309,7 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 		} else if len(m.Limits) == 0 {
 			m.State = "unknown"
 		}
+		if m.RetryAt!=nil&&!m.Lapsed {m.State="handoff_cooling"}
 		// Membership and eligibility are separate. Other seat tiers stay
 		// parked until an authoritative snapshot reports Unassigned.
 		if m.SeatTier == "" {

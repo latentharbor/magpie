@@ -28,6 +28,17 @@ type Pending struct {
 	Baseline             []string
 	Reason               string
 	FromLimits, ToLimits []Limit
+	Model string `json:",omitempty"`
+	Failure *Failure `json:",omitempty"`
+	RecoveryFailure *Failure `json:",omitempty"`
+}
+
+// Failure contains only a fixed diagnostic or an already-sanitized AdminError.
+// Raw transport errors and vendor bodies never enter the journal or member UI.
+type Failure struct {
+ Phase string `json:"phase"`
+ Status int `json:"status,omitempty"`
+ Message string `json:"message"`
 }
 
 type Event struct {
@@ -38,4 +49,9 @@ type Event struct {
 	Reason     string    `json:"reason,omitempty"`
 	FromLimits []Limit   `json:"fromLimits,omitempty"`
 	ToLimits   []Limit   `json:"toLimits,omitempty"`
+	Model string `json:"model,omitempty"`
+	Failure *Failure `json:"failure,omitempty"`
+	RecoveryFailure *Failure `json:"recoveryFailure,omitempty"`
+	RetryAt time.Time `json:"retryAt,omitempty"`
+	Failures int `json:"failures,omitempty"`
 }

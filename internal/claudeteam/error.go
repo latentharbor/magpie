@@ -13,6 +13,9 @@ import (
 var claudeTeamRayID = lazyre.New(`^[0-9a-fA-F]{16}-[A-Z]{3}$`)
 var claudeTeamRequestID = lazyre.New(`^(req_[a-zA-Z0-9]{8,64}|[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})$`)
 
+type AdminError struct { Status int; message string }
+func (e *AdminError) Error() string { return e.message }
+
 // Only fixed classifications and validated correlation IDs leave this function.
 // A web error can contain credentials or account information, including in a
 // JSON message, HTML title, redirect or an arbitrarily named vendor error type.
@@ -84,5 +87,5 @@ func ResponseError(method string, res *http.Response) error {
 	if id := res.Header.Get("cf-ray"); claudeTeamRayID.MatchString(id) {
 		detail += ", cf-ray=" + id
 	}
-	return fmt.Errorf("Claude Team %s (%s)", reason, detail)
+	return &AdminError{Status:res.StatusCode,message:fmt.Sprintf("Claude Team %s (%s)", reason, detail)}
 }

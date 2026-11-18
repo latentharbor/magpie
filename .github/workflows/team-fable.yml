@@ -1,0 +1,73 @@
+name: Team Fable and handoff regression
+on:
+  push:
+    branches: [fix-team-fable-20261118]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: team-fable-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Format changed sources
+        run: |
+          gofmt -w internal/claudeteam/*.go internal/provider/claude_team*.go internal/gateway/claude_team*.go internal/gateway/gateway.go
+          git diff -- '*.go' > "$RUNNER_TEMP/team-format.patch"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: team-format
+          path: ${{ runner.temp }}/team-format.patch
+      - name: Module and Team adapters
+        run: |
+          go test -tags nogui -race -count=3 -timeout 10m ./internal/claudeteam
+          go test -tags nogui -race -count=3 -timeout 15m ./internal/provider -run 'TestClaudeTeam'
+          go test -tags nogui -race -timeout 10m ./internal/gateway -run 'TestClaudeTeam|TestClaudeHTTP|TestClaudeFable'
+      - name: Prove the scoped quota and failed-target regressions
+        run: |
+          cp internal/claudeteam/model.go "$RUNNER_TEMP/model.go"
+          cp internal/claudeteam/selection.go "$RUNNER_TEMP/selection.go"
+          trap 'cp "$RUNNER_TEMP/model.go" internal/claudeteam/model.go; cp "$RUNNER_TEMP/selection.go" internal/claudeteam/selection.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/claudeteam/model.go');s=p.read_text();old='kind := ModelWindow(model)';assert s.count(old)==1;p.write_text(s.replace(old,'kind := ""'))
+          PY
+          if go test -tags nogui ./internal/claudeteam -run '^TestFableExhaustionNeedsRealModelDemand$' > "$RUNNER_TEMP/negative-fable.log" 2>&1; then
+            cat "$RUNNER_TEMP/negative-fable.log"; exit 1
+          fi
+          grep -F -- '--- FAIL: TestFableExhaustionNeedsRealModelDemand' "$RUNNER_TEMP/negative-fable.log"
+          cp "$RUNNER_TEMP/model.go" internal/claudeteam/model.go
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/claudeteam/selection.go');s=p.read_text();old='_, cooling := CoolingTarget(history, s.ID, now)';assert s.count(old)==1;p.write_text(s.replace(old,'cooling := false'))
+          PY
+          if go test -tags nogui ./internal/claudeteam -run '^TestRepeatedRolledBackTargetIsSkippedUntilCooldownExpires$' > "$RUNNER_TEMP/negative-cooldown.log" 2>&1; then
+            cat "$RUNNER_TEMP/negative-cooldown.log"; exit 1
+          fi
+          grep -F -- '--- FAIL: TestRepeatedRolledBackTargetIsSkippedUntilCooldownExpires' "$RUNNER_TEMP/negative-cooldown.log"
+  ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+    env:
+      BROWSER: ${{ matrix.browser }}
+      NODE_PATH: ${{ github.workspace }}/.github/ui-preview/node_modules
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: |
+          npm install --ignore-scripts --no-package-lock --prefix .github/ui-preview
+          .github/ui-preview/node_modules/.bin/playwright install --with-deps "$BROWSER"
+          node --test --test-concurrency=2 --test-timeout=600000 internal/gui/tests/claude-team.test.cjs

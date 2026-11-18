@@ -11,11 +11,13 @@ type memoryAdmin struct {
 	seats  []Seat
 	writes []string
 	lost   bool
+	reject string
 }
 
 func (a *memoryAdmin) Members(context.Context) ([]Seat, error) { return slices.Clone(a.seats), nil }
 func (a *memoryAdmin) SetTier(_ context.Context, id, tier string) error {
 	a.writes = append(a.writes, id+":"+tier)
+	if id==a.reject&&tier=="team_tier_1" {return &AdminError{Status:400,message:"Claude Team seat update rejected (HTTP 400, seat update, response=JSON)"}}
 	for i := range a.seats {
 		if a.seats[i].AccountID == id {
 			a.seats[i].SeatTier = tier
@@ -48,7 +50,7 @@ func TestTransactionPreservesOrderingAndOutsideSeats(t *testing.T) {
 	if err := tx.Transfer(context.Background(), a.seats, p); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(*steps, []string{"ready", "close", "drain", "record", "assigned"}) {
+	if !slices.Equal(*steps, []string{"ready", "close", "drain", "record", "record", "record", "assigned"}) {
 		t.Fatal(*steps)
 	}
 	if !slices.Equal(a.writes, []string{"a:unassigned", "b:team_tier_1"}) {
@@ -90,9 +92,8 @@ func TestRecoveryRejectsConcurrentOutsideChange(t *testing.T) {
 func TestRecoveryRestoresOnlyAProvenFreeSeat(t *testing.T) {
 	tx, a, p, steps := transactionFixture()
 	a.seats[0].SeatTier = "unassigned"
-	if err := tx.Recover(context.Background(), p); err != nil {
-		t.Fatal(err)
-	}
+	var failure *TransferFailure
+	if err:=tx.Recover(context.Background(),p);!errors.As(err,&failure)||failure.Outcome!="rolled_back"{t.Fatalf("rollback reported as a successful handoff: %v",err)}
 	if !slices.Equal(a.writes, []string{"a:team_tier_1"}) || !slices.Equal(*steps, []string{"rolled_back"}) {
 		t.Fatal(a.writes, *steps)
 	}

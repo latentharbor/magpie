@@ -1,6 +1,11 @@
 // Feature content strings; built-in metadata and agent notices stay in core.
 magpie.strings({
   "zh": {
+    "7 days · Fable": "7 天 · Fable",
+    "Model allowance exhausted": "所需模型额度已用尽",
+    "Assignment cooling down": "分配失败，冷却中",
+    "Assignment attempt failed": "坐席分配未成功",
+    "Retry assignment after: {time}": "坐席分配重试时间：{time}",
     "Usage threshold reached": "已达到用量阈值",
     "Expiring allowance": "优先使用即将重置的额度",
     "Other seat tier": "其他坐席类型",
@@ -83,6 +88,11 @@ magpie.strings({
     "Claude Code": "Claude Code"
   },
   "zh-TW": {
+    "7 days · Fable": "7 天 · Fable",
+    "Model allowance exhausted": "所需模型額度已用盡",
+    "Assignment cooling down": "分配失敗，冷卻中",
+    "Assignment attempt failed": "坐席分配未成功",
+    "Retry assignment after: {time}": "坐席分配重試時間：{time}",
     "Usage threshold reached": "已達到用量門檻",
     "Expiring allowance": "優先使用即將重設的額度",
     "Choose model": "選擇模型",
@@ -165,6 +175,11 @@ magpie.strings({
     "Claude Code": "Claude Code"
   },
   "ja": {
+    "7 days · Fable": "7 日間 · Fable",
+    "Model allowance exhausted": "要求されたモデルの利用枠を消費済み",
+    "Assignment cooling down": "割り当て失敗、待機中",
+    "Assignment attempt failed": "席の割り当てに失敗しました",
+    "Retry assignment after: {time}": "割り当て再試行日時：{time}",
     "Usage threshold reached": "使用量のしきい値に達しました",
     "Expiring allowance": "リセットが近い利用枠を優先",
     "Choose model": "モデルを選択",
@@ -247,6 +262,11 @@ magpie.strings({
     "Claude Code": "Claude Code"
   },
   "de": {
+    "7 days · Fable": "7 Tage · Fable",
+    "Model allowance exhausted": "Kontingent des angeforderten Modells aufgebraucht",
+    "Assignment cooling down": "Zuweisung fehlgeschlagen, Wartezeit",
+    "Assignment attempt failed": "Sitzzuweisung fehlgeschlagen",
+    "Retry assignment after: {time}": "Zuweisung erneut versuchen ab: {time}",
     "Usage threshold reached": "Nutzungsschwelle erreicht",
     "Expiring allowance": "Bald zurückgesetztes Kontingent bevorzugen",
     "Choose model": "Modell auswählen",

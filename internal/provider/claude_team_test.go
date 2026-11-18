@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/yetone/magpie/internal/claudeteam"
 )
 
 const teamOrg = "00000000-0000-4000-8000-000000000001"
@@ -41,7 +44,7 @@ func (f *fakeTeamAdmin) SetTier(_ context.Context, id, tier string) error {
 	defer f.mu.Unlock()
 	f.writes = append(f.writes, id+":"+tier)
 	if f.failTarget && id == teamID(3) && tier == "team_tier_1" {
-		return errors.New("fixture refusal")
+		return claudeteam.ResponseError("PUT",&http.Response{StatusCode:400,Header:http.Header{"Content-Type":{"application/json"}},Body:io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"fixture-private-body"}}`))})
 	}
 	for i := range f.seats {
 		if f.seats[i].AccountID == id {
@@ -265,13 +268,13 @@ func TestClaudeTeamRollbackAndCrashRecovery(t *testing.T) {
 				p := claudeTeamPending{OrganizationID: teamOrg, From: teamID(2), To: teamID(3), Baseline: premiumSet(f.seats)}
 				tm.disk.Pending = &p
 				f.seats[0].SeatTier = "unassigned"
-				if err := tm.reconcile(context.Background(), ""); err != nil {
-					t.Fatal(err)
+				if err := tm.reconcile(context.Background(), ""); err == nil {
+					t.Fatal("recovered rollback reported as a successful transfer")
 				}
 			} else {
 				f.failTarget = true
-				if err := tm.transfer(context.Background(), c, f, slices.Clone(f.seats), teamID(2), teamID(3)); err != nil {
-					t.Fatal(err)
+				if err := tm.transfer(context.Background(), c, f, slices.Clone(f.seats), teamID(2), teamID(3)); err == nil {
+					t.Fatal("failed assignment reported as a successful transfer")
 				}
 			}
 			if f.seats[0].SeatTier != "team_tier_1" || f.seats[1].SeatTier != "unassigned" || tm.disk.Pending != nil || tm.disk.History[0].Result != "rolled_back" {
