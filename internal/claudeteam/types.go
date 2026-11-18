@@ -9,13 +9,13 @@ import (
 
 type Config struct {
 	KeepPremiumBatch bool     `json:"keepPremiumBatch,omitempty"`
-	Name           string   `json:"name,omitempty"`
-	Routing        string   `json:"routing,omitempty"`
-	Enabled        bool     `json:"enabled"`
-	OrganizationID string   `json:"organizationId"`
-	SessionKey     string   `json:"sessionKey,omitempty"`
-	Members        []string `json:"members"`
-	Threshold      float64  `json:"threshold"`
+	Name             string   `json:"name,omitempty"`
+	Routing          string   `json:"routing,omitempty"`
+	Enabled          bool     `json:"enabled"`
+	OrganizationID   string   `json:"organizationId"`
+	SessionKey       string   `json:"sessionKey,omitempty"`
+	Members          []string `json:"members"`
+	Threshold        float64  `json:"threshold"`
 }
 
 type Limit struct {

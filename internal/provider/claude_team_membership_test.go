@@ -20,7 +20,7 @@ func TestClaudeTeamKeptPremiumBatchNeverMovesSeatsAtUsageLimits(t *testing.T) {
 	now := time.Now()
 	for range 20 {
 		for _, user := range []string{"u2@example.com · Team", "u4@example.com · Team"} {
-			tm.note(user, []ClaudeLimit{{Kind: "five_hour", Used: 1, ResetsAt: now.Add(time.Hour).Unix()}, {Kind: "seven_day", Used: 1, ResetsAt: now.Add(24*time.Hour).Unix()}, {Kind: "seven_day_overage_included", Used: 1, ResetsAt: now.Add(24*time.Hour).Unix()}})
+			tm.note(user, []ClaudeLimit{{Kind: "five_hour", Used: 1, ResetsAt: now.Add(time.Hour).Unix()}, {Kind: "seven_day", Used: 1, ResetsAt: now.Add(24 * time.Hour).Unix()}, {Kind: "seven_day_overage_included", Used: 1, ResetsAt: now.Add(24 * time.Hour).Unix()}})
 		}
 		ObserveClaudeTeamModel("u2@example.com · Team", "claude-fable-5-2")
 		if err := tm.reconcile(context.Background(), ""); err != nil {
