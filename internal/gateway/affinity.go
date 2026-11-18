@@ -866,6 +866,17 @@ func leastHeld(scope, key string, cs []candidate, pl planned, ready bool) ([]can
 			}
 		}
 	}
+	// Team scope already identifies this provider and requested model. Native
+	// dispatch can refine effort or append [1m] after the opening reservation;
+	// counting that refined value as a different seat hides all held sessions
+	// and leaves a newly added Premium unused. Keep groups' effort boundaries.
+	team := provider.ClaudeTeamOf(cs[0].p) != "" && strings.HasPrefix(scope, cs[0].p.ID+"/")
+	identity := func(who, model, effort string) string {
+		if team {
+			return who
+		}
+		return who + "/" + provider.WithMemberEffort(model, effort)
+	}
 	now := time.Now()
 	held := map[string]int{}
 	sticks.Lock()
@@ -873,7 +884,7 @@ func leastHeld(scope, key string, cs []candidate, pl planned, ready bool) ([]can
 	for _, m := range []map[string]stick{sticks.m, sticks.opening} {
 		for k, st := range m {
 			if strings.HasPrefix(k, scope+"|") && now.Sub(st.at) <= heldFor && !(ready && strings.Contains(k, "|agent:")) {
-				held[st.who+"/"+provider.WithMemberEffort(st.model, st.effort)]++
+				held[identity(st.who, st.model, st.effort)]++
 			}
 		}
 	}
@@ -884,7 +895,7 @@ func leastHeld(scope, key string, cs []candidate, pl planned, ready bool) ([]can
 	if len(held) == 0 {
 		return cs, pl
 	}
-	seat := func(c candidate) string { return c.who() + "/" + provider.WithMemberEffort(c.model, c.effort) }
+	seat := func(c candidate) string { return identity(c.who(), c.model, c.effort) }
 	best := -1
 	for i, c := range cs {
 		if pl.order[i].Rest != nil || pl.order[i].Aside || standsIn(pl.order, i) || lastBehind(pl.order, i) || busyBehind(pl.order, i) || ready && i > 0 && !readyForNew(pl.order, i) {

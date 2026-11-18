@@ -320,3 +320,30 @@ func TestClaudeTeamDynamicPremiumPool(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudeTeamSessionAllocationCountsRefinedDispatch(t *testing.T) {
+	for _, n := range []int{1, 4, 10} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			fresh(t)
+			id := "claude-team-" + nativeTeamOrg
+			model := "claude-fable-5-2"
+			scope := id + "/" + model
+			var cs []candidate
+			var plan planned
+			for i := 0; i <= n; i++ {
+				c := candidate{p: provider.Provider{ID: id, Account: &provider.Account{Agent: "claude", User: fmt.Sprintf("holder-%d@example.test", i)}}, model: model, rest: fmt.Sprintf("holder-%d", i)}
+				cs = append(cs, c)
+				plan.order = append(plan.order, Weighed{Known: true})
+				if i < n {
+					sticks.Lock()
+					sticks.m[scope+fmt.Sprintf("|session-%d", i)] = stick{who: c.who(), model: model + "[1m]", effort: "high", at: time.Now()}
+					sticks.Unlock()
+				}
+			}
+			got, _ := leastHeld(scope, scope+"|new", cs, plan, true)
+			if got[0].who() != cs[n].who() {
+				t.Fatal("post-routing model/effort hid held conversations; new Premium stayed idle")
+			}
+		})
+	}
+}
