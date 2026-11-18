@@ -51,6 +51,9 @@ func (p *poolAdmin) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func nativePremiumPool(t *testing.T, n int) (*poolAdmin, provider.ClaudeTeamConfig, []string) {
 	t.Helper()
+	// Each size is a separate gateway installation, not a resize of earlier
+	// tests' unrelated conversations on the same fixture account addresses.
+	fresh(t)
 	old := nativeTeamFixture(t)
 	old.stop()
 	teamFableLocalAllowance(t)
