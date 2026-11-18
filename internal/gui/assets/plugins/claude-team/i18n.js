@@ -1,6 +1,10 @@
 // Feature content strings; built-in metadata and agent notices stay in core.
 magpie.strings({
   "zh": {
+    "Outside organization": "已移出组织",
+    "Keep current Premium assignments": "保留当前 Premium 分配",
+    "Premium batch": "Premium 批次",
+    "Reuse these accounts after usage resets. Member replacement remains manual.": "额度重置后继续使用这些账号，更换成员由管理员手动处理。",
     "7 days · Fable": "7 天 · Fable",
     "Model allowance exhausted": "所需模型额度已用尽",
     "Assignment cooling down": "分配失败，冷却中",
@@ -88,6 +92,10 @@ magpie.strings({
     "Claude Code": "Claude Code"
   },
   "zh-TW": {
+    "Outside organization": "已移出組織",
+    "Keep current Premium assignments": "保留目前的 Premium 分配",
+    "Premium batch": "Premium 批次",
+    "Reuse these accounts after usage resets. Member replacement remains manual.": "額度重設後繼續使用這些帳號，更換成員由管理員手動處理。",
     "7 days · Fable": "7 天 · Fable",
     "Model allowance exhausted": "所需模型額度已用盡",
     "Assignment cooling down": "分配失敗，冷卻中",
@@ -175,6 +183,10 @@ magpie.strings({
     "Claude Code": "Claude Code"
   },
   "ja": {
+    "Outside organization": "組織から退出済み",
+    "Keep current Premium assignments": "現在の Premium 割り当てを維持",
+    "Premium batch": "Premium グループ",
+    "Reuse these accounts after usage resets. Member replacement remains manual.": "使用枠のリセット後も同じアカウントを使用します。メンバーの交代は管理者が手動で行います。",
     "7 days · Fable": "7 日間 · Fable",
     "Model allowance exhausted": "要求されたモデルの利用枠を消費済み",
     "Assignment cooling down": "割り当て失敗、待機中",
@@ -262,6 +274,10 @@ magpie.strings({
     "Claude Code": "Claude Code"
   },
   "de": {
+    "Outside organization": "Aus Organisation entfernt",
+    "Keep current Premium assignments": "Aktuelle Premium-Zuweisungen beibehalten",
+    "Premium batch": "Premium-Gruppe",
+    "Reuse these accounts after usage resets. Member replacement remains manual.": "Konten nach dem Zurücksetzen des Kontingents weiterverwenden. Mitglieder werden weiterhin manuell ersetzt.",
     "7 days · Fable": "7 Tage · Fable",
     "Model allowance exhausted": "Kontingent des angeforderten Modells aufgebraucht",
     "Assignment cooling down": "Zuweisung fehlgeschlagen, Wartezeit",

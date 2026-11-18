@@ -135,7 +135,7 @@ function drawTeamAccounts(list, p) {
   for (const m of (p.team?.members || []).filter((m) => m.selected)) {
     const row = el("div", "acc with-aq"), dot = el("span", "dot tick fixed");
     if (m.on) dot.append(svg(CHECK, 10, 2.2));
-    const state = m.lapsed ? t("Sign-in required") : m.seatTier === "team_tier_1" ? "Premium" : m.seatTier === "unassigned" ? t("Unassigned") : m.seatTier ? t("Other seat tier") : t("Not verified");
+    const state = m.lapsed ? t("Sign-in required") : m.seatTier === "team_tier_1" ? "Premium" : m.seatTier === "unassigned" ? t("Unassigned") : m.seatTier === "absent" ? t("Outside organization") : m.seatTier ? t("Other seat tier") : t("Not verified");
     row.append(dot, el("span", "rename", m.user), el("span", "grow"), el("span", "plan", state));
     const q = { windows: m.windows || (m.limits || []).map((w) => ({ name: w.kind === "five_hour" ? "5 hours" : w.kind === "seven_day" ? "7 days" : w.kind === "seven_day_overage_included" ? "7 days · Fable" : w.kind,
       used: w.used * 100, resetsAt: w.resetsAt ? new Date(w.resetsAt * 1000).toISOString() : null })) };
@@ -184,6 +184,7 @@ async function openClaudeTeam(organizationId = "") {
   key.autocomplete = "off"; org.spellcheck = false; threshold.inputMode = "decimal";
   org.readOnly = !!organizationId;
   const [enableRow, enabled] = tick(t("Enable seat rotation"), false);
+  const [keepRow, keepBatch] = tick(t("Keep current Premium assignments"), false);
   const fields = el("div", "team-fields"), chooseOrg = el("div", "team-organizations");
   let routing = "";
   const routeBox = el("div", "team-routing");
@@ -194,7 +195,8 @@ async function openClaudeTeam(organizationId = "") {
   };
   fields.append(...field(t("Name"), name), ...field(t("Organization UUID"), org),
     ...field(t("Administrator sessionKey"), key, t("Stored on this computer only; leave blank to keep the saved credential")),
-    ...field(t("Rotate at usage (%)"), threshold), ...field(t("Routing"), routeBox), ...field(t("Status"), enableRow));
+    ...field(t("Rotate at usage (%)"), threshold), ...field(t("Routing"), routeBox),
+    ...field(t("Premium batch"), keepRow, t("Reuse these accounts after usage resets. Member replacement remains manual.")), ...field(t("Status"), enableRow));
   const pool = el("div", "team-pool"), bar = el("div", "bar");
   const cancel = el("button", "text", t("Cancel")), save = el("button", "text primary", t("Save")), refresh = el("button", "text", t("Refresh"));
   cancel.onclick = () => { key.value = ""; closeModal(); };
@@ -227,7 +229,7 @@ async function openClaudeTeam(organizationId = "") {
       const user = el("span", "team-user", m.user); user.title = m.user;
       label.append(box, user);
       const top = el("div", "team-member-head"); top.append(label);
-      const state = m.seatTier === "team_tier_1" ? "Premium" : m.seatTier === "unassigned" ? t("Unassigned") : m.seatTier ? t("Other seat tier") : t("Not verified");
+      const state = m.seatTier === "team_tier_1" ? "Premium" : m.seatTier === "unassigned" ? t("Unassigned") : m.seatTier === "absent" ? t("Outside organization") : m.seatTier ? t("Other seat tier") : t("Not verified");
       top.append(el("span", "team-seat", state)); row.append(top);
       const windows = el("div", "team-windows");
       for (const kind of ["five_hour", "seven_day", "seven_day_overage_included"]) {
@@ -245,7 +247,7 @@ async function openClaudeTeam(organizationId = "") {
       row.append(windows);
       if (m.retryAt) row.append(el("p", "hint team-handoff-cooling", t("Retry assignment after: {time}", {time:date(m.retryAt)})));
       if (m.handoffFailure) row.append(el("p", "hint team-handoff-error", t("Assignment attempt failed") + " · " + m.handoffFailure.phase + (m.handoffFailure.status ? " · HTTP " + m.handoffFailure.status : "") + " · " + m.handoffFailure.message));
-      const states = { signed_out: "Sign in again", cooling: "Cooling down", handoff_cooling:"Assignment cooling down", unknown: "Usage unknown", ready: "Ready", other_seat: "Waiting for Unassigned", unverified: "Not verified" };
+      const states = { signed_out: "Sign in again", cooling: "Cooling down", handoff_cooling:"Assignment cooling down", unknown: "Usage unknown", ready: "Ready", other_seat: "Waiting for Unassigned", unverified: "Not verified", absent:"Outside organization" };
       const foot = el("div", "team-member-foot");
       if (m.windows?.some(w => w.estimated)) foot.append(el("span", "hint", t("Reset-based estimate; not refreshed from Claude")));
       if (states[m.state]) foot.append(el("span", "hint", t(states[m.state])));
@@ -308,6 +310,7 @@ async function openClaudeTeam(organizationId = "") {
       if (initial) {
         name.value = view.config.name || ""; org.value = view.config.organizationId || organizationId;
         threshold.value = view.config.threshold || 100; enabled.checked = !!view.config.enabled;
+        keepBatch.checked = !!view.config.keepPremiumBatch;
         routing = providers?.providers.find((p) => p.teamOrganization === organizationId)?.routing || view.config.routing || ""; drawRouting();
         key.placeholder = view.sessionSet ? t("Saved; leave blank to keep") : "sessionKey";
         selected = new Set(view.config.members || []);
@@ -345,6 +348,7 @@ async function openClaudeTeam(organizationId = "") {
     pending = true; save.disabled = true;
     try {
       view = await api("claude-team/config", { name: name.value.trim(), routing, enabled: enabled.checked, organizationId: org.value.trim(), sessionKey: key.value,
+        keepPremiumBatch: keepBatch.checked,
         threshold: value, members: [...selected].filter((id) => (view.members || []).some((m) => m.accountId === id && m.organizationId.toLowerCase() === org.value.trim().toLowerCase())) });
       key.value = "";
       changed.clear(); selected = new Set(view.config.members || []);

@@ -44,7 +44,7 @@ func ObserveClaudeTeamModel(user, model string) bool {
 	// pass. Do not lose it just because reconciliation is already running.
 	paused, hasPause := t.disk.AutomaticPauses[id]
 	sourceSpent := spent && t.seats[id] == "team_tier_1" && (!hasPause || !paused.Active(now))
-	wake := (sourceSpent || blocked && movable) && !t.requested && !t.movementBlockedLocked(now)
+	wake := (sourceSpent || blocked && movable) && !t.cfg.KeepPremiumBatch && !t.requested && !t.movementBlockedLocked(now)
 	if wake {
 		t.requested = true
 		t.signalLocked()

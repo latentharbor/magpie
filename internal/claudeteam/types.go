@@ -8,6 +8,7 @@ import (
 )
 
 type Config struct {
+	KeepPremiumBatch bool     `json:"keepPremiumBatch,omitempty"`
 	Name           string   `json:"name,omitempty"`
 	Routing        string   `json:"routing,omitempty"`
 	Enabled        bool     `json:"enabled"`

@@ -81,7 +81,8 @@ func ResponseError(method string, res *http.Response) error {
 				}
 			}
 		}
-	case res.StatusCode == http.StatusUnauthorized || kind == "authentication_error":
+	case res.StatusCode == http.StatusUnauthorized || kind == "authentication_error" ||
+		res.StatusCode == http.StatusForbidden && kind == "permission_error" && strings.EqualFold(strings.TrimSpace(envelope.Error.Message), "Invalid authorization"):
 		reason = "administrator authentication rejected; renew the administrator session"
 	case kind == "permission_error":
 		reason = "administrator permission denied; check organization management access"

@@ -41,7 +41,7 @@ Ordinary admission consults neither a quota endpoint nor an administrator API.
 ## Configuration and ownership
 
 `claude-team.json` beside the provider configuration holds `enabled`,
-`organizationId`, `name`, `routing`, the administrator's `sessionKey`, selected
+`organizationId`, `name`, `routing`, optional `keepPremiumBatch`, the administrator's `sessionKey`, selected
 saved account UUIDs in `members`, and `threshold` (default 100). The original
 organization keeps these legacy paths without rewriting its quota journal;
 additional organizations use `claude-teams/{UUID}/{config,state}.json`.
@@ -141,9 +141,17 @@ Standard and other non-Premium seat types remain valid pool members but stay
 parked and are never transfer targets. They do not block other members'
 rotation. After a later snapshot reports Unassigned they become standby
 candidates automatically; their saved credentials and usage survive the change.
-Missing members still fail membership verification rather than being assumed
-Unassigned. The member view distinguishes another seat type from unverified
-membership and never labels either as ready.
+A successful complete member snapshot records saved accounts no longer in the
+organization as `absent`, closes their native switches/admissions, and retains
+their credentials, selected identity and historical quota. Absence is never
+Unassigned and never eligible for a tier PUT. It does not prevent administrator
+credential renewal, provider re-add, or the remaining Premium members serving.
+Failed, unreadable or ambiguous member reads retain the last verified state;
+they never manufacture absence. A later confirmed Premium membership reopens
+that account normally. Both Team views distinguish absence, another seat type,
+and unverified membership. The explicit 403 `permission_error` with message
+`Invalid authorization` means rejected administrator authentication, not a
+confirmed lack of management role; arbitrary permission errors remain separate.
 A controller-owned `teamOff` bit prevents discovery, the agent's current
 login and its stand-in fallback from resurrecting an unassigned member.
 These switches take effect without restarting Magpie or Claude Desktop.
@@ -203,6 +211,17 @@ usable for other models with allowance. Cache TTLs and breakpoints are retained,
 and no prewarming inference is sent. Membership changes do not migrate a healthy
 session's cache to every new account; an unavailable owner uses ordinary guarded
 failover and request retention.
+
+`keepPremiumBatch` keeps the actual selected Premium pool through allowance
+resets without any automatic tier changes. Quota and authentication feedback
+still close unavailable inference candidates; membership discovery, quota
+collection, dynamic pool sizing, affinity and model-scoped limits are unchanged.
+A passed reset automatically restores eligibility using the existing reset
+policy, independently of the seat-movement circuit. Unknown observations do
+not fabricate a reset. Fable exhaustion still leaves other models available.
+An explicit manual rotation retains its existing guarded semantics; otherwise
+member replacement is handled manually by the administrator. This option
+neither registers identities nor purchases, removes or invites members.
 
 Background candidate selection synchronizes parked accounts' native credential
 stores before ranking them, and transfer repeats this local check before

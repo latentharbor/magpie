@@ -185,11 +185,11 @@ func TestClaudeTeamOtherSeatDoesNotBlockRotation(t *testing.T) {
 	}
 }
 
-func TestClaudeTeamMissingMemberStillRejected(t *testing.T) {
+func TestClaudeTeamAmbiguousMembershipStillRejected(t *testing.T) {
 	c := ClaudeTeamConfig{Members: []string{teamID(2)}}
-	for _, seats := range [][]claudeTeamSeat{nil, {{AccountID: teamID(2), SeatTier: ""}}, {{AccountID: teamID(3), SeatTier: "unassigned"}}} {
+	for _, seats := range [][]claudeTeamSeat{{{AccountID: teamID(2), SeatTier: ""}}, {{AccountID: teamID(2), SeatTier: "team_tier_1"}, {AccountID: teamID(2), SeatTier: "unassigned"}}, {{AccountID: "unknown", SeatTier: "team_tier_1"}}} {
 		if err := teamMembersPresent(c, seats); err == nil {
-			t.Fatalf("missing or unverified membership accepted: %v", seats)
+			t.Fatalf("ambiguous membership accepted: %v", seats)
 		}
 	}
 }

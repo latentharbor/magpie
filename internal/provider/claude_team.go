@@ -254,7 +254,7 @@ func (t *claudeTeamController) loadState(c ClaudeTeamConfig) error {
 	// can admit a request. Never infer that a released seat is still assigned.
 	if t.disk.Pending == nil && c.Enabled {
 		for id, tier := range t.disk.Seats {
-			if slices.Contains(c.Members, id) && (tier == "team_tier_1" || tier == "unassigned") {
+			if slices.Contains(c.Members, id) && (tier == "team_tier_1" || tier == "unassigned" || tier == "absent") {
 				t.seats[id] = tier
 			}
 		}
@@ -395,7 +395,7 @@ func (t *claudeTeamController) save(ctx context.Context, c ClaudeTeamConfig) err
 	if pending {
 		// A session can expire between release and verification. Permit
 		// credential renewal, but never rewrite the plan being recovered.
-		if c.Enabled != old.Enabled || c.OrganizationID != old.OrganizationID || c.Threshold != old.Threshold || !slices.Equal(c.Members, old.Members) {
+		if c.Enabled != old.Enabled || c.OrganizationID != old.OrganizationID || c.Threshold != old.Threshold || c.KeepPremiumBatch != old.KeepPremiumBatch || !slices.Equal(c.Members, old.Members) {
 			return errors.New("reconcile the unfinished Claude Team transfer before changing its pool")
 		}
 		if _, err := newClaudeTeamAdmin(c).Members(ctx); err != nil {
@@ -486,12 +486,15 @@ func (t *claudeTeamController) save(ctx context.Context, c ClaudeTeamConfig) err
 }
 
 func teamMembersPresent(c ClaudeTeamConfig, seats []claudeTeamSeat) error {
-	for _, id := range c.Members {
-		if !slices.ContainsFunc(seats, func(s claudeTeamSeat) bool {
-			return s.AccountID == id && s.SeatTier != ""
-		}) {
-			return errors.New("a selected Claude Team member is missing from the organization")
+	// Only a successful complete snapshot proves absence. Keep that saved
+	// identity and history parked, rather than making it Unassigned or blocking
+	// the administrator's credential renewal and the remaining Premium pool.
+	seen := map[string]bool{}
+	for _, seat := range seats {
+		if !claudeTeamUUID.MatchString(seat.AccountID) || seat.SeatTier == "" || seen[seat.AccountID] {
+			return errors.New("Claude Team membership is unreadable or ambiguous; last assignments were kept")
 		}
+		seen[seat.AccountID] = true
 	}
 	return nil
 }
@@ -578,6 +581,10 @@ func (t *claudeTeamController) synchronizeSeats(c ClaudeTeamConfig, seats []clau
 	t.seats = map[string]string{}
 	t.disk.Seats = map[string]string{}
 	t.legacyRoutes = nil
+	for _, id := range c.Members {
+		states[id] = false
+		t.seats[id], t.disk.Seats[id] = "absent", "absent"
+	}
 	for _, s := range seats {
 		previous := previousSeats[s.AccountID]
 		t.seats[s.AccountID] = s.SeatTier
@@ -648,6 +655,7 @@ func (t *claudeTeamController) note(user string, ls []ClaudeLimit) {
 		t.disk.Observed[id] = time.Now()
 	}
 	spent := teamSpent(ws, t.cfg.Threshold, time.Now()) || time.Now().Before(t.modelDemandUntil) && claudeteam.SpentForModel(ws, t.cfg.Threshold, time.Now(), t.modelDemand)
+	spent = spent && !t.cfg.KeepPremiumBatch
 	spent = spent && !t.movementBlockedLocked(time.Now())
 	if p, ok := t.disk.AutomaticPauses[id]; ok && p.Active(time.Now()) {
 		spent = false
@@ -1085,6 +1093,9 @@ func (t *claudeTeamController) reconcile(ctx context.Context, manual string) err
 	}
 	// Read newly observed assignments before stale snapshots can move them.
 	t.collectQuotaDue(ctx)
+	if c.KeepPremiumBatch && manual == "" {
+		return nil // use the verified Premium pool through resets; no automatic cloud writes
+	}
 	from, to, err := t.choose(c, seats, manual)
 	if err != nil {
 		return err
@@ -1389,7 +1400,9 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 		}
 		// Membership and eligibility are separate. Other seat tiers stay
 		// parked until an authoritative snapshot reports Unassigned.
-		if m.SeatTier == "" {
+		if m.SeatTier == "absent" {
+			m.State = "absent"
+		} else if m.SeatTier == "" {
 			m.State = "unverified"
 		} else if m.SeatTier != "team_tier_1" && m.SeatTier != "unassigned" {
 			m.State = "other_seat"
@@ -1403,7 +1416,7 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 				m.State = "premium"
 			}
 		}
-		if m.Selected {
+		if m.Selected && m.SeatTier != "absent" {
 			if back, ok := teamBack(m.Limits, c.Threshold, time.Now()); ok && (v.NextReset == nil || back.Before(*v.NextReset)) {
 				v.NextReset = &back
 			}

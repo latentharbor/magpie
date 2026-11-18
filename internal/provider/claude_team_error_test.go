@@ -21,6 +21,7 @@ func TestClaudeTeamAdministrationErrorClassification(t *testing.T) {
 		{"marker alone", "text/html", `/cdn-cgi/challenge-platform/x`, "", "unclassified forbidden", 403},
 		{"authentication", "application/json", `{"error":{"type":"authentication_error","message":"private-token"}}`, "", "administrator authentication rejected", 403},
 		{"permission", "application/json", `{"error":{"type":"permission_error"}}`, "", "administrator permission denied", 403},
+		{"expired web session", "application/json", `{"error":{"type":"permission_error","message":"Invalid authorization"}}`, "", "administrator authentication rejected", 403},
 		{"unauthorized", "text/plain", "private-token", "", "administrator authentication rejected", 401},
 		{"unknown JSON", "application/json", `{"error":{"type":"private-token","message":"private-token"}}`, "", "unclassified forbidden", 403},
 		{"admin throttle", "application/json", `{}`, "", "administration rate limited", 429},
