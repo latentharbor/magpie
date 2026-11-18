@@ -3,6 +3,11 @@ on:
   push:
     branches: [fix-team-fable-20261118]
   workflow_dispatch:
+    inputs:
+      backend_only:
+        description: 'Skip unchanged browser fixtures'
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -64,6 +69,7 @@ jobs:
           fi
           grep -F -- '--- FAIL: TestAssignmentFailureSurvivesConfirmedRollback' "$RUNNER_TEMP/negative-rollback.log"
   ui:
+    if: ${{ !inputs.backend_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:

@@ -3032,7 +3032,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	// a conversation's affinity is to one model: another's cache is its
 	// own, and an agent's side requests (a title, a summary) to a smaller
 	// model leave the conversation where it is
-	scope, mode, rotate := p.ID+"/"+model, p.Affinity, routingOf(p.Routing) == provider.Rotate
+	scope, mode, rotate := p.ID+"/"+model, teamSessionMode(p, r.Header), routingOf(p.Routing) == provider.Rotate
 	spread := spreadsSessions(mode, p.Routing)
 	leadScope := scope // where the lead of a subagent is kept
 	if isGroup {
@@ -3452,8 +3452,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		poolRouting, poolGroup = g.Routing, &g
 	}
 	leastHeldIt := aff.Why == "first" && (rotate || spread)
-	reorder := !aff.Kept && aff.Why != "strict" && pin == "" && leadAccount == "" && checkpoint == nil && !leastHeldIt
+	teamOpening := !isGroup && poolRouting == "" && provider.ClaudeTeamOf(p) != "" && aff.Why == "first"
+	reorder := !aff.Kept && aff.Why != "strict" && pin == "" && leadAccount == "" && checkpoint == nil && (!leastHeldIt || teamOpening)
 	cands, pl, unburst := burstSpread(poolRouting, poolGroup, hit != nil && hit.Use != "", reorder, cands, pl)
+	if teamOpening && len(cands) > 0 {
+		teamOpeningAccount(stuck, cands[0])
+	}
 	defer unburst()
 	// of those resting, only the one back soonest is asked (#1799); the
 	// whole list still finds a Codex account to spend a reset on

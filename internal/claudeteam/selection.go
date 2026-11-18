@@ -11,6 +11,7 @@ import (
 type Candidate struct {
 	ID, Tier                      string
 	Lapsed, Unavailable, Reliable bool
+	SourceBlocked                 bool
 	Limits                        []Limit
 	Weight                        Weight
 }
@@ -45,7 +46,7 @@ func ChooseForModel(c Config, members []Candidate, manual string, history []Even
 		if !slices.Contains(c.Members, s.ID) {
 			continue
 		}
-		if s.Tier == "team_tier_1" && (manual != "" && manual == s.ID || manual == "" && (s.Lapsed || Spent(s.Limits, c.Threshold, now) || modelBlocked && SpentForModel(s.Limits, c.Threshold, now, model))) && from == "" {
+		if s.Tier == "team_tier_1" && (manual != "" && manual == s.ID || manual == "" && !s.SourceBlocked && (s.Lapsed || Spent(s.Limits, c.Threshold, now) || modelBlocked && SpentForModel(s.Limits, c.Threshold, now, model))) && from == "" {
 			from = s.ID
 		}
 		_, cooling := CoolingTarget(history, s.ID, now)
@@ -53,7 +54,9 @@ func ChooseForModel(c Config, members []Candidate, manual string, history []Even
 			continue
 		}
 		candidates = append(candidates, s)
-		weights = append(weights, s.Weight)
+		w := s.Weight
+		w.Reliable = s.Reliable
+		weights = append(weights, w)
 	}
 	var standby Candidate
 	if len(candidates) > 0 {
@@ -61,40 +64,14 @@ func ChooseForModel(c Config, members []Candidate, manual string, history []Even
 		if c.Routing == "" {
 			order := Order(weights)
 			at = order[0]
-			for _, i := range order {
-				if candidates[i].Reliable && weights[i].Known {
-					at = i
-					break
-				}
-			}
 		} else {
 			at = routeOrder(c.Routing, "claude-team-"+c.OrganizationID+"/standby", weights)[0]
 		}
 		standby = candidates[at]
 		to = standby.ID
 	}
-	if from == "" && to != "" && manual == "" && c.Routing == "" && standby.Weight.Known && standby.Reliable {
-		recent := slices.ContainsFunc(history, func(e Event) bool { return e.Result == "assigned" && now.Sub(e.At) < 15*time.Minute })
-		if !recent {
-			var latest Weight
-			for _, s := range members {
-				if s.Tier != "team_tier_1" || !slices.Contains(c.Members, s.ID) || s.Lapsed || !QuotaKnown(s.Limits) {
-					continue
-				}
-				active := s.Weight
-				// Renewal rebalance compares expiry, independent of ordinary
-				// routing's utilization bands, exactly as the standby policy.
-				active.Known = true
-				active.Used = 0
-				if Order([]Weight{active, standby.Weight})[0] != 1 || !ExpiryWorthwhile(active, standby.Weight, now) {
-					continue
-				}
-				if from == "" || Order([]Weight{active, latest})[0] == 1 {
-					from, latest = s.ID, active
-				}
-			}
-		}
-	}
+	// Expiry decides which standby takes an actually needed slot. Reordering
+	// healthy Premium inference must not consume a cloud seat movement.
 	if manual != "" && from == "" {
 		return "", "", errors.New("the chosen source has no Premium seat in this pool")
 	}

@@ -9,6 +9,9 @@ import (
 var errFailureJournal = errors.New("Claude Team failure journal could not be saved; automatic writes stopped")
 
 func targetFailure(e Event) bool {
+	if e.Failure != nil && e.Failure.Kind == "seat_movement_limit" {
+		return false
+	}
 	return e.Result == "rolled_back" && e.Failure == nil || e.Failure != nil && (e.Failure.Phase == "assign" || e.Failure.Phase == "confirm_assignment" || e.Failure.Phase == "recovery")
 }
 
@@ -23,6 +26,9 @@ func (e *TransferFailure) Error() string {
 	return fmt.Sprintf("Claude Team handoff %s: %s (%s)", e.Outcome, e.Failure.Message, e.Failure.Phase)
 }
 func (e *TransferFailure) TryAnother() bool {
+	if e.Failure.Kind == "seat_movement_limit" {
+		return false
+	}
 	return (e.Outcome == "rolled_back" || e.Outcome == "unchanged") &&
 		(e.Failure.Phase == "assign" || e.Failure.Phase == "confirm_assignment") &&
 		(e.Failure.Status == 0 || e.Failure.Status == 400 || e.Failure.Status == 404 || e.Failure.Status == 409 || e.Failure.Status == 422)
@@ -33,6 +39,7 @@ func safeFailure(phase string, err error) *Failure {
 	if errors.As(err, &remote) {
 		f.Status = remote.Status
 		f.Message = remote.Error()
+		f.Kind, f.RetryDate = remote.Kind, remote.RetryDate
 	}
 	return f
 }

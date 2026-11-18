@@ -23,12 +23,15 @@ func ObserveClaudeTeamModel(user, model string) bool {
 	spent := claudeteam.SpentForModel(t.disk.Limits[id], t.cfg.Threshold, now, model)
 	// A provider alias can name a parked member. With no initial candidate,
 	// wake on the verified Premium pool rather than that alias's own window.
-	hasPremium, blocked := false, true
+	hasPremium, blocked, movable := false, true, false
 	for _, account := range t.cfg.Members {
 		if t.seats[account] != "team_tier_1" {
 			continue
 		}
 		hasPremium = true
+		if pause, ok := t.disk.AutomaticPauses[account]; !ok || !pause.Active(now) {
+			movable = true
+		}
 		if !claudeteam.SpentForModel(t.disk.Limits[account], t.cfg.Threshold, now, model) {
 			blocked = false
 		}
@@ -39,7 +42,9 @@ func ObserveClaudeTeamModel(user, model string) bool {
 	}
 	// A demand arriving after this pass chose its source belongs to the next
 	// pass. Do not lose it just because reconciliation is already running.
-	wake := (spent || blocked) && !t.requested
+	paused, hasPause := t.disk.AutomaticPauses[id]
+	sourceSpent := spent && t.seats[id] == "team_tier_1" && (!hasPause || !paused.Active(now))
+	wake := (sourceSpent || blocked && movable) && !t.requested && !t.movementBlockedLocked(now)
 	if wake {
 		t.requested = true
 		t.signalLocked()

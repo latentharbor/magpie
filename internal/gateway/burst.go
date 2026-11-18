@@ -103,6 +103,10 @@ func burstAlike(routing string, g *provider.Group, sameMember bool, cs []candida
 		}
 	}
 	switch routingOf(routing) {
+	case "":
+		// Smart balances only this Team's ready, same-model Premium pool.
+		// Equal loads retain expiry order; a kept conversation never reorders.
+		return teamPoolAlike(c0, ci) && a.Known == b.Known && a.Used < 100 && b.Used < 100
 	case provider.Rotate:
 		return true
 	case provider.Pace:

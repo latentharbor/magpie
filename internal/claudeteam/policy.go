@@ -54,6 +54,12 @@ func Order(seats []Weight) []int {
 			}
 			return 1
 		}
+		if a.Reliable != b.Reliable {
+			if a.Reliable {
+				return -1
+			}
+			return 1
+		}
 		return 0
 	})
 	return order

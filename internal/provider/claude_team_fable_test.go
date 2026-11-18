@@ -69,16 +69,26 @@ func TestClaudeTeamFailedTargetCoolsAcrossRestartAndHistoryEviction(t *testing.T
 		}
 		tm.note(tm.userOf(teamID(n)), teamFableLimits(five, .2))
 	}
-	if err := tm.reconcile(context.Background(), ""); err != nil {
-		t.Fatal(err)
+	if err := tm.reconcile(context.Background(), ""); err == nil {
+		t.Fatal("rollback was swallowed")
 	}
-	want := []string{teamID(2) + ":unassigned", teamID(3) + ":team_tier_1", teamID(2) + ":team_tier_1", teamID(2) + ":unassigned", teamID(4) + ":team_tier_1"}
+	want := []string{teamID(2) + ":unassigned", teamID(3) + ":team_tier_1", teamID(2) + ":team_tier_1"}
 	if !slices.Equal(f.writes, want) {
 		t.Fatalf("did not recover and try the next target: %v", f.writes)
 	}
 	failed := tm.disk.History[0]
 	if failed.Result != "rolled_back" || failed.Failure == nil || failed.Failure.Status != 400 || failed.Failure.Phase != "assign" || !failed.RetryAt.After(time.Now()) {
 		t.Fatalf("missing safe failure/cooldown: %+v", failed)
+	}
+	for range 50 {
+		tm.note("u2@example.com · Team", teamFableLimits(1, .2))
+		ObserveClaudeTeamModel("u2@example.com · Team", "claude-opus-5-5")
+		if err := tm.reconcile(context.Background(), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !slices.Equal(f.writes, want) {
+		t.Fatalf("repeated refusals revoked/re-upgraded the same source again: %v", f.writes)
 	}
 	for range 31 {
 		tm.disk.History = append(tm.disk.History, ClaudeTeamEvent{At: time.Now(), To: teamID(4), Result: "assigned"})
@@ -105,6 +115,9 @@ func TestClaudeTeamFailedTargetCoolsAcrossRestartAndHistoryEviction(t *testing.T
 	if !found {
 		t.Fatal("failed member disappeared")
 	}
+	if p, ok := next.disk.AutomaticPauses[teamID(2)]; !ok || !p.Active(time.Now()) {
+		t.Fatal("source circuit lost across restart/history eviction")
+	}
 	b, _ := json.Marshal(view)
 	if strings.Contains(string(b), "fixture-private-body") || strings.Contains(string(b), c.SessionKey) {
 		t.Fatal("vendor body or session key leaked")
@@ -114,6 +127,13 @@ func TestClaudeTeamFailedTargetCoolsAcrossRestartAndHistoryEviction(t *testing.T
 	}
 	if !slices.Equal(f.writes, want) {
 		t.Fatal("cooled target was retried")
+	}
+	if err := tm.reconcile(context.Background(), teamID(2)); err != nil {
+		t.Fatal(err)
+	}
+	want = append(want, teamID(2)+":unassigned", teamID(4)+":team_tier_1")
+	if !slices.Equal(f.writes, want) {
+		t.Fatalf("explicit retry did not use the next eligible standby: %v", f.writes)
 	}
 }
 

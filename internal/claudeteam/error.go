@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/yetone/magpie/internal/lazyre"
 )
@@ -14,8 +15,10 @@ var claudeTeamRayID = lazyre.New(`^[0-9a-fA-F]{16}-[A-Z]{3}$`)
 var claudeTeamRequestID = lazyre.New(`^(req_[a-zA-Z0-9]{8,64}|[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})$`)
 
 type AdminError struct {
-	Status  int
-	message string
+	Status    int
+	message   string
+	Kind      string
+	RetryDate string
 }
 
 func (e *AdminError) Error() string { return e.message }
@@ -41,7 +44,8 @@ func ResponseError(method string, res *http.Response) error {
 	var envelope struct {
 		Type  string `json:"type"`
 		Error struct {
-			Type string `json:"type"`
+			Type    string `json:"type"`
+			Message string `json:"message"`
 		} `json:"error"`
 	}
 	kind := ""
@@ -60,9 +64,23 @@ func ResponseError(method string, res *http.Response) error {
 		(format == "HTML" && strings.Contains(lower, "/cdn-cgi/challenge-platform/") &&
 			(strings.Contains(lower, "<title>just a moment") || strings.Contains(lower, "<title>attention required")))
 	reason := "request rejected; cause is unclassified"
+	code, retryDate := "", ""
 	switch {
 	case challenge:
 		reason = "Cloudflare browser verification required; seat rotation is paused and existing inference accounts are retained. A new sessionKey alone may not resolve this challenge"
+	case res.StatusCode == http.StatusForbidden && strings.Contains(strings.ToLower(envelope.Error.Message), "weekly limit on moving this seat type between people"):
+		code = "seat_movement_limit"
+		reason = "organization weekly seat-movement limit reached; inference allowance does not grant another seat move. Existing assignments and inference credentials are retained"
+		const prefix = "You can try again after "
+		if at := strings.Index(envelope.Error.Message, prefix); at >= 0 {
+			tail := envelope.Error.Message[at+len(prefix):]
+			if len(tail) >= 16 && tail[10:16] == " (UTC)" {
+				if date, err := time.Parse("2006-01-02", tail[:10]); err == nil && date.Format("2006-01-02") == tail[:10] {
+					retryDate = tail[:10]
+					reason += "; retry after " + retryDate + " (UTC)"
+				}
+			}
+		}
 	case res.StatusCode == http.StatusUnauthorized || kind == "authentication_error":
 		reason = "administrator authentication rejected; renew the administrator session"
 	case kind == "permission_error":
@@ -91,5 +109,5 @@ func ResponseError(method string, res *http.Response) error {
 	if id := res.Header.Get("cf-ray"); claudeTeamRayID.MatchString(id) {
 		detail += ", cf-ray=" + id
 	}
-	return &AdminError{Status: res.StatusCode, message: fmt.Sprintf("Claude Team %s (%s)", reason, detail)}
+	return &AdminError{Status: res.StatusCode, message: fmt.Sprintf("Claude Team %s (%s)", reason, detail), Kind: code, RetryDate: retryDate}
 }

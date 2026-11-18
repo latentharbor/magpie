@@ -47,7 +47,7 @@ func TestClaudeTeamSmartSpendsExpiringAllowanceFirst(t *testing.T) {
 	}
 }
 
-func TestClaudeTeamSmartRebalancesExpiringWeekWithoutChurn(t *testing.T) {
+func TestClaudeTeamSmartExpiryDoesNotMoveHealthySeats(t *testing.T) {
 	tm, _, c := teamFixture(t)
 	now := time.Now().Truncate(time.Hour).Add(10 * time.Minute)
 	set := func(id string, week float64, reset time.Time) {
@@ -59,8 +59,8 @@ func TestClaudeTeamSmartRebalancesExpiringWeekWithoutChurn(t *testing.T) {
 	set(teamID(4), .1, now.Add(48*time.Hour))
 	seats := []claudeTeamSeat{{AccountID: teamID(2), SeatTier: "team_tier_1"}, {AccountID: teamID(3), SeatTier: "unassigned"}, {AccountID: teamID(4), SeatTier: "unassigned"}}
 	from, to, err := tm.choose(c, seats, "")
-	if err != nil || from != teamID(2) || to != teamID(3) {
-		t.Fatalf("did not spend expiring week: %s -> %s: %v", from, to, err)
+	if err != nil || from != "" || to != teamID(3) {
+		t.Fatalf("healthy quota ordering moved a paid seat: %s -> %s: %v", from, to, err)
 	}
 	// Once assigned, the earlier expiry stays assigned: no oscillation.
 	seats[0].SeatTier, seats[1].SeatTier = "unassigned", "team_tier_1"
@@ -79,6 +79,7 @@ func TestClaudeTeamSmartRebalancesExpiringWeekWithoutChurn(t *testing.T) {
 	c.Threshold = 95
 	seats[0].SeatTier, seats[1].SeatTier = "team_tier_1", "unassigned"
 	set(teamID(2), .1, now.Add(72*time.Hour))
+	tm.disk.Limits[teamID(2)][0].Used = 1
 	set(teamID(4), .1, now.Add(48*time.Hour))
 	_, to, err = tm.choose(c, seats, "")
 	if err != nil || to != teamID(4) {
@@ -86,6 +87,7 @@ func TestClaudeTeamSmartRebalancesExpiringWeekWithoutChurn(t *testing.T) {
 	}
 	// Explicit in-order policy never starts voluntary expiry rebalancing.
 	c.Routing = "order"
+	tm.disk.Limits[teamID(2)][0].Used = .1
 	from, _, err = tm.choose(c, seats, "")
 	if err != nil || from != "" {
 		t.Fatalf("overrode explicit policy: %s %v", from, err)
@@ -127,16 +129,16 @@ func TestClaudeTeamSmartKeepsOtherPremiumSeats(t *testing.T) {
 	}
 	seats := []claudeTeamSeat{{AccountID: teamID(2), SeatTier: "team_tier_1"}, {AccountID: teamID(3), SeatTier: "unassigned"}, {AccountID: teamID(4), SeatTier: "team_tier_1"}, {AccountID: teamID(9), SeatTier: "team_tier_1"}}
 	from, to, err := tm.choose(c, seats, "")
-	if err != nil || from != teamID(4) || to != teamID(3) {
-		t.Fatalf("wrong Premium displaced: %s -> %s %v", from, to, err)
+	if err != nil || from != "" || to != teamID(3) {
+		t.Fatalf("healthy Premium displaced: %s -> %s %v", from, to, err)
 	}
 	// With the same weekly hour, 5h expiry decides; equal hours retain seats.
 	tm.disk.Limits[teamID(3)][1].ResetsAt = tm.disk.Limits[teamID(2)][1].ResetsAt
 	tm.disk.Limits[teamID(4)][1].ResetsAt = tm.disk.Limits[teamID(2)][1].ResetsAt
 	tm.disk.Limits[teamID(3)][0].ResetsAt = now.Add(time.Hour).Unix()
 	from, to, err = tm.choose(c, seats, "")
-	if err != nil || from != teamID(2) || to != teamID(3) {
-		t.Fatalf("ignored 5h expiry: %s -> %s %v", from, to, err)
+	if err != nil || from != "" || to != teamID(3) {
+		t.Fatalf("5h ordering moved a healthy seat: %s -> %s %v", from, to, err)
 	}
 	tm.disk.Limits[teamID(3)][0].ResetsAt = tm.disk.Limits[teamID(2)][0].ResetsAt + 60
 	from, _, err = tm.choose(c, seats, "")
@@ -145,7 +147,7 @@ func TestClaudeTeamSmartKeepsOtherPremiumSeats(t *testing.T) {
 	}
 }
 
-func TestClaudeTeamSmartExpiryTransferDrainsBeforeAdminWrite(t *testing.T) {
+func TestClaudeTeamSmartExhaustedTransferDrainsBeforeAdminWrite(t *testing.T) {
 	tm, f, _ := teamFixture(t)
 	oldUsage := UsageClaudeVia(func(context.Context, string) (string, error) { return "", errors.New("offline quota capture fixture") })
 	t.Cleanup(func() { UsageClaudeVia(oldUsage) })
@@ -154,6 +156,7 @@ func TestClaudeTeamSmartExpiryTransferDrainsBeforeAdminWrite(t *testing.T) {
 		tm.disk.Observed[teamID(n)] = time.Now()
 		tm.disk.Limits[teamID(n)] = []ClaudeLimit{{Kind: "five_hour", Used: .1, ResetsAt: now.Add(4 * time.Hour).Unix()}, {Kind: "seven_day", Used: .1, ResetsAt: now.Add(week).Unix()}}
 	}
+	tm.disk.Limits[teamID(4)][0].Used = 1
 	// The complete observations above satisfy the initial join captures.
 	tm.quotaDue = map[string]bool{}
 	release, ok := tm.track("u4@example.com · Team")
@@ -202,7 +205,7 @@ func TestClaudeTeamSmartExpiryTransferDrainsBeforeAdminWrite(t *testing.T) {
 	if len(f.writes) != 2 || f.writes[0] != teamID(4)+":unassigned" || f.writes[1] != teamID(3)+":team_tier_1" {
 		t.Fatalf("wrong expiry transfer: %v", f.writes)
 	}
-	if h := tm.disk.History[len(tm.disk.History)-1]; h.Reason != "expiry" || len(h.FromLimits) != 2 || len(h.ToLimits) != 2 {
+	if h := tm.disk.History[len(tm.disk.History)-1]; h.Reason != "exhausted" || len(h.FromLimits) != 2 || len(h.ToLimits) != 2 {
 		t.Fatalf("missing decision evidence: %+v", h)
 	}
 }
