@@ -142,7 +142,7 @@ func TestAssignmentFailureJournalErrorStopsFurtherWrites(t *testing.T) {
 
 type delayedAssignmentAdmin struct {
 	*memoryAdmin
-	previous []Seat
+	previous  []Seat
 	remaining int
 }
 
@@ -164,7 +164,7 @@ func (a *delayedAssignmentAdmin) Members(ctx context.Context) ([]Seat, error) {
 
 func TestAssignmentConfirmationAllowsDelayedMemberSnapshot(t *testing.T) {
 	tx, admin, p, _ := transactionFixture()
-	tx.Admin = &delayedAssignmentAdmin{memoryAdmin:admin}
+	tx.Admin = &delayedAssignmentAdmin{memoryAdmin: admin}
 	if err := tx.Transfer(context.Background(), admin.seats, p); err != nil {
 		t.Fatalf("committed assignment rolled back before eventual member visibility: %v", err)
 	}
