@@ -52,6 +52,17 @@ jobs:
             cat "$RUNNER_TEMP/negative-cooldown.log"; exit 1
           fi
           grep -F -- '--- FAIL: TestRepeatedRolledBackTargetIsSkippedUntilCooldownExpires' "$RUNNER_TEMP/negative-cooldown.log"
+          cp "$RUNNER_TEMP/selection.go" internal/claudeteam/selection.go
+          cp internal/claudeteam/transaction.go "$RUNNER_TEMP/transaction.go"
+          trap 'cp "$RUNNER_TEMP/transaction.go" internal/claudeteam/transaction.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/claudeteam/transaction.go');s=p.read_text();old='return &TransferFailure{Outcome: outcome, Failure: *p.Failure}';assert s.count(old)==1;p.write_text(s.replace(old,'return nil'))
+          PY
+          if go test -tags nogui ./internal/claudeteam -run '^TestAssignmentFailureSurvivesConfirmedRollback$' > "$RUNNER_TEMP/negative-rollback.log" 2>&1; then
+            cat "$RUNNER_TEMP/negative-rollback.log"; exit 1
+          fi
+          grep -F -- '--- FAIL: TestAssignmentFailureSurvivesConfirmedRollback' "$RUNNER_TEMP/negative-rollback.log"
   ui:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

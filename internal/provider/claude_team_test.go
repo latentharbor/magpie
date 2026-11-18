@@ -44,7 +44,7 @@ func (f *fakeTeamAdmin) SetTier(_ context.Context, id, tier string) error {
 	defer f.mu.Unlock()
 	f.writes = append(f.writes, id+":"+tier)
 	if f.failTarget && id == teamID(3) && tier == "team_tier_1" {
-		return claudeteam.ResponseError("PUT",&http.Response{StatusCode:400,Header:http.Header{"Content-Type":{"application/json"}},Body:io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"fixture-private-body"}}`))})
+		return claudeteam.ResponseError("PUT", &http.Response{StatusCode: 400, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"fixture-private-body"}}`))})
 	}
 	for i := range f.seats {
 		if f.seats[i].AccountID == id {

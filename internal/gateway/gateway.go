@@ -3075,7 +3075,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		}
 		cands, pl = s.planPaused(p, model, from, pausedIn)
 		if len(cands) == 0 && p.Account != nil && p.Account.Agent == "claude" && provider.ClaudeTeamManaged(p.Account.User) {
-			if p.Affinity!="strict"&&strings.TrimSpace(r.Header.Get(AccountHeader))=="" {provider.ObserveClaudeTeamModel(p.Account.User,model)}
+			if p.Affinity != "strict" && strings.TrimSpace(r.Header.Get(AccountHeader)) == "" {
+				provider.ObserveClaudeTeamModel(p.Account.User, model)
+			}
 			waitTeam(p.Account.User)
 			if fresh, m, ready := provider.Resolve(asked); ready {
 				p, model = fresh, m
@@ -3271,7 +3273,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	}
 	if len(cands) == 0 {
 		if p.Account != nil && p.Account.Agent == "claude" && provider.ClaudeTeamManaged(p.Account.User) {
-			if at, ok := provider.ClaudeTeamUserModelReset(p.Account.User,model); ok {
+			if at, ok := provider.ClaudeTeamUserModelReset(p.Account.User, model); ok {
 				call.Status, call.Error = 429, teamResetError(w, from, at)
 				turnedAway()
 				return
@@ -3778,7 +3780,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// agent has the headers of already is held, to be told in it
 		pass := c.p.PassesErrors()
 		teamAccount := c.p.Account != nil && c.p.Account.Agent == "claude" && provider.ClaudeTeamManaged(c.p.Account.User)
-		if teamAccount&&pin==""&&aff.Why!="strict"&&checkpoint==nil&&!sealedTask {provider.ObserveClaudeTeamModel(c.p.Account.User,c.model)}
+		if teamAccount && pin == "" && aff.Why != "strict" && checkpoint == nil && !sealedTask {
+			provider.ObserveClaudeTeamModel(c.p.Account.User, c.model)
+		}
 		hw := newHoldWriter(w, kept.sent || !pass && (teamAccount || !last || again < max(lastRetries, rateRetries) || other != nil || autoPicks(c) && repicked < 2 ||
 			patience > 0 && rounds < replanRounds && (waitFrom.IsZero() || time.Since(waitFrom) < patience) || wantWhole))
 		// a compaction's summary is held to its end, for a cut or an
@@ -5107,9 +5111,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			provider.RecheckClaudeTeamQuota(r.Context(), c.p.Account.User)
 			stopAlive()
 		}
-		if teamRetry&&hw.code()==429 {provider.ObserveClaudeTeamModel(c.p.Account.User,c.model)}
+		if teamRetry && hw.code() == 429 {
+			provider.ObserveClaudeTeamModel(c.p.Account.User, c.model)
+		}
 		if teamRetry &&
-			(failure(hw.code(), hw.errBody()) == failQuota || hw.code() == 429 && provider.ClaudeTeamModelExhausted(c.p.Account.User,c.model) ||
+			(failure(hw.code(), hw.errBody()) == failQuota || hw.code() == 429 && provider.ClaudeTeamModelExhausted(c.p.Account.User, c.model) ||
 				provider.ClaudeSignInRequired(call.Error) || strings.Contains(call.Error, "Claude Team seat rotation in progress")) {
 			stopAlive := hw.keepQueued()
 			fresh := s.teamSuccessors(r, from, c, cands)
@@ -5118,7 +5124,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 				cands = append(cands, fresh...)
 				last = false
 			} else if last {
-				if at, known := provider.ClaudeTeamUserModelReset(c.p.Account.User,c.model); known {
+				if at, known := provider.ClaudeTeamUserModelReset(c.p.Account.User, c.model); known {
 					hw.held.Reset()
 					hw.status, hw.failure, hw.stream, hw.whole = 0, 0, false, false
 					call.Status, call.Error = 429, teamResetError(hw, from, at)
@@ -5321,7 +5327,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			}
 		}
 		retryHeader := hw.header
-		if teamRetry && hw.code() == 429 && !provider.ClaudeTeamModelExhausted(c.p.Account.User,c.model) {
+		if teamRetry && hw.code() == 429 && !provider.ClaudeTeamModelExhausted(c.p.Account.User, c.model) {
 			retryHeader = claudeTeamRateHeaders(retryHeader)
 		}
 		if wait, ok := passing(hw.code(), retryHeader, hw.errBody(), again); ok && !protected && !sameRefusal && !hw.turnedAway && hw.failed() && (waitFrom.IsZero() || teamRetry) && !kept.tooQuiet(wait) && !kept.outlives(wait) {

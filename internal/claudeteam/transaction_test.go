@@ -17,7 +17,9 @@ type memoryAdmin struct {
 func (a *memoryAdmin) Members(context.Context) ([]Seat, error) { return slices.Clone(a.seats), nil }
 func (a *memoryAdmin) SetTier(_ context.Context, id, tier string) error {
 	a.writes = append(a.writes, id+":"+tier)
-	if id==a.reject&&tier=="team_tier_1" {return &AdminError{Status:400,message:"Claude Team seat update rejected (HTTP 400, seat update, response=JSON)"}}
+	if id == a.reject && tier == "team_tier_1" {
+		return &AdminError{Status: 400, message: "Claude Team seat update rejected (HTTP 400, seat update, response=JSON)"}
+	}
 	for i := range a.seats {
 		if a.seats[i].AccountID == id {
 			a.seats[i].SeatTier = tier
@@ -93,7 +95,9 @@ func TestRecoveryRestoresOnlyAProvenFreeSeat(t *testing.T) {
 	tx, a, p, steps := transactionFixture()
 	a.seats[0].SeatTier = "unassigned"
 	var failure *TransferFailure
-	if err:=tx.Recover(context.Background(),p);!errors.As(err,&failure)||failure.Outcome!="rolled_back"{t.Fatalf("rollback reported as a successful handoff: %v",err)}
+	if err := tx.Recover(context.Background(), p); !errors.As(err, &failure) || failure.Outcome != "rolled_back" {
+		t.Fatalf("rollback reported as a successful handoff: %v", err)
+	}
 	if !slices.Equal(a.writes, []string{"a:team_tier_1"}) || !slices.Equal(*steps, []string{"rolled_back"}) {
 		t.Fatal(a.writes, *steps)
 	}

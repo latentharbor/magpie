@@ -28,24 +28,28 @@ func Spent(ws []Limit, threshold float64, now time.Time) bool {
 }
 
 func Choose(c Config, members []Candidate, manual string, history []Event, now time.Time) (string, string, error) {
-	return ChooseForModel(c,members,manual,history,now,"")
+	return ChooseForModel(c, members, manual, history, now, "")
 }
 
 func ChooseForModel(c Config, members []Candidate, manual string, history []Event, now time.Time, model string) (string, string, error) {
 	from, to := "", ""
-	modelBlocked:=model!=""
-	for _,s:=range members {if s.Tier=="team_tier_1"&&slices.Contains(c.Members,s.ID)&&!s.Lapsed&&!SpentForModel(s.Limits,c.Threshold,now,model){modelBlocked=false}}
+	modelBlocked := model != ""
+	for _, s := range members {
+		if s.Tier == "team_tier_1" && slices.Contains(c.Members, s.ID) && !s.Lapsed && !SpentForModel(s.Limits, c.Threshold, now, model) {
+			modelBlocked = false
+		}
+	}
 	var candidates []Candidate
 	var weights []Weight
 	for _, s := range members {
 		if !slices.Contains(c.Members, s.ID) {
 			continue
 		}
-		if s.Tier == "team_tier_1" && (manual != "" && manual == s.ID || manual == "" && (s.Lapsed || Spent(s.Limits, c.Threshold, now) || modelBlocked&&SpentForModel(s.Limits,c.Threshold,now,model))) && from == "" {
+		if s.Tier == "team_tier_1" && (manual != "" && manual == s.ID || manual == "" && (s.Lapsed || Spent(s.Limits, c.Threshold, now) || modelBlocked && SpentForModel(s.Limits, c.Threshold, now, model))) && from == "" {
 			from = s.ID
 		}
-		_,cooling:=CoolingTarget(history,s.ID,now)
-		if s.Tier != "unassigned" || s.Unavailable || s.Lapsed || cooling || SpentForModel(s.Limits, c.Threshold, now,model) {
+		_, cooling := CoolingTarget(history, s.ID, now)
+		if s.Tier != "unassigned" || s.Unavailable || s.Lapsed || cooling || SpentForModel(s.Limits, c.Threshold, now, model) {
 			continue
 		}
 		candidates = append(candidates, s)

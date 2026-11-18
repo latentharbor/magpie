@@ -143,8 +143,8 @@ function drawTeamAccounts(list, p) {
     // The ordinary account card puts scoped windows in a tooltip. The Team
     // pool needs Fable visible alongside its global windows for handoffs.
     const fable = q.windows.find(w => w.name === "7 days · Fable");
-    if (fable) quota.append(...accountQuota({[m.user]:{windows:[fable]}}, m.user).children);
-    else quota.append(el("span", "aq-asof", t("7 days · Fable") + " · " + t("Usage unknown")));
+    if (fable && q.windows.indexOf(fable) >= 2) quota.append(...accountQuota({[m.user]:{windows:[fable]}}, m.user).children);
+    else if (!fable) quota.append(el("span", "aq-asof", t("7 days · Fable") + " · " + t("Usage unknown")));
     if(m.retryAt)quota.append(el("span","aq-asof",t("Retry assignment after: {time}",{time:new Date(m.retryAt).toLocaleString(intlLang())})));
     if(m.handoffFailure)quota.append(el("span","aq-asof",t("Assignment attempt failed")+" · "+m.handoffFailure.phase+(m.handoffFailure.status?" · HTTP "+m.handoffFailure.status:"")+" · "+m.handoffFailure.message));
 	if (q.windows.some(w => w.estimated)) {
