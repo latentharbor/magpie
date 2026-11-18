@@ -82,8 +82,14 @@ recovery plans and members never cross organizations. A corrupt additional
 configuration is quarantined rather than returned to standalone Claude routing.
 `NoteClaudeLimits` records actual Claude Code
 5-hour and weekly usage and reset timestamps. Global windows reaching the
-configured threshold trigger reconciliation; model-specific windows remain
-visible but do not revoke a seat serving other models. `OnRenewed` and a
+configured threshold trigger reconciliation. Real, unpinned model demand is
+remembered locally for 15 minutes. If all selected Premium accounts cannot
+serve that model, its scoped window can trigger a handoff to an eligible
+standby; idle scoped exhaustion never by itself moves a healthy seat. Fable
+uses `seven_day_overage_included`, including explicit rejection feedback,
+not a hardcoded 50% cutoff on the shared weekly window. Other models retain
+their own eligibility. Both Team views show the independent Fable window;
+missing observations are unknown, never a fabricated zero. `OnRenewed` and a
 five-minute timer also trigger reconciliation. Healthy requests never cause
 an administrator read. A failed administrator read preserves known switches.
 Confirmed assignments are persisted and restored on restart without requiring
@@ -103,6 +109,18 @@ server header alone proves a challenge. Bounded error-body inspection never
 exposes response text, credentials or arbitrary vendor error types; only validated
 request IDs and edge correlation IDs are included. Diagnostics add no retries or
 assignment writes, and an administrator read failure preserves inference state.
+
+Transfer failures retain their phase, HTTP status and bounded safe diagnostic
+in the private pending journal and final history. A confirmed rollback is a
+failed handoff, not success. Confirming an assignment allows up to 10 seconds
+of bounded member reads; lost PUT responses still require authoritative state
+verification and never cause blind repeats. Failed assignment targets cool
+for 15, then 30, then 60 minutes (capped), across restarts and history eviction.
+Legacy rolled-back targets receive a 15-minute compatibility cooldown. The
+member view shows the safe error and retry time. After confirmed rollback,
+an account-specific rejection may try the next standby, with at most three
+attempts per pass. Authentication, permission, rate-limit and server errors
+stop that pass rather than cycling the pool. Uncertain recovery stops writes.
 
 Each successful member snapshot enables only Premium accounts in the pool.
 Standard and other non-Premium seat types remain valid pool members but stay
@@ -250,7 +268,7 @@ scopes, pinned/strict affinity and sealed conversation ownership still apply.
 An ambiguous 429 on this uncommitted failure path rechecks the failed account's
 saved-login `/usage`, bounded by 20 seconds. Concurrent failures share that
 check, with a 30-second cooldown after either success or failure. Confirmed
-global exhaustion enters the normal background handoff; a failed/partial
+global or requested-model exhaustion enters the normal background handoff; a failed/partial
 check retains the previous snapshot and does not invent exhaustion or move a
 seat. A generic rate limit without confirmed exhaustion keeps the gateway's
 bounded short-term retry policy, honoring `Retry-After` and request/token

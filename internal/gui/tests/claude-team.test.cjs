@@ -81,6 +81,28 @@ function fixture(lang) {
 }
 for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webkit"])) {
   for(const lang of (process.env.LANG_ONLY?[process.env.LANG_ONLY]:["en","zh","zh-TW","ja","de"])) {
+    test(engine+" "+lang+": Fable allowance and failed assignment remain visible in both Team views", {timeout:30000}, async t=>{
+      const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
+      t.after(()=>browser.close());
+      const page=await browser.newPage({viewport:{width:1000,height:850},reducedMotion:"reduce"});
+      const words=strings().I18N[lang]||{}, tr=s=>words[s]||s, f=fixture(lang);
+      const m=f.views.get(org).members[1];
+      m.limits.push({kind:"seven_day_overage_included",used:.44,resetsAt:4102790400});
+      m.state="handoff_cooling";m.retryAt="2100-01-01T00:00:00Z";
+      m.handoffFailure={phase:"assign",status:400,message:"seat update rejected"};
+      await page.route("**/*",f.route);
+      await page.goto("http://magpie.test/?view=providers&edit=claude-team-"+org);
+      const account=page.locator(".team-accts .acc").filter({hasText:m.user});
+      await account.getByText(tr("7 days · Fable"),{exact:true}).waitFor();
+      assert((await account.innerText()).includes("44%"));
+      assert((await account.innerText()).includes("HTTP 400"));
+      await page.locator(".team-accts > button").first().click();
+      const member=page.locator('.team-member[data-account="'+m.accountId+'"]');
+      await member.getByText(tr("Assignment cooling down"),{exact:true}).waitFor();
+      assert.deepEqual(await member.locator("progress").evaluateAll(xs=>xs.map(x=>x.value)),[23,67,44]);
+      assert((await member.innerText()).includes("HTTP 400"));
+      assert.equal(f.posts.length,0,"opening quota/status changed seats");
+    });
     test(engine+" "+lang+": Team refresh reads cloud state from both views", {timeout:30000}, async t=>{
       const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
       t.after(()=>browser.close());

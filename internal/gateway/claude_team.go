@@ -45,6 +45,7 @@ func teamResetError(w http.ResponseWriter, from provider.Protocol, at time.Time)
 // background handoff. The calling key's account/model scope still applies;
 // a pin or strict affinity never enters this path. Visible replies never do.
 func (s *Server) teamSuccessors(r *http.Request, from provider.Protocol, c candidate, tried []candidate) []candidate {
+	provider.ObserveClaudeTeamModel(c.p.Account.User, c.model)
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	provider.AwaitClaudeTeamUser(ctx, c.p.Account.User)
 	cancel()
