@@ -27,6 +27,7 @@ func TestClaudeHTTPTeamFableHandoffRetainsRequest(t *testing.T) {
 			known := mode == "known"
 			f := nativeTeamFixture(t)
 			f.stop()
+			teamFableLocalAllowance(t)
 			conf := settings.Load()
 			conf.ClaudeTransport = "http"
 			if err := settings.Save(conf); err != nil {
@@ -58,6 +59,11 @@ func TestClaudeHTTPTeamFableHandoffRetainsRequest(t *testing.T) {
 					used = 1
 				}
 				provider.NoteClaudeLimits(user, []provider.ClaudeLimit{{Kind: "five_hour", Used: .2, ResetsAt: time.Now().Add(time.Hour).Unix()}, {Kind: "seven_day", Used: .83, ResetsAt: time.Now().Add(3 * 24 * time.Hour).Unix()}, {Kind: "seven_day_overage_included", Used: used, ResetsAt: time.Now().Add(3 * 24 * time.Hour).Unix()}})
+			}
+			// Notes made while the controller is stopped must reach its
+			// journal before startup reloads that journal, as on a real restart.
+			if err := provider.SaveClaudeTeam(context.Background(), provider.ClaudeTeamStatus().Config); err != nil {
+				t.Fatal(err)
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan struct{})
@@ -133,6 +139,7 @@ func TestClaudeHTTPTeamFableHandoffRetainsRequest(t *testing.T) {
 func TestClaudeTeamFableCLIRefusalWithoutWindow(t *testing.T) {
 	f := nativeTeamFixture(t)
 	f.stop()
+	teamFableLocalAllowance(t)
 	marker := filepath.Join(t.TempDir(), "refused")
 	oldUsage := provider.UsageClaudeVia(func(_ context.Context, dir string) (string, error) {
 		if _, err := os.Stat(marker); err != nil {
@@ -152,6 +159,9 @@ func TestClaudeTeamFableCLIRefusalWithoutWindow(t *testing.T) {
 	t.Cleanup(func() { provider.UsageClaudeVia(oldUsage) })
 	for _, user := range []string{"a@example.com", "b@example.com"} {
 		provider.NoteClaudeLimits(user, []provider.ClaudeLimit{{Kind: "seven_day_overage_included", Used: .2, ResetsAt: time.Now().Add(3 * 24 * time.Hour).Unix()}})
+	}
+	if err := provider.SaveClaudeTeam(context.Background(), provider.ClaudeTeamStatus().Config); err != nil {
+		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -191,4 +201,30 @@ done
 	if res.StatusCode != 200 || !strings.Contains(string(body), "native-fable-retained") {
 		t.Fatalf("native body-only Fable refusal was stranded: %d %s", res.StatusCode, body)
 	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("native refusal was never exercised", err)
+	}
+}
+
+// Keep ordinary routing on the current local observations, and disable its
+// unrelated asynchronous quota narrowing. The failure path itself must obtain
+// the fresh model reading even when background allowance reads are disabled.
+func teamFableLocalAllowance(t *testing.T) {
+	t.Helper()
+	narrowing.Wait()
+	old, oldAwait := allowances, awaitAllowance
+	allowances = func(agent string) map[string]provider.Allowance {
+		out := map[string]provider.Allowance{}
+		if agent == "claude" {
+			for _, m := range provider.ClaudeTeamStatus().Members {
+				out[m.User] = provider.ClaudeAllowanceForTest(m.Limits, time.Now())
+			}
+		}
+		return out
+	}
+	awaitAllowance = func(context.Context, string, string) bool { return false }
+	t.Cleanup(func() {
+		narrowing.Wait()
+		allowances, awaitAllowance = old, oldAwait
+	})
 }
