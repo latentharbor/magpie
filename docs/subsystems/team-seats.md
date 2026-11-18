@@ -265,7 +265,8 @@ The final candidate's refusal is held
 too. Visible text, reasoning and tool calls are not replayed. Account/model
 scopes, pinned/strict affinity and sealed conversation ownership still apply.
 
-An ambiguous 429 on this uncommitted failure path rechecks the failed account's
+An ambiguous 429 on this uncommitted failure path, or an explicit quota refusal
+without confirmed exhaustion of the requested model, rechecks the failed account's
 saved-login `/usage`, bounded by 20 seconds. Concurrent failures share that
 check, with a 30-second cooldown after either success or failure. Confirmed
 global or requested-model exhaustion enters the normal background handoff; a failed/partial

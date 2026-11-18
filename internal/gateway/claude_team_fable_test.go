@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -19,8 +21,9 @@ import (
 // Both a pre-known full window (no initial candidate) and new rejection
 // headers must keep the original HTTP request through the same seat handoff.
 func TestClaudeHTTPTeamFableHandoffRetainsRequest(t *testing.T) {
-	for _, known := range []bool{false, true} {
-		t.Run(strconv.FormatBool(known), func(t *testing.T) {
+	for _, mode := range []string{"headers", "known", "usage"} {
+		t.Run(mode, func(t *testing.T) {
+			known := mode == "known"
 			f := nativeTeamFixture(t)
 			f.stop()
 			conf := settings.Load()
@@ -28,7 +31,25 @@ func TestClaudeHTTPTeamFableHandoffRetainsRequest(t *testing.T) {
 			if err := settings.Save(conf); err != nil {
 				t.Fatal(err)
 			}
-			oldUsage := provider.UsageClaudeVia(func(context.Context, string) (string, error) { return "", errors.New("fixture quota unavailable") })
+			var refused atomic.Bool
+			var probes atomic.Int32
+			oldUsage := provider.UsageClaudeVia(func(_ context.Context, dir string) (string, error) {
+				if mode != "usage" || !refused.Load() {
+					return "", errors.New("fixture quota unavailable")
+				}
+				probes.Add(1)
+				auth, err := os.ReadFile(filepath.Join(dir, ".credentials.json"))
+				if err != nil {
+					return "", err
+				}
+				fable := "20"
+				if strings.Contains(string(auth), "tok-a") {
+					fable = "100"
+				}
+				now := time.Now().UTC()
+				week := now.Add(3 * 24 * time.Hour).Format("Jan 2 at 3:04pm") + " (UTC)"
+				return "Current session: 20% used · resets " + now.Add(time.Hour).Format("Jan 2 at 3:04pm") + " (UTC)\nCurrent week (all models): 83% used · resets " + week + "\nCurrent week (Fable): " + fable + "% used · resets " + week, nil
+			})
 			t.Cleanup(func() { provider.UsageClaudeVia(oldUsage) })
 			for _, user := range []string{"a@example.com", "b@example.com"} {
 				used := .2
@@ -59,11 +80,15 @@ func TestClaudeHTTPTeamFableHandoffRetainsRequest(t *testing.T) {
 				body := `{"id":"msg_ok","type":"message","role":"assistant","model":"claude-fable-5-2","content":[{"type":"text","text":"fable-original-answered"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`
 				if r.Header.Get("Authorization") == "Bearer a@example.com" {
 					first.Add(1)
+					refused.Store(true)
 					status = 429
 					h.Set("anthropic-ratelimit-unified-status", "rejected")
 					h.Set("anthropic-ratelimit-unified-representative-claim", "seven_day_overage_included")
 					h.Set("anthropic-ratelimit-unified-7d_oi-utilization", "0.97")
 					h.Set("anthropic-ratelimit-unified-7d_oi-reset", strconv.FormatInt(time.Now().Add(3*24*time.Hour).Unix(), 10))
+					if mode == "usage" {
+						h = http.Header{"Content-Type": {"application/json"}}
+					}
 					body = `{"type":"error","error":{"type":"rate_limit_error","message":"You've reached your Fable limit. Switch models with /model."}}`
 				} else if r.Header.Get("Authorization") != "Bearer b@example.com" {
 					t.Error("unknown inference identity")
@@ -93,6 +118,9 @@ func TestClaudeHTTPTeamFableHandoffRetainsRequest(t *testing.T) {
 			}
 			if known && first.Load() != 0 {
 				t.Fatal("known full Fable window still sent inference")
+			}
+			if mode == "usage" && probes.Load() == 0 {
+				t.Fatal("body-only quota refusal never rechecked model allowance")
 			}
 			if provider.ClaudeTeamExhausted("a@example.com") {
 				t.Fatal("Fable rejection fabricated global exhaustion")

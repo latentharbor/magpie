@@ -139,6 +139,25 @@ jobs:
           go test -race -tags nogui -count=100 -timeout 5m ./internal/plugin -run '^TestHost(CompletedHeadAfterEmptyQueueCheck|CompletionWithoutHeadStillFails|HeadKeepsTheAnswerWhenItCameWithTheHead)$'
           go test -race -tags nogui -count=20 -timeout 5m ./internal/gateway -run '^TestGrokPluginDraws$'
 
+      - name: Prove body-only Fable refusals need a quota recheck
+        if: runner.os != 'Windows' && inputs.integration_only
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          cp internal/gateway/gateway.go "$RUNNER_TEMP/fable-gateway.go"
+          trap 'cp "$RUNNER_TEMP/fable-gateway.go" internal/gateway/gateway.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/gateway/gateway.go');s=p.read_text()
+          new='(failure(hw.code(), hw.errBody()) == failRate || failure(hw.code(), hw.errBody()) == failQuota && !provider.ClaudeTeamModelExhausted(c.p.Account.User, c.model))'
+          assert s.count(new)==1
+          p.write_text(s.replace(new,'failure(hw.code(), hw.errBody()) == failRate'))
+          PY
+          if go test -tags nogui -timeout 1m ./internal/gateway -run '^TestClaudeHTTPTeamFableHandoffRetainsRequest$/usage$' > "$RUNNER_TEMP/negative-fable-body.log" 2>&1; then
+            cat "$RUNNER_TEMP/negative-fable-body.log"; exit 1
+          fi
+          grep -F -- '--- FAIL: TestClaudeHTTPTeamFableHandoffRetainsRequest' "$RUNNER_TEMP/negative-fable-body.log"
+
       # Keep test compilation even when a behavior check fails. Otherwise a
       # small repair rebuilds every native test again from the vet-only cache.
       # Go validates input hashes and never caches a failed test as a pass.
