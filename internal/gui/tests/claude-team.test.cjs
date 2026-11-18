@@ -94,6 +94,7 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       assert.equal(f.posts.length,0,"viewing historical identity moved a seat");
       await page.locator(".team-accts > button").first().click();
       const dialog=page.locator(".editor.claude-team");
+      await dialog.locator('.team-member[data-account="'+m.accountId+'"]').waitFor();
       assert.equal(await dialog.getByLabel(tr("Premium batch"),{exact:true}).isChecked(),true);
       await dialog.getByRole("button",{name:tr("Save"),exact:true}).click();
       await dialog.waitFor({state:"detached"});
