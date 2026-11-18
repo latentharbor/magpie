@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,7 +30,10 @@ type poolAdmin struct {
 
 func (p *poolAdmin) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.URL.Host != "claude.ai" {
-		return p.base.RoundTrip(r)
+		if r.URL.Hostname() == "127.0.0.1" || r.URL.Hostname() == "localhost" || r.URL.Hostname() == "::1" {
+			return p.base.RoundTrip(r)
+		}
+		return nil, errors.New("fixture blocked an unexpected outbound request")
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -118,7 +123,11 @@ func TestClaudeTeamDynamicPremiumPool(t *testing.T) {
 			assigned := map[string]string{}
 			s.client = &http.Client{Transport: claudeHTTPRoundTrip(func(r *http.Request) (*http.Response, error) {
 				body, _ := io.ReadAll(r.Body)
-				session := gjson.GetBytes(body, "messages.0.content").String()
+				content := gjson.GetBytes(body, "messages.0.content")
+				session := content.String()
+				if content.IsArray() {
+					session = content.Get("0.text").String()
+				}
 				who := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 				mu.Lock()
 				assigned[session] = who
@@ -147,12 +156,24 @@ func TestClaudeTeamDynamicPremiumPool(t *testing.T) {
 				out := `{"id":"pool-message","type":"message","role":"assistant","model":"claude-opus-5-5","content":[{"type":"text","text":"pool-ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}`
 				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(out)), Request: r}, nil
 			})}
-			h := httptest.NewServer(s.Handler())
+			var serial atomic.Int64
+			var completed sync.Map
+			handler := s.Handler()
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if ch, ok := completed.Load(r.Header.Get("X-Fixture-Request")); ok {
+					defer close(ch.(chan struct{}))
+				}
+				handler.ServeHTTP(w, r)
+			}))
 			t.Cleanup(h.Close)
 			turns := map[string]int{}
 			ask := func(session, model string) int {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
+				requestID := fmt.Sprint(serial.Add(1))
+				done := make(chan struct{})
+				completed.Store(requestID, done)
+				defer completed.Delete(requestID)
 				mu.Lock()
 				turns[session]++
 				turn := turns[session]
@@ -165,6 +186,7 @@ func TestClaudeTeamDynamicPremiumPool(t *testing.T) {
 				req, _ := http.NewRequestWithContext(ctx, "POST", h.URL+"/v1/messages", strings.NewReader(string(mustJSON(body))))
 				req.Header.Set("Content-Type", "application/json")
 				req.Header.Set(SessionHeader, session)
+				req.Header.Set("X-Fixture-Request", requestID)
 				res, err := http.DefaultClient.Do(req)
 				if err != nil {
 					t.Error(err)
@@ -172,6 +194,12 @@ func TestClaudeTeamDynamicPremiumPool(t *testing.T) {
 				}
 				defer res.Body.Close()
 				_, _ = io.Copy(io.Discard, res.Body)
+				select {
+				case <-done:
+				case <-ctx.Done():
+					t.Error("handler did not publish completion")
+					return 0
+				}
 				return res.StatusCode
 			}
 			if n == 0 {
@@ -210,6 +238,9 @@ func TestClaudeTeamDynamicPremiumPool(t *testing.T) {
 				mu.Lock()
 				want := assigned[session]
 				mu.Unlock()
+				if want == "" {
+					t.Fatal("transport did not observe the original conversation body", session)
+				}
 				if ask(session, "claude-opus-5-5") != 200 {
 					t.Fatal("continuation failed")
 				}
@@ -234,7 +265,21 @@ func TestClaudeTeamDynamicPremiumPool(t *testing.T) {
 			grown := assigned["grown-pool-session"]
 			mu.Unlock()
 			if grown != users[n] {
-				t.Fatalf("new Premium not added to session allocation: %s want %s", grown, users[n])
+				p, m, _ := provider.Resolve("claude/claude-opus-5-5")
+				cs, plan := s.plan(p, m, provider.Anthropic)
+				var choices []string
+				for _, c := range cs {
+					choices = append(choices, c.p.Account.User)
+				}
+				sticks.Lock()
+				counts := map[string]int{}
+				for k, st := range sticks.m {
+					if strings.HasPrefix(k, p.ID+"/") {
+						counts[st.who+"/"+st.model+"/"+st.effort]++
+					}
+				}
+				sticks.Unlock()
+				t.Fatalf("new Premium not added: %s want %s; affinity=%s routing=%s candidates=%v order=%+v bindings=%v", grown, users[n], p.Affinity, p.Routing, choices, plan.order, counts)
 			}
 			admin.mu.Lock()
 			admin.tiers[nativeTeamID(2)] = "unassigned"

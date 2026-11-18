@@ -574,10 +574,12 @@ func (t *claudeTeamController) synchronizeSeats(c ClaudeTeamConfig, seats []clau
 	}
 	states := map[string]bool{}
 	t.mu.Lock()
+	previousSeats := t.seats
+	t.seats = map[string]string{}
 	t.disk.Seats = map[string]string{}
 	t.legacyRoutes = nil
 	for _, s := range seats {
-		previous := t.seats[s.AccountID]
+		previous := previousSeats[s.AccountID]
 		t.seats[s.AccountID] = s.SeatTier
 		if slices.Contains(c.Members, s.AccountID) {
 			if s.SeatTier == "team_tier_1" && (previous != s.SeatTier || !t.quotaAttempted[s.AccountID] && len(t.disk.Limits[s.AccountID]) == 0) {

@@ -11,6 +11,16 @@ This page covers how a request is routed. Plugins that change requests and
 replies are in [Gateway middleware](gateway-middleware.md). Subscriptions
 served by a plugin are in [Provider and plugin ownership](provider-plugins.md).
 
+Managed Claude Team Smart pools reuse the existing session allocator and burst
+reservation counters. Real named sessions default to session affinity when the
+user has not selected another affinity or routing policy. Continuations keep a
+healthy account, while new work can spread over the dynamically verified ready
+Premium set, including account additions and removals. Equal loads retain the
+weekly-then-five-hour expiry order. Burst spreading stays within one Team,
+provider, model and effort, after ordinary rest/cap/scope/fallback checks; it
+does not move cloud seats or warm caches with extra requests. Pins, strict and
+sealed owners retain their semantics. See [Team seat coordination](team-seats.md).
+
 WorkBuddy and CodeBuddy Code's `X-Conversation-ID` is a native session header
 in `sessionHeaders` (`sessionOf`, `nativeSessionOf`, `conversationID` in
 [`gateway.go`](../../internal/gateway/gateway.go)). It keeps their requests

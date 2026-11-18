@@ -53,6 +53,9 @@ func (t *claudeTeamController) refreshSnapshot(ctx context.Context) error {
 	if err := t.synchronizeSeats(c, seats, c.Enabled); err != nil {
 		return err
 	}
+	if err := t.refreshAutomaticPauses(seats); err != nil {
+		return err
+	}
 	var failures []error
 	for _, seat := range seats {
 		if seat.SeatTier != "team_tier_1" || !slices.Contains(c.Members, seat.AccountID) {

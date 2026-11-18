@@ -117,10 +117,24 @@ of bounded member reads; lost PUT responses still require authoritative state
 verification and never cause blind repeats. Failed assignment targets cool
 for 15, then 30, then 60 minutes (capped), across restarts and history eviction.
 Legacy rolled-back targets receive a 15-minute compatibility cooldown. The
-member view shows the safe error and retry time. After confirmed rollback,
-an account-specific rejection may try the next standby, with at most three
-attempts per pass. Authentication, permission, rate-limit and server errors
-stop that pass rather than cycling the pool. Uncertain recovery stops writes.
+member view shows the safe error and retry time. Each pass accepts at most one
+cloud handoff. Any failed handoff followed by rollback persistently pauses
+automatic transfers from that source until its known blocking window resets,
+verified membership/capacity changes, or an operator explicitly retries. With
+no known reset it requires explicit intervention. Repeated inference refusals
+cannot repeatedly release and re-upgrade the same source, including after a
+restart or history eviction. A manual retry still uses candidate cooldowns.
+Uncertain recovery stops writes and remains ahead of every new decision.
+
+The explicit vendor weekly seat-movement restriction is an organization limit,
+separate from inference quota and OAuth validity. Its safe classification and
+UTC retry date are persisted. A date-only message is not a known reset instant;
+automatic writes stay paused through that UTC date. Existing Premium inference,
+membership polling and read-only Refresh continue. Recovery may restore an
+already held seat; automatic selection does not guess which other people the
+vendor's recent-holder exception permits. One explicit rotation can probe a
+changed entitlement, while a confirmed increase in actual Premium assignments
+reopens decisions. Neither path buys a seat or expands the verified baseline.
 
 Each successful member snapshot enables only Premium accounts in the pool.
 Standard and other non-Premium seat types remain valid pool members but stay
@@ -153,7 +167,7 @@ spends the earliest weekly allowance first, then the 5-hour allowance when the
 weekly resets tie to the hour. Any account below the configured exhaustion
 threshold remains eligible: ordinary Smart's 90/98% bands do not push a
 nearly-expired, still-usable week behind a fresh week. The same order routes
-inference among multiple active Premium members; a genuinely full applicable
+new work among active Premium members; a genuinely full applicable
 window (including model-specific windows) still goes behind usable accounts.
 This changes neither other subscriptions' Smart nor explicit routing picks.
 Complete usable snapshots
@@ -166,25 +180,29 @@ ones, advance from their observed reset on a fixed seven-day cadence, even
 after several missed periods. Both standby selection and inference use that
 anchored deadline, rather than seven days from the time of selection.
 
-Background Smart reconciliation also replaces a healthy active member when a
-known usable standby has an earlier expiry. It replaces the latest-expiring
-selected Premium member first, preserving other seats and outside-pool members.
-Equal reset hours retain the current assignment; unknown snapshots never evict a
-healthy member. Every voluntary transfer uses the same admission close, drain,
-fresh member verification and transaction recovery as exhaustion handoff. No
-request performs an administrator check. Explicit in-order, rotation and other
-policies retain their semantics and do not trigger voluntary expiry rebalancing.
-Voluntary rebalancing additionally requires a complete quota observation from
-the last 24 hours without a subsequent collection error, at least one hour of
-deadline gain, and no successful pool handoff in the last 15 minutes. An earlier
-week must reset within five hours; when weeks tie, the earlier five-hour window
-must reset within one hour. This bounds the benefit to capacity about to expire,
-rather than treating every better sort position as a reason to move a healthy
-seat. Exhaustion, confirmed sign-out and manual requests bypass these guards.
-For Smart exhaustion handoff, reliable complete observations precede failed or
-old observations; the latter remain fallback probes when reliable capacity is
-unavailable. These limits are conservative heuristics, not a learned consumption
-rate or a guarantee that all remaining capacity can be spent.
+Smart never moves a healthy cloud seat merely to improve ordering. It chooses
+an expiring standby only for a confirmed exhausted/model-blocked, signed-out or
+explicitly selected source. Among known usable candidates, weekly expiry comes
+first, then the five-hour expiry. Recent error-free observations break equal
+deadline ties; they cannot put a six-day week ahead of a usable earlier week.
+A failed refresh retains a valid historical observation and does not fabricate
+zero usage. These are bounded observations, not a learned consumption rate.
+
+The Premium pool has no configured size: every selected, authenticated member
+in the current verified Premium set participates. Growth, removal and account
+failure update native routing without buying another seat. Other Premium
+requests keep running while one source drains. Under Smart with no explicit
+affinity, requests naming a real session use the upstream atomic session
+allocator, and healthy continuations keep their account even with no cache
+reported. New work can use the least busy ready account in the same organization
+and model, with expiry order retained on equal loads. Explicit affinity/routing,
+pins, sealed ownership, groups, key scopes and fallback boundaries keep their
+existing semantics. Anonymous work is balanced without inventing session ids.
+Fable versions share the observed Fable allowance; its exhausted account stays
+usable for other models with allowance. Cache TTLs and breakpoints are retained,
+and no prewarming inference is sent. Membership changes do not migrate a healthy
+session's cache to every new account; an unavailable owner uses ordinary guarded
+failover and request retention.
 
 Background candidate selection synchronizes parked accounts' native credential
 stores before ranking them, and transfer repeats this local check before
@@ -194,7 +212,7 @@ read error does not manufacture a sign-out. This local check cannot prove that
 the server will accept a token or grant inference access. No paid inference probe
 is made and Unassigned accounts need not return a successful quota response.
 New transaction journals and history entries retain the trigger (`manual`,
-`authentication`, `exhausted`, or `expiry`) and both accounts' raw decision-time
+`authentication`, `exhausted`, or `model_exhausted`) and both accounts' raw decision-time
 quota windows, including through recovery. Older entries retain an unknown
 reason. The provider summary and member lists identify confirmed sign-outs;
 both the provider editor and Team settings offer the existing sign-in flow
