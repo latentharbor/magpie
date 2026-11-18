@@ -3781,7 +3781,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		pass := c.p.PassesErrors()
 		teamAccount := c.p.Account != nil && c.p.Account.Agent == "claude" && provider.ClaudeTeamManaged(c.p.Account.User)
 		if teamAccount && pin == "" && aff.Why != "strict" && checkpoint == nil && !sealedTask {
-			provider.ObserveClaudeTeamModel(c.p.Account.User, c.model)
+			if provider.ObserveClaudeTeamModel(c.p.Account.User, c.model) && !pass {
+				// The quota is already known. Let the bounded background
+				// handoff close the stale candidate before launching inference.
+				waitTeam(c.p.Account.User)
+			}
 		}
 		hw := newHoldWriter(w, kept.sent || !pass && (teamAccount || !last || again < max(lastRetries, rateRetries) || other != nil || autoPicks(c) && repicked < 2 ||
 			patience > 0 && rounds < replanRounds && (waitFrom.IsZero() || time.Since(waitFrom) < patience) || wantWhole))
