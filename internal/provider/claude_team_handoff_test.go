@@ -102,7 +102,7 @@ func TestClaudeTeamSmartTrustAndDwell(t *testing.T) {
 			t.Fatalf("source %s, want %s: %v", from, want, err)
 		}
 	}
-	check(teamID(2))
+	check("")
 	tm.disk.QuotaErrors = map[string]string{teamID(3): "capture failed"}
 	check("")
 	delete(tm.disk.QuotaErrors, teamID(3))
@@ -114,11 +114,12 @@ func TestClaudeTeamSmartTrustAndDwell(t *testing.T) {
 	// Dwell must never strand a truly exhausted account.
 	tm.disk.Limits[teamID(2)][0].Used = 1
 	check(teamID(2))
-	// A failed earlier-expiry snapshot loses to a reliable later one.
+	// A failed refresh keeps the valid earlier-expiry snapshot. Freshness
+	// may break equal deadlines, never waste a different account's week.
 	tm.disk.QuotaErrors[teamID(3)] = "capture failed"
 	_, to, err := tm.choose(c, seats, "")
-	if err != nil || to != teamID(4) {
-		t.Fatalf("failed snapshot preferred over reliable standby: %s %v", to, err)
+	if err != nil || to != teamID(3) {
+		t.Fatalf("refresh confidence overrode earlier expiry: %s %v", to, err)
 	}
 }
 

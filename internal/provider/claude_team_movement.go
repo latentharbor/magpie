@@ -1,8 +1,9 @@
 package provider
 
 import (
-	"github.com/yetone/magpie/internal/claudeteam"
 	"time"
+
+	"github.com/yetone/magpie/internal/claudeteam"
 )
 
 func hasAutomaticPause(pauses map[string]claudeteam.AutomaticPause, id string) bool {
@@ -13,6 +14,11 @@ func hasAutomaticPause(pauses map[string]claudeteam.AutomaticPause, id string) b
 func (t *claudeTeamController) refreshAutomaticPauses(seats []claudeTeamSeat) error {
 	t.mu.Lock()
 	dirty := false
+	count := len(premiumSet(seats))
+	if r := t.disk.MovementLimit; r != nil && (!r.Active(time.Now()) || count > r.Seats) {
+		t.disk.MovementLimit = nil
+		dirty = true
+	}
 	for id, pause := range t.disk.AutomaticPauses {
 		premium := false
 		for _, s := range seats {
@@ -21,7 +27,7 @@ func (t *claudeTeamController) refreshAutomaticPauses(seats []claudeTeamSeat) er
 				break
 			}
 		}
-		if !premium || !pause.Active(time.Now()) || len(premiumSet(seats)) > pause.Seats {
+		if !premium || !pause.Active(time.Now()) || count > pause.Seats {
 			delete(t.disk.AutomaticPauses, id)
 			dirty = true
 		}
