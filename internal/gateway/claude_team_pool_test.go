@@ -112,6 +112,8 @@ func nativePremiumPool(t *testing.T, n int) (*poolAdmin, provider.ClaudeTeamConf
 func TestClaudeTeamDynamicPremiumPool(t *testing.T) {
 	for _, n := range []int{0, 1, 2, 3, 7} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			prefix := fmt.Sprintf("size-%d-", n)
+			sessionFor := func(i int) string { return fmt.Sprintf("%spool-session-%d", prefix, i) }
 			admin, c, users := nativePremiumPool(t, n)
 			s := New()
 			t.Cleanup(s.subscription.abortAll)
@@ -211,7 +213,7 @@ func TestClaudeTeamDynamicPremiumPool(t *testing.T) {
 			}
 			results := make(chan int, n)
 			for i := 0; i < n; i++ {
-				go func(i int) { results <- ask(fmt.Sprintf("pool-session-%d", i), "claude-opus-5-5") }(i)
+				go func(i int) { results <- ask(sessionFor(i), "claude-opus-5-5") }(i)
 			}
 			distinct := map[string]bool{}
 			deadline := time.After(25 * time.Second)
@@ -234,7 +236,7 @@ func TestClaudeTeamDynamicPremiumPool(t *testing.T) {
 				}
 			}
 			for i := 0; i < n; i++ {
-				session := fmt.Sprintf("pool-session-%d", i)
+				session := sessionFor(i)
 				mu.Lock()
 				want := assigned[session]
 				mu.Unlock()
@@ -258,11 +260,12 @@ func TestClaudeTeamDynamicPremiumPool(t *testing.T) {
 			if err := provider.SaveClaudeTeam(context.Background(), c); err != nil {
 				t.Fatal(err)
 			}
-			if ask("grown-pool-session", "claude-opus-5-5") != 200 {
+			grownSession := prefix + "grown-pool-session"
+			if ask(grownSession, "claude-opus-5-5") != 200 {
 				t.Fatal("new Premium not routable")
 			}
 			mu.Lock()
-			grown := assigned["grown-pool-session"]
+			grown := assigned[grownSession]
 			mu.Unlock()
 			if grown != users[n] {
 				p, m, _ := provider.Resolve("claude/claude-opus-5-5")
@@ -287,11 +290,11 @@ func TestClaudeTeamDynamicPremiumPool(t *testing.T) {
 			if err := provider.SaveClaudeTeam(context.Background(), c); err != nil {
 				t.Fatal(err)
 			}
-			if ask("pool-session-0", "claude-opus-5-5") != 200 {
+			if ask(sessionFor(0), "claude-opus-5-5") != 200 {
 				t.Fatal("removed seat stranded a session")
 			}
 			mu.Lock()
-			removed := assigned["pool-session-0"]
+			removed := assigned[sessionFor(0)]
 			mu.Unlock()
 			if removed == users[0] {
 				t.Fatal("removed Premium was still used")
@@ -299,7 +302,7 @@ func TestClaudeTeamDynamicPremiumPool(t *testing.T) {
 			if n > 1 {
 				provider.NoteClaudeLimits(users[1], []provider.ClaudeLimit{{Kind: "seven_day_overage_included", Used: 1, ResetsAt: time.Now().Add(24 * time.Hour).Unix()}})
 				for _, model := range []string{"claude-fable-5", "claude-fable-5-1", "claude-fable-5-2"} {
-					session := "fable-" + model
+					session := prefix + "fable-" + model
 					if ask(session, model) != 200 {
 						t.Fatal("Fable request failed", model)
 					}
