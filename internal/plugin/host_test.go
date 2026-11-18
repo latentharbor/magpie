@@ -1131,6 +1131,20 @@ func TestHostBodyIdleSparesAFedStream(t *testing.T) {
 	waitFor(t, "the fed call left the host", func() bool { return !f.registered(id) })
 }
 
+// headWaitContext publishes a fixture response only after headRead checked
+// its empty queue and is evaluating the wait. Scheduler speed cannot turn
+// this into the equally valid queue-first path, where the body reads done.
+type headWaitContext struct {
+	context.Context
+	beforeWait func()
+	once       sync.Once
+}
+
+func (c *headWaitContext) Done() <-chan struct{} {
+	c.once.Do(c.beforeWait)
+	return c.Context.Done()
+}
+
 // TestHostHeadKeepsTheAnswerWhenItCameWithTheHead: a head read can find the
 // call's answer already there and take the head out of the queue with it. The
 // answer must reach the body all the same, an error staying an error.
@@ -1145,37 +1159,29 @@ func TestHostHeadKeepsTheAnswerWhenItCameWithTheHead(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFakeHost(t)
 			id, c := f.begin(t, true)
-			type read struct {
-				head   message
-				answer *message
-				err    error
+			ctx := &headWaitContext{Context: context.Background(), beforeWait: func() {
+				select {
+				case <-c.wake:
+				default:
+				}
+				c.mu.Lock()
+				c.queue = append(c.queue, message{Status: 200})
+				c.mu.Unlock()
+				c.closed.Store(true)
+				if tc.why == "" {
+					c.done <- message{}
+				} else {
+					c.done <- errAnswer(tc.why)
+				}
+			}}
+			head, answer, err := c.headRead(ctx)
+			if err != nil || head.Status != 200 {
+				t.Fatalf("head = %+v, %v", head, err)
 			}
-			ctx := context.Background()
-			out := make(chan read, 1)
-			go func() {
-				h, a, err := c.headRead(ctx)
-				out <- read{h, a, err}
-			}()
-			// the window the race makes: the answer is there, and a head is
-			// queued with no wake for it
-			time.Sleep(20 * time.Millisecond)
-			c.mu.Lock()
-			c.queue = append(c.queue, message{Status: 200})
-			c.mu.Unlock()
-			c.closed.Store(true)
-			if tc.why == "" {
-				c.done <- message{}
-			} else {
-				c.done <- errAnswer(tc.why)
-			}
-			r := <-out
-			if r.err != nil || r.head.Status != 200 {
-				t.Fatalf("head = %+v, %v", r.head, r.err)
-			}
-			if r.answer == nil {
+			if answer == nil {
 				t.Fatal("the answer was lost: the body would never end")
 			}
-			b := &body{h: f.host, id: id, c: c, ctx: ctx, answer: r.answer, closed: make(chan struct{})}
+			b := &body{h: f.host, id: id, c: c, ctx: context.Background(), answer: answer, closed: make(chan struct{})}
 			got, err := io.ReadAll(b)
 			if len(got) != 0 {
 				t.Fatalf("body = %q, want nothing", got)
