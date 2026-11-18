@@ -48,7 +48,7 @@ func TestClaudeHTTPTeamFableHandoffRetainsRequest(t *testing.T) {
 					fable = "100"
 				}
 				now := time.Now().UTC()
-				week := now.Add(3 * 24 * time.Hour).Format("Jan 2 at 3:04pm") + " (UTC)"
+				week := now.Add(3*24*time.Hour).Format("Jan 2 at 3:04pm") + " (UTC)"
 				return "Current session: 20% used · resets " + now.Add(time.Hour).Format("Jan 2 at 3:04pm") + " (UTC)\nCurrent week (all models): 83% used · resets " + week + "\nCurrent week (Fable): " + fable + "% used · resets " + week, nil
 			})
 			t.Cleanup(func() { provider.UsageClaudeVia(oldUsage) })
@@ -146,7 +146,7 @@ func TestClaudeTeamFableCLIRefusalWithoutWindow(t *testing.T) {
 		if strings.Contains(string(auth), "tok-a") {
 			used = "100"
 		}
-		reset := time.Now().UTC().Add(3 * 24 * time.Hour).Format("Jan 2 at 3:04pm") + " (UTC)"
+		reset := time.Now().UTC().Add(3*24*time.Hour).Format("Jan 2 at 3:04pm") + " (UTC)"
 		return "Current session: 0% used\nCurrent week (all models): 0% used\nCurrent week (Fable): " + used + "% used · resets " + reset, nil
 	})
 	t.Cleanup(func() { provider.UsageClaudeVia(oldUsage) })
