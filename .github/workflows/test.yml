@@ -159,6 +159,42 @@ jobs:
           grep -F -- '--- FAIL: TestClaudeHTTPTeamFableHandoffRetainsRequest' "$RUNNER_TEMP/negative-fable-body.log"
           grep -F -- '--- FAIL: TestClaudeTeamFableCLIRefusalWithoutWindow' "$RUNNER_TEMP/negative-fable-body.log"
 
+      - name: Prove rollback circuits, expiry priority and dynamic session allocation
+        if: runner.os == 'Linux' && inputs.integration_only
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          cp internal/claudeteam/selection.go "$RUNNER_TEMP/seat-selection.go"
+          cp internal/gateway/claude_team_pool.go "$RUNNER_TEMP/team-pool.go"
+          trap 'cp "$RUNNER_TEMP/seat-selection.go" internal/claudeteam/selection.go; cp "$RUNNER_TEMP/team-pool.go" internal/gateway/claude_team_pool.go' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/claudeteam/selection.go');s=p.read_text();old='!s.SourceBlocked &&';assert s.count(old)==1;p.write_text(s.replace(old,'true &&'))
+          PY
+          if go test -tags nogui -timeout 2m ./internal/provider -run '^TestClaudeTeamFailedTargetCoolsAcrossRestartAndHistoryEviction$' > "$RUNNER_TEMP/negative-seat-circuit.log" 2>&1; then
+            cat "$RUNNER_TEMP/negative-seat-circuit.log"; exit 1
+          fi
+          grep -F -- '--- FAIL: TestClaudeTeamFailedTargetCoolsAcrossRestartAndHistoryEviction' "$RUNNER_TEMP/negative-seat-circuit.log"
+          cp "$RUNNER_TEMP/seat-selection.go" internal/claudeteam/selection.go
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/claudeteam/selection.go');s=p.read_text();old='at = order[0]';assert s.count(old)==1
+          p.write_text(s.replace(old,old+'\nfor _, i := range order { if candidates[i].Reliable && weights[i].Known { at = i; break } }'))
+          PY
+          if go test -tags nogui -timeout 1m ./internal/claudeteam -run '^TestExpiryWinsBeforeObservationFreshness$' > "$RUNNER_TEMP/negative-seat-priority.log" 2>&1; then
+            cat "$RUNNER_TEMP/negative-seat-priority.log"; exit 1
+          fi
+          grep -F -- '--- FAIL: TestExpiryWinsBeforeObservationFreshness' "$RUNNER_TEMP/negative-seat-priority.log"
+          cp "$RUNNER_TEMP/seat-selection.go" internal/claudeteam/selection.go
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('internal/gateway/claude_team_pool.go');s=p.read_text();old='return provider.AffinitySession';assert s.count(old)==1;p.write_text(s.replace(old,'return p.Affinity'))
+          PY
+          if go test -tags nogui -timeout 2m ./internal/gateway -run '^TestClaudeTeamDynamicPremiumPool$' > "$RUNNER_TEMP/negative-team-session.log" 2>&1; then
+            cat "$RUNNER_TEMP/negative-team-session.log"; exit 1
+          fi
+          grep -F -- '--- FAIL: TestClaudeTeamDynamicPremiumPool' "$RUNNER_TEMP/negative-team-session.log"
+
       # Keep test compilation even when a behavior check fails. Otherwise a
       # small repair rebuilds every native test again from the vet-only cache.
       # Go validates input hashes and never caches a failed test as a pass.
