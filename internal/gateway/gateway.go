@@ -5110,7 +5110,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			}
 		}
 		teamRetry := teamAccount && hw.failed() && !hw.passing && pin == "" && aff.Why != "strict" && checkpoint == nil && !sealedTask
-		if teamRetry && hw.code() == 429 && (failure(hw.code(), hw.errBody()) == failRate || failure(hw.code(), hw.errBody()) == failQuota && !provider.ClaudeTeamModelExhausted(c.p.Account.User, c.model)) {
+		if teamRetry && (hw.code() == 429 && failure(hw.code(), hw.errBody()) == failRate || failure(hw.code(), hw.errBody()) == failQuota && !provider.ClaudeTeamModelExhausted(c.p.Account.User, c.model)) {
 			stopAlive := hw.keepQueued()
 			provider.RecheckClaudeTeamQuota(r.Context(), c.p.Account.User)
 			stopAlive()

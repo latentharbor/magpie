@@ -149,14 +149,15 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           p=Path('internal/gateway/gateway.go');s=p.read_text()
-          new='(failure(hw.code(), hw.errBody()) == failRate || failure(hw.code(), hw.errBody()) == failQuota && !provider.ClaudeTeamModelExhausted(c.p.Account.User, c.model))'
+          new='(hw.code() == 429 && failure(hw.code(), hw.errBody()) == failRate || failure(hw.code(), hw.errBody()) == failQuota && !provider.ClaudeTeamModelExhausted(c.p.Account.User, c.model))'
           assert s.count(new)==1
-          p.write_text(s.replace(new,'failure(hw.code(), hw.errBody()) == failRate'))
+          p.write_text(s.replace(new,'hw.code() == 429 && failure(hw.code(), hw.errBody()) == failRate'))
           PY
-          if go test -tags nogui -timeout 1m ./internal/gateway -run '^TestClaudeHTTPTeamFableHandoffRetainsRequest$/usage$' > "$RUNNER_TEMP/negative-fable-body.log" 2>&1; then
+          if go test -tags nogui -timeout 1m ./internal/gateway -run '^(TestClaudeHTTPTeamFableHandoffRetainsRequest|TestClaudeTeamFableCLIRefusalWithoutWindow)$' > "$RUNNER_TEMP/negative-fable-body.log" 2>&1; then
             cat "$RUNNER_TEMP/negative-fable-body.log"; exit 1
           fi
           grep -F -- '--- FAIL: TestClaudeHTTPTeamFableHandoffRetainsRequest' "$RUNNER_TEMP/negative-fable-body.log"
+          grep -F -- '--- FAIL: TestClaudeTeamFableCLIRefusalWithoutWindow' "$RUNNER_TEMP/negative-fable-body.log"
 
       # Keep test compilation even when a behavior check fails. Otherwise a
       # small repair rebuilds every native test again from the vet-only cache.

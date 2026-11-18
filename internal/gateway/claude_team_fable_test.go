@@ -16,6 +16,7 @@ import (
 
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/settings"
+	"github.com/yetone/magpie/internal/testenv"
 )
 
 // Both a pre-known full window (no initial candidate) and new rejection
@@ -126,5 +127,68 @@ func TestClaudeHTTPTeamFableHandoffRetainsRequest(t *testing.T) {
 				t.Fatal("Fable rejection fabricated global exhaustion")
 			}
 		})
+	}
+}
+
+func TestClaudeTeamFableCLIRefusalWithoutWindow(t *testing.T) {
+	f := nativeTeamFixture(t)
+	f.stop()
+	marker := filepath.Join(t.TempDir(), "refused")
+	oldUsage := provider.UsageClaudeVia(func(_ context.Context, dir string) (string, error) {
+		if _, err := os.Stat(marker); err != nil {
+			return "", errors.New("fixture quota unavailable before refusal")
+		}
+		auth, err := os.ReadFile(filepath.Join(dir, ".credentials.json"))
+		if err != nil {
+			return "", err
+		}
+		used := "20"
+		if strings.Contains(string(auth), "tok-a") {
+			used = "100"
+		}
+		reset := time.Now().UTC().Add(3 * 24 * time.Hour).Format("Jan 2 at 3:04pm") + " (UTC)"
+		return "Current session: 0% used\nCurrent week (all models): 0% used\nCurrent week (Fable): " + used + "% used · resets " + reset, nil
+	})
+	t.Cleanup(func() { provider.UsageClaudeVia(oldUsage) })
+	for _, user := range []string{"a@example.com", "b@example.com"} {
+		provider.NoteClaudeLimits(user, []provider.ClaudeLimit{{Kind: "seven_day_overage_included", Used: .2, ResetsAt: time.Now().Add(3 * 24 * time.Hour).Unix()}})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); provider.KeepClaudeTeam(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
+	bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
+	testenv.Program(t, filepath.Join(bin, "claude"), `#!/bin/sh
+case "$1" in auth) exit 1;; esac
+while read -r line; do
+  if grep -q tok-a "${CLAUDE_CONFIG_DIR}/.credentials.json"; then
+    touch '`+marker+`'
+    echo '{"type":"assistant","error":"rate_limit"}'
+    echo '{"type":"result","is_error":true,"result":"You have reached your Fable limit. Switch models with /model."}'
+  else
+    echo '{"type":"stream_event","event":{"type":"message_start","message":{"id":"m","model":"claude-fable-5-2","usage":{"input_tokens":1}}}}'
+    echo '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"native-fable-retained"}}}'
+    echo '{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}}'
+    echo '{"type":"stream_event","event":{"type":"message_stop"}}'
+    echo '{"type":"result","is_error":false,"result":""}'
+  fi
+done
+`)
+	s := New()
+	t.Cleanup(s.subscription.abortAll)
+	h := httptest.NewServer(s.Handler())
+	defer h.Close()
+	requestCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+	defer stop()
+	req, _ := http.NewRequestWithContext(requestCtx, "POST", h.URL+"/v1/messages", strings.NewReader(`{"model":"claude/claude-fable-5-2","max_tokens":100,"messages":[{"role":"user","content":"retain-native-fable"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != 200 || !strings.Contains(string(body), "native-fable-retained") {
+		t.Fatalf("native body-only Fable refusal was stranded: %d %s", res.StatusCode, body)
 	}
 }
