@@ -1,6 +1,12 @@
 // Feature content strings; built-in metadata and agent notices stay in core.
 magpie.strings({
   "zh": {
+    "Outside organization": "已移出组织",
+    "Awaiting invitation acceptance": "等待接受邀请",
+    "Sign in to the invited account on claude.ai before enabling inference": "请在 claude.ai 登录受邀账号；确认权限后启用推理",
+    "Keep the Premium batch until weekly usage is exhausted": "整批 Premium 周额度用尽后再更换成员",
+    "Replacement method": "成员更换方式",
+    "Uses all current Premium accounts across 5h resets. After the whole batch exhausts weekly usage, removes exhausted members and invites saved accounts already outside the organization. No seats are purchased.": "当前所有 Premium 在 5 小时重置后循环使用。整批周额度用尽后，移出耗尽的成员，仅邀请已在组织外的已保存账号，不购买坐席。",
     "7 days · Fable": "7 天 · Fable",
     "Model allowance exhausted": "所需模型额度已用尽",
     "Assignment cooling down": "分配失败，冷却中",
@@ -88,6 +94,12 @@ magpie.strings({
     "Claude Code": "Claude Code"
   },
   "zh-TW": {
+    "Outside organization": "已移出組織",
+    "Awaiting invitation acceptance": "等待接受邀請",
+    "Sign in to the invited account on claude.ai before enabling inference": "請在 claude.ai 登入受邀帳號；確認權限後啟用推理",
+    "Keep the Premium batch until weekly usage is exhausted": "整批 Premium 週額度用盡後再更換成員",
+    "Replacement method": "成員更換方式",
+    "Uses all current Premium accounts across 5h resets. After the whole batch exhausts weekly usage, removes exhausted members and invites saved accounts already outside the organization. No seats are purchased.": "目前所有 Premium 在 5 小時重設後循環使用。整批週額度用盡後，移出耗盡的成員，僅邀請已在組織外的已儲存帳號，不購買席位。",
     "7 days · Fable": "7 天 · Fable",
     "Model allowance exhausted": "所需模型額度已用盡",
     "Assignment cooling down": "分配失敗，冷卻中",
@@ -175,6 +187,12 @@ magpie.strings({
     "Claude Code": "Claude Code"
   },
   "ja": {
+    "Outside organization": "組織から退出済み",
+    "Awaiting invitation acceptance": "招待の承認待ち",
+    "Sign in to the invited account on claude.ai before enabling inference": "claude.ai で招待されたアカウントにログインしてください。権限確認後に推論を有効にします",
+    "Keep the Premium batch until weekly usage is exhausted": "Premium 全員の週間枠を使い切ってからメンバーを交代",
+    "Replacement method": "メンバーの交代方法",
+    "Uses all current Premium accounts across 5h resets. After the whole batch exhausts weekly usage, removes exhausted members and invites saved accounts already outside the organization. No seats are purchased.": "現在の Premium 全員を5時間枠のリセット後も繰り返し使用します。全員の週間枠を使い切ると退出させ、組織外の保存済みアカウントだけを招待します。シートは購入しません。",
     "7 days · Fable": "7 日間 · Fable",
     "Model allowance exhausted": "要求されたモデルの利用枠を消費済み",
     "Assignment cooling down": "割り当て失敗、待機中",
@@ -262,6 +280,12 @@ magpie.strings({
     "Claude Code": "Claude Code"
   },
   "de": {
+    "Outside organization": "Aus Organisation entfernt",
+    "Awaiting invitation acceptance": "Einladung noch nicht angenommen",
+    "Sign in to the invited account on claude.ai before enabling inference": "Mit dem eingeladenen Konto bei claude.ai anmelden. Inferenz wird nach der Rechteprüfung aktiviert",
+    "Keep the Premium batch until weekly usage is exhausted": "Premium-Mitglieder erst ersetzen, wenn alle Wochenkontingente erschöpft sind",
+    "Replacement method": "Mitgliederwechsel",
+    "Uses all current Premium accounts across 5h resets. After the whole batch exhausts weekly usage, removes exhausted members and invites saved accounts already outside the organization. No seats are purchased.": "Alle aktuellen Premium-Konten werden nach dem Zurücksetzen des 5-Stunden-Kontingents weiterverwendet. Erst wenn alle Wochenkontingente erschöpft sind, werden Mitglieder entfernt und gespeicherte Konten außerhalb der Organisation eingeladen. Es werden keine Plätze gekauft.",
     "7 days · Fable": "7 Tage · Fable",
     "Model allowance exhausted": "Kontingent des angeforderten Modells aufgebraucht",
     "Assignment cooling down": "Zuweisung fehlgeschlagen, Wartezeit",

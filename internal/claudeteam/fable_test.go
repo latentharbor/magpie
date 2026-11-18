@@ -116,7 +116,7 @@ func TestRepeatedRolledBackTargetIsSkippedUntilCooldownExpires(t *testing.T) {
 	if at, n := FailureCooldown(nil, "n35", now); n != 1 || !at.Equal(now.Add(15*time.Minute)) {
 		t.Fatal(at, n)
 	}
-	if slices.Contains(PremiumSet([]Seat{{"a", "unassigned"}}), "a") {
+	if slices.Contains(PremiumSet([]Seat{{AccountID: "a", SeatTier: "unassigned"}}), "a") {
 		t.Fatal("standby fabricated a Premium seat")
 	}
 }

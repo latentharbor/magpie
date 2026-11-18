@@ -45,6 +45,9 @@ func ObserveClaudeTeamModel(user, model string) bool {
 	paused, hasPause := t.disk.AutomaticPauses[id]
 	sourceSpent := spent && t.seats[id] == "team_tier_1" && (!hasPause || !paused.Active(now))
 	wake := (sourceSpent || blocked && movable) && !t.requested && !t.movementBlockedLocked(now)
+	if t.cfg.ReplacementMode == claudeteam.WeeklyInvitation && !t.weeklyReplacementRequestedLocked() {
+		wake = false
+	}
 	if wake {
 		t.requested = true
 		t.signalLocked()

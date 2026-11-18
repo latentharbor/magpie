@@ -44,7 +44,7 @@ func (t *claudeTeamController) refreshAutomaticPauses(seats []claudeTeamSeat) er
 // Recovery, explicit refresh and the ordinary membership poll still run.
 func (t *claudeTeamController) movementBlockedLocked(now time.Time) bool {
 	r := t.disk.MovementLimit
-	if r == nil || !r.Active(now) {
+	if r == nil || !r.Active(now) || r.Workflow != movementWorkflow(t.cfg) {
 		return false
 	}
 	n := 0
@@ -60,6 +60,10 @@ func (t *claudeTeamController) checkMovementLimit(seats []claudeTeamSeat, manual
 	t.mu.Lock()
 	r := t.disk.MovementLimit
 	if r == nil {
+		t.mu.Unlock()
+		return nil
+	}
+	if r.Workflow != movementWorkflow(t.cfg) {
 		t.mu.Unlock()
 		return nil
 	}

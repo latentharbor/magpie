@@ -8,6 +8,7 @@ import (
 )
 
 type Config struct {
+	ReplacementMode string   `json:"replacementMode,omitempty"`
 	Name           string   `json:"name,omitempty"`
 	Routing        string   `json:"routing,omitempty"`
 	Enabled        bool     `json:"enabled"`
@@ -26,6 +27,7 @@ type Limit struct {
 // Pending keeps the existing journal shape so an interrupted transfer from
 // an older installation is recovered before any new assignment is attempted.
 type Pending struct {
+	Kind, Stage, InviteEmail string `json:",omitempty"`
 	OrganizationID       string `json:"organizationId"`
 	From, To             string
 	Baseline             []string
@@ -49,6 +51,7 @@ type Failure struct {
 // A vendor seat-movement cap is separate from inference allowance. A date
 // without a clock is kept as a UTC date, never presented as a known instant.
 type MovementLimit struct {
+	Workflow string `json:"workflow,omitempty"`
 	RetryDate string `json:"retryDate,omitempty"`
 	Seats     int    `json:"seats"`
 }
@@ -78,6 +81,7 @@ func (m MovementLimit) Error() string {
 }
 
 type Event struct {
+	Kind            string    `json:"kind,omitempty"`
 	At              time.Time `json:"at"`
 	From            string    `json:"from"`
 	To              string    `json:"to"`

@@ -81,6 +81,28 @@ function fixture(lang) {
 }
 for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webkit"])) {
   for(const lang of (process.env.LANG_ONLY?[process.env.LANG_ONLY]:["en","zh","zh-TW","ja","de"])) {
+    test(engine+" "+lang+": outside members and weekly batch policy survive settings save", {timeout:30000}, async t=>{
+      const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
+      t.after(()=>browser.close());
+      const page=await browser.newPage({viewport:{width:1000,height:850},reducedMotion:"reduce"});
+      const words=strings().I18N[lang]||{},tr=s=>words[s]||s,f=fixture(lang),v=f.views.get(org);
+      v.config.replacementMode="weekly-invite";
+      const m=v.members[1];m.seatTier="absent";m.state="absent";
+      await page.route("**/*",f.route);
+      await page.goto("http://magpie.test/?view=providers&edit=claude-team-"+org);
+      const account=page.locator(".team-accts .acc").filter({hasText:m.user});
+      await account.getByText(tr("Outside organization"),{exact:true}).waitFor();
+      assert.equal(f.posts.length,0,"viewing an outside account changed membership");
+      await page.locator(".team-accts > button").first().click();
+      const dialog=page.locator(".editor.claude-team");
+      const policy=dialog.getByRole("checkbox",{name:tr("Keep the Premium batch until weekly usage is exhausted"),exact:true});
+      assert.equal(await policy.isChecked(),true);
+      await dialog.getByRole("button",{name:tr("Save"),exact:true}).click();
+      await dialog.waitFor({state:"detached"});
+      assert.equal(f.posts.at(-1).body.replacementMode,"weekly-invite");
+      assert(f.posts.at(-1).body.members.includes(m.accountId),"outside account lost its saved identity/history");
+      assert(f.posts.every(p=>p.path==="/api/claude-team/config"),"saving policy removed or invited a member");
+    });
     test(engine+" "+lang+": Fable allowance and failed assignment remain visible in both Team views", {timeout:30000}, async t=>{
       const browser=await(engine==="webkit"?webkit.launch():chromium.launch({channel:"chromium"}));
       t.after(()=>browser.close());
@@ -317,7 +339,7 @@ for(const engine of (process.env.BROWSER?[process.env.BROWSER]:["chromium","webk
       await dialog.getByLabel(tr("Administrator sessionKey"),{exact:true}).fill("fixture-secret-value");
       await dialog.getByRole("button",{name:tr("Save"),exact:true}).click();
       await dialog.waitFor({state:"detached"});
-      assert.deepEqual(f.posts[0].body,{name:"Glac Team",routing:"",enabled:true,organizationId:org,sessionKey:"fixture-secret-value",threshold:95,members:f.views.get(org).members.map(m=>m.accountId)});
+      assert.deepEqual(f.posts[0].body,{name:"Glac Team",routing:"",enabled:true,organizationId:org,sessionKey:"fixture-secret-value",replacementMode:"",threshold:95,members:f.views.get(org).members.map(m=>m.accountId)});
       await page.locator('#providers .row[data-id="claude-team-'+org+'"]').click();
       await page.locator(".team-accts > button").first().click();
       await dialog.locator(".team-member").nth(12).waitFor();

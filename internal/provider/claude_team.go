@@ -21,6 +21,7 @@ import (
 type ClaudeTeamConfig = claudeteam.Config
 
 type ClaudeTeamMember struct {
+	InvitationPending bool              `json:"invitationPending,omitempty"`
 	AccountID      string              `json:"accountId"`
 	OrganizationID string              `json:"organizationId"`
 	User           string              `json:"user"`
@@ -59,6 +60,7 @@ type ClaudeTeamView struct {
 type claudeTeamFlags struct{ On, Paused, TeamOff bool }
 type claudeTeamPending = claudeteam.Pending
 type claudeTeamDisk struct {
+	ReplacementBatch      []string                            `json:"replacementBatch,omitempty"`
 	AutomaticPauses       map[string]claudeteam.AutomaticPause `json:"automaticPauses,omitempty"`
 	MovementLimit         *claudeteam.MovementLimit            `json:"movementLimit,omitempty"`
 	MembershipInitialized bool                                 `json:"membershipInitialized,omitempty"`
@@ -177,6 +179,9 @@ func validateClaudeTeam(c *ClaudeTeamConfig) error {
 	if c.Threshold == 0 {
 		c.Threshold = 100
 	}
+	if c.ReplacementMode != "" && c.ReplacementMode != claudeteam.WeeklyInvitation {
+		return errors.New("unknown Claude Team replacement mode")
+	}
 	if !claudeTeamUUID.MatchString(c.OrganizationID) || math.IsNaN(c.Threshold) || math.IsInf(c.Threshold, 0) || c.Threshold < 1 || c.Threshold > 100 {
 		return errors.New("Claude Team needs an organization UUID and a threshold between 1 and 100")
 	}
@@ -254,7 +259,7 @@ func (t *claudeTeamController) loadState(c ClaudeTeamConfig) error {
 	// can admit a request. Never infer that a released seat is still assigned.
 	if t.disk.Pending == nil && c.Enabled {
 		for id, tier := range t.disk.Seats {
-			if slices.Contains(c.Members, id) && (tier == "team_tier_1" || tier == "unassigned") {
+			if slices.Contains(c.Members, id) && (tier == "team_tier_1" || tier == "unassigned" || tier == "absent") {
 				t.seats[id] = tier
 			}
 		}
@@ -395,7 +400,7 @@ func (t *claudeTeamController) save(ctx context.Context, c ClaudeTeamConfig) err
 	if pending {
 		// A session can expire between release and verification. Permit
 		// credential renewal, but never rewrite the plan being recovered.
-		if c.Enabled != old.Enabled || c.OrganizationID != old.OrganizationID || c.Threshold != old.Threshold || !slices.Equal(c.Members, old.Members) {
+		if c.Enabled != old.Enabled || c.OrganizationID != old.OrganizationID || c.Threshold != old.Threshold || c.ReplacementMode != old.ReplacementMode || !slices.Equal(c.Members, old.Members) {
 			return errors.New("reconcile the unfinished Claude Team transfer before changing its pool")
 		}
 		if _, err := newClaudeTeamAdmin(c).Members(ctx); err != nil {
@@ -454,6 +459,9 @@ func (t *claudeTeamController) save(ctx context.Context, c ClaudeTeamConfig) err
 	}
 	t.mu.Lock()
 	t.cfg, t.err = c, ""
+	if c.ReplacementMode != claudeteam.WeeklyInvitation {
+		t.disk.ReplacementBatch = nil
+	}
 	if !c.Enabled {
 		t.modelDemand, t.modelDemandUntil = "", time.Time{}
 	}
@@ -486,12 +494,15 @@ func (t *claudeTeamController) save(ctx context.Context, c ClaudeTeamConfig) err
 }
 
 func teamMembersPresent(c ClaudeTeamConfig, seats []claudeTeamSeat) error {
-	for _, id := range c.Members {
-		if !slices.ContainsFunc(seats, func(s claudeTeamSeat) bool {
-			return s.AccountID == id && s.SeatTier != ""
-		}) {
-			return errors.New("a selected Claude Team member is missing from the organization")
+	// A complete successful snapshot can prove that a saved account is no
+	// longer a member. Keep its identity and history, but never admit it or
+	// mistake it for an Unassigned member eligible for a tier update.
+	seen := map[string]bool{}
+	for _, seat := range seats {
+		if !claudeTeamUUID.MatchString(seat.AccountID) || seat.SeatTier == "" || seen[seat.AccountID] {
+			return errors.New("Claude Team membership is unreadable or ambiguous; last assignments were kept")
 		}
+		seen[seat.AccountID] = true
 	}
 	return nil
 }
@@ -578,6 +589,10 @@ func (t *claudeTeamController) synchronizeSeats(c ClaudeTeamConfig, seats []clau
 	t.seats = map[string]string{}
 	t.disk.Seats = map[string]string{}
 	t.legacyRoutes = nil
+	for _, id := range c.Members {
+		states[id] = false
+		t.seats[id], t.disk.Seats[id] = "absent", "absent"
+	}
 	for _, s := range seats {
 		previous := previousSeats[s.AccountID]
 		t.seats[s.AccountID] = s.SeatTier
@@ -648,6 +663,9 @@ func (t *claudeTeamController) note(user string, ls []ClaudeLimit) {
 		t.disk.Observed[id] = time.Now()
 	}
 	spent := teamSpent(ws, t.cfg.Threshold, time.Now()) || time.Now().Before(t.modelDemandUntil) && claudeteam.SpentForModel(ws, t.cfg.Threshold, time.Now(), t.modelDemand)
+	if t.cfg.ReplacementMode == claudeteam.WeeklyInvitation {
+		spent = t.weeklyReplacementRequestedLocked()
+	}
 	spent = spent && !t.movementBlockedLocked(time.Now())
 	if p, ok := t.disk.AutomaticPauses[id]; ok && p.Active(time.Now()) {
 		spent = false
@@ -832,9 +850,12 @@ func (t *claudeTeamController) finish(c ClaudeTeamConfig, seats []claudeTeamSeat
 		return err
 	}
 	t.mu.Lock()
-	event := ClaudeTeamEvent{At: time.Now().UTC(), From: p.From, To: p.To, Result: result, Reason: p.Reason, Model: p.Model, Failure: p.Failure, RecoveryFailure: p.RecoveryFailure, FromLimits: p.FromLimits, ToLimits: p.ToLimits}
+	event := ClaudeTeamEvent{Kind: p.Kind, At: time.Now().UTC(), From: p.From, To: p.To, Result: result, Reason: p.Reason, Model: p.Model, Failure: p.Failure, RecoveryFailure: p.RecoveryFailure, FromLimits: p.FromLimits, ToLimits: p.ToLimits}
 	if result == "assigned" {
 		delete(t.disk.AutomaticPauses, p.From)
+		if p.Kind == claudeteam.WeeklyInvitation {
+			t.disk.ReplacementBatch = slices.DeleteFunc(t.disk.ReplacementBatch, func(id string) bool { return id == p.From })
+		}
 	} else if p.Failure != nil {
 		pause := claudeteam.AutomaticPause{Seats: len(p.Baseline), Reason: p.Reason, Failure: p.Failure}
 		for _, w := range p.FromLimits {
@@ -849,7 +870,7 @@ func (t *claudeTeamController) finish(c ClaudeTeamConfig, seats []claudeTeamSeat
 		t.disk.AutomaticPauses[p.From] = pause
 	}
 	if p.Failure != nil && p.Failure.Kind == "seat_movement_limit" {
-		t.disk.MovementLimit = &claudeteam.MovementLimit{RetryDate: p.Failure.RetryDate, Seats: len(p.Baseline)}
+		t.disk.MovementLimit = &claudeteam.MovementLimit{Workflow: p.Kind, RetryDate: p.Failure.RetryDate, Seats: len(p.Baseline)}
 	}
 	if result != "assigned" && (p.Failure == nil || p.Failure.Kind != "seat_movement_limit") && (p.Failure != nil && (p.Failure.Phase == "assign" || p.Failure.Phase == "confirm_assignment" || p.Failure.Phase == "recovery") || result == "rolled_back" && p.Failure == nil) {
 		event.RetryAt, event.Failures = claudeteam.FailureCooldown(t.disk.History, p.To, event.At)
@@ -923,6 +944,13 @@ func (t *claudeTeamController) transaction(c ClaudeTeamConfig, client claudeTeam
 	}
 }
 func (t *claudeTeamController) recover(ctx context.Context, c ClaudeTeamConfig, client claudeTeamAdmin, p claudeTeamPending) error {
+	if p.Kind == claudeteam.WeeklyInvitation {
+		transaction, err := t.invitationTransaction(c, client)
+		if err != nil {
+			return err
+		}
+		return transaction.Recover(ctx, p)
+	}
 	return t.transaction(c, client).Recover(ctx, p)
 }
 func (t *claudeTeamController) transfer(ctx context.Context, c ClaudeTeamConfig, client claudeTeamAdmin, seats []claudeTeamSeat, from, to string, trigger ...string) error {
@@ -938,6 +966,22 @@ func (t *claudeTeamController) transfer(ctx context.Context, c ClaudeTeamConfig,
 	p.FromLimits = slices.Clone(t.disk.Limits[from])
 	p.ToLimits = slices.Clone(t.disk.Limits[to])
 	t.mu.Unlock()
+	if c.ReplacementMode == claudeteam.WeeklyInvitation {
+		ids, err := teamIdentities(c)
+		if err != nil {
+			return err
+		}
+		id, ok := savedSessionIdentity(ids[to])
+		if !ok || id.AccountID != to || !strings.EqualFold(id.OrganizationID, c.OrganizationID) {
+			return errors.New("invitation target does not match the saved organization identity")
+		}
+		p.Kind, p.InviteEmail = claudeteam.WeeklyInvitation, id.User
+		transaction, err := t.invitationTransaction(c, client)
+		if err != nil {
+			return err
+		}
+		return transaction.Transfer(ctx, seats, p)
+	}
 	return t.transaction(c, client).Transfer(ctx, seats, p)
 }
 
@@ -994,7 +1038,15 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 		model = t.modelDemand
 	}
 	var members []claudeteam.Candidate
-	for _, seat := range seats {
+	selectionSeats := slices.Clone(seats)
+	if c.ReplacementMode == claudeteam.WeeklyInvitation {
+		for _, id := range c.Members {
+			if !slices.ContainsFunc(seats, func(s claudeTeamSeat) bool { return s.AccountID == id }) {
+				selectionSeats = append(selectionSeats, claudeTeamSeat{AccountID: id, SeatTier: "absent"})
+			}
+		}
+	}
+	for _, seat := range selectionSeats {
 		if !slices.Contains(c.Members, seat.AccountID) {
 			continue
 		}
@@ -1012,8 +1064,8 @@ func (t *claudeTeamController) choose(c ClaudeTeamConfig, seats []claudeTeamSeat
 		}
 		_, cooled := t.cooldownLocked(seat.AccountID, now)
 		members = append(members, claudeteam.Candidate{
-			ID: seat.AccountID, Tier: seat.SeatTier, Limits: ls, Lapsed: identities[seat.AccountID].Lapsed != "",
-			SourceBlocked: t.disk.AutomaticPauses[seat.AccountID].Active(now) && hasAutomaticPause(t.disk.AutomaticPauses, seat.AccountID),
+			ID: seat.AccountID, Tier: seat.SeatTier, Limits: ls, Lapsed: identities[seat.AccountID].Lapsed != "" && seat.SeatTier != "absent",
+			SourceBlocked: t.disk.AutomaticPauses[seat.AccountID].Active(now) && hasAutomaticPause(t.disk.AutomaticPauses, seat.AccountID) || c.ReplacementMode == claudeteam.WeeklyInvitation && !slices.Contains(t.disk.ReplacementBatch, seat.AccountID),
 			Unavailable:   unavailable[seat.AccountID] || cooled,
 			Reliable:      t.disk.QuotaErrors[seat.AccountID] == "" && !t.disk.Observed[seat.AccountID].IsZero() && now.Sub(t.disk.Observed[seat.AccountID]) <= 24*time.Hour,
 			Weight:        claudeteam.Weight{Key: seat.AccountID, Account: true, Known: known, Learns: !known, Used: used, Pace: pace, Soon: a.Renewal(model, now), Weight: 1},
@@ -1085,6 +1137,11 @@ func (t *claudeTeamController) reconcile(ctx context.Context, manual string) err
 	}
 	// Read newly observed assignments before stale snapshots can move them.
 	t.collectQuotaDue(ctx)
+	if c.ReplacementMode == claudeteam.WeeklyInvitation && manual == "" {
+		if ready, err := t.prepareWeeklyBatch(c, seats); err != nil || !ready {
+			return err
+		}
+	}
 	from, to, err := t.choose(c, seats, manual)
 	if err != nil {
 		return err
@@ -1302,7 +1359,7 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 	if t.disk.MovementLimit != nil && t.disk.MovementLimit.Active(time.Now()) {
 		copy := *t.disk.MovementLimit
 		v.MovementLimit = &copy
-		if v.Error == "" {
+		if v.Error == "" && copy.Workflow == movementWorkflow(c) {
 			v.Error = copy.Error()
 		}
 	}
@@ -1335,6 +1392,10 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 		cooldowns[id] = e
 	}
 	quotaPending := make(map[string]bool, len(t.quotaDue)+1)
+	invited := ""
+	if p := t.disk.Pending; p != nil && p.Kind == claudeteam.WeeklyInvitation {
+		invited = p.To
+	}
 	for id, e := range t.disk.QuotaErrors {
 		quotaErrors[id] = e
 	}
@@ -1364,6 +1425,7 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 		m := ClaudeTeamMember{AccountID: account, OrganizationID: id.OrganizationID, User: l.User, Selected: slices.Contains(c.Members, account), On: l.On && !l.TeamOff, SeatTier: seats[account], Limits: limits[account], Lapsed: l.Lapsed != "", Active: active[account], State: "ready"}
 		m.Windows = claudeTeamWindowsAt(m.Limits, time.Now())
 		m.QuotaError, m.QuotaPending = quotaErrors[account], quotaPending[account]
+		m.InvitationPending = invited == account
 		event, cooling := claudeteam.CoolingTarget(v.History, account, time.Now())
 		if e, ok := cooldowns[account]; ok {
 			event = e
@@ -1389,7 +1451,9 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 		}
 		// Membership and eligibility are separate. Other seat tiers stay
 		// parked until an authoritative snapshot reports Unassigned.
-		if m.SeatTier == "" {
+		if m.SeatTier == "absent" {
+			m.State = "absent"
+		} else if m.SeatTier == "" {
 			m.State = "unverified"
 		} else if m.SeatTier != "team_tier_1" && m.SeatTier != "unassigned" {
 			m.State = "other_seat"
@@ -1403,7 +1467,7 @@ func (t *claudeTeamController) status() ClaudeTeamView {
 				m.State = "premium"
 			}
 		}
-		if m.Selected {
+		if m.Selected && m.SeatTier == "team_tier_1" {
 			if back, ok := teamBack(m.Limits, c.Threshold, time.Now()); ok && (v.NextReset == nil || back.Before(*v.NextReset)) {
 				v.NextReset = &back
 			}

@@ -35,6 +35,12 @@ func (c *claudeTeamHTTP) Members(ctx context.Context) ([]claudeTeamSeat, error) 
 func (c *claudeTeamHTTP) SetTier(ctx context.Context, id, tier string) error {
 	return c.backend().SetTier(ctx, id, tier)
 }
+func (c *claudeTeamHTTP) RemoveMember(ctx context.Context, id string) error {
+	return c.backend().RemoveMember(ctx, id)
+}
+func (c *claudeTeamHTTP) InvitePremium(ctx context.Context, email string) error {
+	return c.backend().InvitePremium(ctx, email)
+}
 func (c *claudeTeamHTTP) request(ctx context.Context, method, path string, payload, dst any) error {
 	return c.backend().Request(ctx, method, path, payload, dst)
 }

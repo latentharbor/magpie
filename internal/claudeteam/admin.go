@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"slices"
 	"strconv"
@@ -27,6 +28,7 @@ const WebAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/53
 type Seat struct {
 	AccountID string `json:"accountId"`
 	SeatTier  string `json:"seatTier"`
+	Role      string `json:"role,omitempty"`
 }
 
 type Admin interface {
@@ -130,6 +132,7 @@ func (c *HTTP) Members(ctx context.Context) ([]Seat, error) {
 				AccountID     string `json:"account_id"`
 				UUID, ID      string
 				SeatTier      string `json:"seat_tier"`
+				Role          string `json:"role"`
 				Account, User struct{ UUID, ID string }
 			}
 			if json.Unmarshal(raw, &row) != nil {
@@ -151,7 +154,7 @@ func (c *HTTP) Members(ctx context.Context) ([]Seat, error) {
 				return nil, errors.New("Claude Team member IDs or seat tiers are ambiguous")
 			}
 			seen[id] = true
-			out = append(out, Seat{AccountID: id, SeatTier: row.SeatTier})
+			out = append(out, Seat{AccountID: id, SeatTier: row.SeatTier, Role: row.Role})
 		}
 		more := envelope.More
 		if more == nil {
@@ -172,4 +175,28 @@ func (c *HTTP) SetTier(ctx context.Context, id, tier string) error {
 		return errors.New("only existing members' Premium assignments can be changed")
 	}
 	return c.call(ctx, http.MethodPut, "/members/"+url.PathEscape(id), map[string]string{"seat_tier": tier}, nil)
+}
+
+func (c *HTTP) RemoveMember(ctx context.Context, id string) error {
+	if !UUID.MatchString(id) {
+		return errors.New("invalid Claude Team member UUID")
+	}
+	return c.call(ctx, http.MethodDelete, "/members/"+url.PathEscape(id), nil, nil)
+}
+
+// An HTTP acknowledgement never proves acceptance or an assigned Premium.
+// The transaction checks a complete member snapshot before enabling inference.
+func (c *HTTP) InvitePremium(ctx context.Context, email string) error {
+	if !validInvitationEmail(email) {
+		return errors.New("replacement needs its saved account's email address")
+	}
+	return c.call(ctx, http.MethodPost, "/invites/bulk", map[string]any{
+		"invites": []map[string]string{{"email_address": email, "role": "user", "seat_tier": "team_tier_1", "invite_source": "admin_manual", "invite_surface": "members_page"}},
+		"allow_seat_purchase": false,
+	}, nil)
+}
+
+func validInvitationEmail(email string) bool {
+	address, err := mail.ParseAddress(email)
+	return err == nil && len(email) <= 254 && address.Address == email && address.Name == ""
 }

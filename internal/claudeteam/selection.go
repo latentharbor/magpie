@@ -50,7 +50,11 @@ func ChooseForModel(c Config, members []Candidate, manual string, history []Even
 			from = s.ID
 		}
 		_, cooling := CoolingTarget(history, s.ID, now)
-		if s.Tier != "unassigned" || s.Unavailable || s.Lapsed || cooling || SpentForModel(s.Limits, c.Threshold, now, model) {
+		targetTier := "unassigned"
+		if c.ReplacementMode == WeeklyInvitation {
+			targetTier = "absent"
+		}
+		if s.Tier != targetTier || s.Unavailable || s.Lapsed || cooling || SpentForModel(s.Limits, c.Threshold, now, model) {
 			continue
 		}
 		candidates = append(candidates, s)
@@ -76,6 +80,9 @@ func ChooseForModel(c Config, members []Candidate, manual string, history []Even
 		return "", "", errors.New("the chosen source has no Premium seat in this pool")
 	}
 	if from != "" && to == "" {
+		if c.ReplacementMode == WeeklyInvitation {
+			return from, "", errors.New("no eligible saved account is outside the organization; no member was removed")
+		}
 		return from, "", errors.New("all Claude Team alternatives are cooling down, signed out or unknown; see the earliest reset")
 	}
 	return from, to, nil

@@ -81,7 +81,8 @@ func ResponseError(method string, res *http.Response) error {
 				}
 			}
 		}
-	case res.StatusCode == http.StatusUnauthorized || kind == "authentication_error":
+	case res.StatusCode == http.StatusUnauthorized || kind == "authentication_error" ||
+		res.StatusCode == http.StatusForbidden && kind == "permission_error" && strings.EqualFold(strings.TrimSpace(envelope.Error.Message), "Invalid authorization"):
 		reason = "administrator authentication rejected; renew the administrator session"
 	case kind == "permission_error":
 		reason = "administrator permission denied; check organization management access"
@@ -96,6 +97,10 @@ func ResponseError(method string, res *http.Response) error {
 		operation = "member list"
 	case http.MethodPut:
 		operation = "seat update"
+	case http.MethodPost:
+		operation = "member invitation"
+	case http.MethodDelete:
+		operation = "member removal"
 	}
 	detail := fmt.Sprintf("HTTP %d, %s, response=%s", res.StatusCode, operation, format)
 	if !complete {

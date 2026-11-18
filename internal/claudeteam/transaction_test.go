@@ -32,7 +32,7 @@ func (a *memoryAdmin) SetTier(_ context.Context, id, tier string) error {
 }
 
 func transactionFixture() (Transaction, *memoryAdmin, Pending, *[]string) {
-	a := &memoryAdmin{seats: []Seat{{"a", "team_tier_1"}, {"b", "unassigned"}, {"outside", "team_tier_1"}}}
+	a := &memoryAdmin{seats: []Seat{{AccountID: "a", SeatTier: "team_tier_1"}, {AccountID: "b", SeatTier: "unassigned"}, {AccountID: "outside", SeatTier: "team_tier_1"}}}
 	steps := []string{}
 	p := Pending{OrganizationID: "org", From: "a", To: "b", Baseline: []string{"a", "outside"}}
 	tx := Transaction{Config: Config{OrganizationID: "org", Members: []string{"a", "b"}}, Admin: a,

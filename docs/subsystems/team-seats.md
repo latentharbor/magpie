@@ -41,7 +41,7 @@ Ordinary admission consults neither a quota endpoint nor an administrator API.
 ## Configuration and ownership
 
 `claude-team.json` beside the provider configuration holds `enabled`,
-`organizationId`, `name`, `routing`, the administrator's `sessionKey`, selected
+`organizationId`, `name`, `routing`, optional `replacementMode`, the administrator's `sessionKey`, selected
 saved account UUIDs in `members`, and `threshold` (default 100). The original
 organization keeps these legacy paths without rewriting its quota journal;
 additional organizations use `claude-teams/{UUID}/{config,state}.json`.
@@ -141,9 +141,15 @@ Standard and other non-Premium seat types remain valid pool members but stay
 parked and are never transfer targets. They do not block other members'
 rotation. After a later snapshot reports Unassigned they become standby
 candidates automatically; their saved credentials and usage survive the change.
-Missing members still fail membership verification rather than being assumed
-Unassigned. The member view distinguishes another seat type from unverified
-membership and never labels either as ready.
+A successful complete member snapshot records saved accounts no longer in the
+organization as `absent`, closes their native switches/admissions, and retains
+their credentials, selected identity and historical quota. Absence is never
+Unassigned and never eligible for a tier PUT. It does not prevent administrator
+credential renewal, provider re-add, or the remaining Premium members serving.
+Failed, unreadable or ambiguous member reads retain the last verified state;
+they never manufacture absence. A later confirmed Premium membership reopens
+that account normally. Both Team views distinguish absence, another seat type,
+and unverified membership.
 A controller-owned `teamOff` bit prevents discovery, the agent's current
 login and its stand-in fallback from resurrecting an unassigned member.
 These switches take effect without restarting Magpie or Claude Desktop.
@@ -203,6 +209,41 @@ usable for other models with allowance. Cache TTLs and breakpoints are retained,
 and no prewarming inference is sent. Membership changes do not migrate a healthy
 session's cache to every new account; an unavailable owner uses ordinary guarded
 failover and request retention.
+
+### Weekly cohort replacement by invitation
+
+The optional `replacementMode: "weekly-invite"` keeps the current selected
+Premium cohort through 5-hour resets. It starts replacing members only when
+every selected Premium's observed global `seven_day` window is exhausted and
+has not reset. Unknown windows do not qualify; a scoped Fable cap alone does
+not evict a member still serving other models. Cohort size is discovered, never
+fixed. The persisted `replacementBatch` retains the remaining old members when
+the first new member arrives with a fresh week. A reset old member is retained.
+
+Only a saved identity already absent from a complete organization snapshot is
+an invitation target. Unassigned/Standard members still inside the organization
+are not removed to make targets. If no eligible outside account exists, no
+member is removed. The source must have the verified ordinary `user` role;
+owners, administrators and unknown roles cannot be removed automatically.
+
+`internal/claudeteam/invitation.go` drains the source, journals each stage before
+its write, sets it Unassigned, verifies, removes that source, verifies again,
+and posts a single Premium invitation with `allow_seat_purchase: false`.
+Acceptance happens through the invited account's genuine claude.ai login.
+A 2xx or sent email is not successful replacement: a complete member snapshot
+must confirm the expected Premium set and the host must confirm native
+credential readiness before inference is admitted. Pending acceptance is shown
+in both Team views with the existing sign-in action.
+
+Recovery reads only. It never repeats an uncertain POST/DELETE, upgrades a
+removed source, or assumes a pending invitation left its seat free. Other
+verified Premium accounts continue serving. A failed or ambiguous step stays
+pending for review; this version does not automatically revoke invitations or
+automate email-code login. A persisted ordinary tier-transfer refusal is kept
+separate from the explicitly selected invitation workflow; a refusal of that
+workflow is persisted too and never causes repeated invitations. Legacy pending
+tier transfers are recovered under their original semantics before any new
+workflow can start. A mode change is forbidden while a transaction is pending.
 
 Background candidate selection synchronizes parked accounts' native credential
 stores before ranking them, and transfer repeats this local check before
